@@ -30,6 +30,8 @@ Defina `POSTGRES_PASSWORD` e ajuste `DATABASE_URL`. Os padrões funcionais são 
 
 Variáveis principais: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `OVERPASS_URL`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_MAX_RETRIES`, `WORKER_POLL_INTERVAL_MS` e `DAILY_LEAD_LIMIT`.
 
+Variáveis numéricas são validadas na inicialização. Portas devem estar entre 1 e 65535; timeout Overpass entre 1 e 120 segundos; retries entre 0 e 10; polling entre 1 segundo e 1 hora; limite diário entre 1 e 10.000.
+
 ## Execução
 
 ```bash
@@ -72,6 +74,8 @@ npm test
 npm run test:coverage
 npm run build
 docker compose config
+docker build -f apps/api/Dockerfile -t lead-finder-api:test .
+docker build -f apps/worker/Dockerfile -t lead-finder-worker:test .
 ```
 
 ## Segurança e limitações

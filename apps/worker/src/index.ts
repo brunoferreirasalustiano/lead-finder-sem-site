@@ -6,26 +6,37 @@ import {
 } from '@lead-finder/database';
 import { calculateLeadScore } from '@lead-finder/lead-scoring';
 import { OverpassClient } from '@lead-finder/overpass-client';
-import { collectSchema } from '@lead-finder/shared';
-const databaseUrl = process.env['DATABASE_URL'];
-if (!databaseUrl) throw new Error('DATABASE_URL is required');
-const { db, close } = createDatabase(databaseUrl);
+import { collectSchema, parseWorkerConfig } from '@lead-finder/shared';
+const config = parseWorkerConfig(process.env);
+const { db, close } = createDatabase(config.DATABASE_URL);
 const overpass = new OverpassClient({
-  endpoint: process.env['OVERPASS_URL'] ?? 'https://overpass-api.de/api/interpreter',
-  timeoutMs: Number(process.env['OVERPASS_TIMEOUT_MS'] ?? 30000),
-  maxRetries: Number(process.env['OVERPASS_MAX_RETRIES'] ?? 3),
+  endpoint: config.OVERPASS_URL,
+  timeoutMs: config.OVERPASS_TIMEOUT_MS,
+  maxRetries: config.OVERPASS_MAX_RETRIES,
 });
-const interval = Math.max(1000, Number(process.env['WORKER_POLL_INTERVAL_MS'] ?? 60000));
 let running = true;
-const shutdown = () => {
+let shutdownPromise: Promise<void> | undefined;
+const shutdown = (exitCode = 0) => {
+  running = false;
+  process.exitCode = exitCode;
+  shutdownPromise ??= close();
+  return shutdownPromise;
+};
+const fatal = (kind: string, error: unknown) => {
+  console.error(kind, error);
+  void shutdown(1);
+};
+const requestGracefulStop = () => {
   running = false;
 };
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', requestGracefulStop);
+process.on('SIGINT', requestGracefulStop);
+process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error));
+process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (running) {
   const job = await claimCollection(db);
   if (!job) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await new Promise((resolve) => setTimeout(resolve, config.WORKER_POLL_INTERVAL_MS));
     continue;
   }
   try {
@@ -40,4 +51,4 @@ while (running) {
     await finishCollection(db, job.id, error instanceof Error ? error.message : 'Unknown error');
   }
 }
-await close();
+await shutdown();

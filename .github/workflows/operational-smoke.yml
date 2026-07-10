@@ -1,5 +1,7 @@
 name: Operational smoke
 on:
+  push:
+    branches: [feat/estrutura-inicial]
   workflow_dispatch:
     inputs:
       run_live_overpass:

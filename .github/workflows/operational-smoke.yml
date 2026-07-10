@@ -65,13 +65,13 @@ jobs:
       - name: Verify live and ready health behavior
         run: |
           curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:3000/health/live
-          curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:3000/health/ready
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://127.0.0.1:3000/health/ready
           curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:3000/health
           docker compose stop postgres
           curl --fail http://127.0.0.1:3000/health/live
           test "$(curl -sS -o /tmp/ready-down.json -w '%{http_code}' http://127.0.0.1:3000/health/ready)" = 503
           docker compose start postgres
-          curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:3000/health/ready
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://127.0.0.1:3000/health/ready
       - name: Run mock collection and verify persistence and deduplication
         shell: bash
         run: |
@@ -117,7 +117,7 @@ jobs:
           for SERVICE in api worker; do test "$(docker inspect --format '{{.State.ExitCode}}' $(docker compose ps -aq "$SERVICE" | head -1))" = 0; done
           ! docker compose logs --no-color api worker | grep -E 'unhandledRejection|uncaughtException'
           docker compose up -d api worker
-          curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:3000/health/ready
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://127.0.0.1:3000/health/ready
       - name: Optional public Overpass collection
         if: ${{ inputs.run_live_overpass }}
         continue-on-error: true

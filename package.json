@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:integration": "tsx scripts/integration-test.ts",
+    "mock:overpass": "tsx scripts/mock-overpass.ts",
     "format": "prettier --write .",
     "db:migrate": "tsx scripts/migrate.ts",
     "dev:api": "tsx watch apps/api/src/index.ts",

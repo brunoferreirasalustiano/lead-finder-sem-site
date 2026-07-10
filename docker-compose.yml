@@ -57,6 +57,7 @@ services:
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-60000}
       DAILY_LEAD_LIMIT: ${DAILY_LEAD_LIMIT:-50}
     depends_on: { postgres: { condition: service_healthy } }
+    extra_hosts: ['host.docker.internal:host-gateway']
     healthcheck:
       test: [CMD-SHELL, kill -0 1]
       interval: 30s

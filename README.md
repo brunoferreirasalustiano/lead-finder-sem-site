@@ -85,6 +85,8 @@ npm run test:integration
 
 O teste de integração usa PostgreSQL real e um servidor Overpass mock local determinístico. Uma coleta contra a Overpass pública é opcional e não faz parte do critério de aprovação da CI.
 
+O workflow manual `Operational smoke` executa a stack completa com Docker Compose. O input `run_live_overpass` é `false` por padrão; habilite-o apenas para uma coleta pública opcional após o mock determinístico passar.
+
 ## Operação
 
 ```bash

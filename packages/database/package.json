@@ -1,0 +1,16 @@
+{
+  "name": "@lead-finder/database",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@lead-finder/shared": "*",
+    "drizzle-orm": "^0.44.2",
+    "postgres": "^3.4.7"
+  }
+}

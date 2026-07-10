@@ -109,8 +109,10 @@ jobs:
             test "$(docker image inspect --format '{{.Architecture}}' "$IMAGE")" = amd64
             docker image inspect --format 'image={{.Id}} user={{.Config.User}} architecture={{.Architecture}} size={{.Size}}' "$IMAGE"
           done
-          test -z "$(docker compose port postgres 5432)"
-          test "$(docker compose port api 3000)" = '127.0.0.1:3000'
+          POSTGRES_PORT="$(docker compose port postgres 5432 2>/dev/null || true)"
+          API_PORT_BINDING="$(docker compose port api 3000)"
+          test -z "$POSTGRES_PORT"
+          test "$API_PORT_BINDING" = '127.0.0.1:3000'
       - name: Verify graceful shutdown and restart
         run: |
           docker compose stop api worker

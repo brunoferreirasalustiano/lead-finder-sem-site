@@ -4,6 +4,7 @@ COPY package*.json tsconfig*.json eslint.config.js ./
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
+COPY database ./database
 RUN npm ci && npm run build
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production

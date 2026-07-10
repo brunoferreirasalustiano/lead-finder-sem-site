@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { LeadStatus, NormalizedLead } from '@lead-finder/shared';
@@ -20,6 +20,9 @@ export function createDatabase(databaseUrl: string) {
   return { db: drizzle(client), close: () => client.end() };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
+export async function checkDatabase(db: Database): Promise<void> {
+  await db.execute(sql`select 1`);
+}
 export async function insertLeads(
   db: Database,
   input: Array<NormalizedLead & { score: number }>,

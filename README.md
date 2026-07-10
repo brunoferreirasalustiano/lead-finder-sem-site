@@ -37,7 +37,7 @@ Variáveis numéricas são validadas na inicialização. Portas devem estar entr
 ```bash
 npm install
 docker compose up -d postgres
-npm run db:migrate
+docker compose run --rm migrate
 npm run dev:api
 npm run dev:worker
 ```
@@ -49,9 +49,13 @@ docker compose up --build
 docker compose --profile integration up -d n8n
 ```
 
+As migrations possuem controle em `schema_migrations`; executar `docker compose run --rm migrate` novamente é seguro e informa que a versão já foi aplicada.
+
 ## API
 
 - `GET /health`
+- `GET /health/live` verifica o processo
+- `GET /health/ready` verifica a conexão PostgreSQL
 - `GET /leads?page=1&pageSize=20&status=SEM_SITE_CADASTRADO&category=oficinas&city=Campinas&minScore=30`
 - `GET /leads/:id`
 - `GET /leads/export.csv` (máximo de 100 linhas por exportação nesta versão)
@@ -76,7 +80,30 @@ npm run build
 docker compose config
 docker build -f apps/api/Dockerfile -t lead-finder-api:test .
 docker build -f apps/worker/Dockerfile -t lead-finder-worker:test .
+npm run test:integration
 ```
+
+O teste de integração usa PostgreSQL real e um servidor Overpass mock local determinístico. Uma coleta contra a Overpass pública é opcional e não faz parte do critério de aprovação da CI.
+
+## Operação
+
+```bash
+docker compose ps
+docker compose logs --no-color --tail=100 api worker
+docker compose stop api worker
+docker compose down -v --remove-orphans
+```
+
+Diagnóstico: `live` com erro indica falha do processo; `ready` com HTTP 503 indica indisponibilidade do PostgreSQL. O healthcheck do worker confirma que seu processo principal continua ativo.
+
+Backup e restauração:
+
+```bash
+docker compose exec -T postgres pg_dump -U leadfinder -d leadfinder -Fc > leadfinder.dump
+docker compose exec -T postgres pg_restore -U leadfinder -d leadfinder --clean --if-exists < leadfinder.dump
+```
+
+Na Oracle VPS, instale Docker Engine/Compose, permita externamente apenas SSH e as portas do reverse proxy, mantenha PostgreSQL sem porta publicada, configure `.env` fora do Git e coloque TLS na frente da API/n8n. O deploy não é automatizado nesta etapa.
 
 ## Segurança e limitações
 

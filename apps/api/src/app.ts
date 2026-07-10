@@ -1,14 +1,37 @@
 import Fastify from 'fastify';
-import { enqueueCollection, getLead, listLeads, type Database } from '@lead-finder/database';
+import {
+  checkDatabase,
+  enqueueCollection,
+  getLead,
+  listLeads,
+  type Database,
+} from '@lead-finder/database';
 import { collectSchema, listLeadsSchema } from '@lead-finder/shared';
 import { z } from 'zod';
 
 const idSchema = z.string().uuid();
-const csvCell = (value: string | number | boolean | Date | null | undefined) =>
-  `"${(value instanceof Date ? value.toISOString() : String(value ?? '')).replaceAll('"', '""')}"`;
-export function buildApp(db: Database) {
+export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
+  const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replaceAll('"', '""')}"`;
+};
+export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}) {
+  const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const app = Fastify({ logger: true, bodyLimit: 16_384, requestTimeout: 15_000 });
-  app.get('/health', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+  app.get('/health/live', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+  const ready = async (
+    _request: unknown,
+    reply: { status: (code: number) => { send: (body: object) => unknown } },
+  ) => {
+    try {
+      await checkDatabase(db);
+      return { status: 'ready', timestamp: new Date().toISOString() };
+    } catch {
+      return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
+    }
+  };
+  app.get('/health', ready);
+  app.get('/health/ready', ready);
   app.get('/leads', async (request, reply) => {
     const parsed = listLeadsSchema.safeParse(request.query);
     if (!parsed.success)
@@ -27,6 +50,11 @@ export function buildApp(db: Database) {
       return reply
         .status(400)
         .send({ error: 'Invalid collection parameters', details: parsed.error.flatten() });
+    if (parsed.data.limit > dailyLeadLimit)
+      return reply.status(400).send({
+        error: 'Invalid collection parameters',
+        details: { fieldErrors: { limit: [`Limit exceeds DAILY_LEAD_LIMIT (${dailyLeadLimit})`] } },
+      });
     const job = await enqueueCollection(db, parsed.data);
     return reply.status(202).send(job);
   });

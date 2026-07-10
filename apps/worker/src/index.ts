@@ -1,12 +1,7 @@
-import {
-  claimCollection,
-  createDatabase,
-  finishCollection,
-  insertLeads,
-} from '@lead-finder/database';
-import { calculateLeadScore } from '@lead-finder/lead-scoring';
+import { createDatabase } from '@lead-finder/database';
 import { OverpassClient } from '@lead-finder/overpass-client';
-import { collectSchema, parseWorkerConfig } from '@lead-finder/shared';
+import { parseWorkerConfig } from '@lead-finder/shared';
+import { processNextJob } from './process-job.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const overpass = new OverpassClient({
@@ -34,21 +29,8 @@ process.on('SIGINT', requestGracefulStop);
 process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error));
 process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (running) {
-  const job = await claimCollection(db);
-  if (!job) {
+  if (!(await processNextJob(db, overpass))) {
     await new Promise((resolve) => setTimeout(resolve, config.WORKER_POLL_INTERVAL_MS));
-    continue;
-  }
-  try {
-    const input = collectSchema.parse(job.payload);
-    const normalized = await overpass.collect(input);
-    await insertLeads(
-      db,
-      normalized.map((lead) => ({ ...lead, score: calculateLeadScore(lead) })),
-    );
-    await finishCollection(db, job.id);
-  } catch (error) {
-    await finishCollection(db, job.id, error instanceof Error ? error.message : 'Unknown error');
   }
 }
 await shutdown();

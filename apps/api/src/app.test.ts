@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Database } from '@lead-finder/database';
-import { buildApp, csvCell } from './app.js';
+import { buildApp, creationStatus, csvCell } from './app.js';
 
 describe('csvCell', () => {
   it.each(['=SUM(1,1)', '+cmd', '-2+3', '@formula'])('neutralizes CSV formula %s', (value) =>
@@ -15,6 +15,11 @@ describe('csvCell', () => {
 describe('CRM routes', () => {
   const db = {} as Database;
   const leadId = '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa';
+
+  it('uses 201 for a new creation and 200 for an idempotent replay', () => {
+    expect(creationStatus(false)).toBe(201);
+    expect(creationStatus(true)).toBe(200);
+  });
 
   it('rejects malformed stage commands before accessing the database', async () => {
     const app = buildApp(db);

@@ -59,8 +59,11 @@ jobs:
         run: |
           for image in postgres:16-alpine caddy:2.10-alpine n8nio/n8n:1.99.1; do
             manifest="$(docker buildx imagetools inspect --raw "$image")"
-            grep -q '"architecture":"amd64"' <<<"$manifest"
-            grep -q '"architecture":"arm64"' <<<"$manifest"
+            jq -e '
+              [.manifests[]?.platform?.architecture] as $architectures
+              | ($architectures | index("amd64")) != null
+                and ($architectures | index("arm64")) != null
+            ' <<<"$manifest" >/dev/null
           done
   integration:
     runs-on: ubuntu-latest

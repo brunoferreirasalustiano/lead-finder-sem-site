@@ -75,8 +75,15 @@ echo '::endgroup::'
 
 echo '::group::Forced rollback'
 sleep 1
-if DEPLOY_TEST_FORCE_FAILURE=true DEPLOY_REF="$failure_sha" scripts/deploy-production.sh >/tmp/deploy-rollback.log 2>&1; then exit 1; fi
-[[ "$(git rev-parse HEAD)" == "$update_sha" ]]
+rollback_log_file=/tmp/deploy-rollback.log
+set +e
+DEPLOY_TEST_FORCE_FAILURE=true DEPLOY_REF="$failure_sha" scripts/deploy-production.sh 2>&1 | tee "$rollback_log_file"
+rollback_status=${PIPESTATUS[0]}
+set -e
+actual_rollback_sha="$(git rev-parse HEAD)"
+printf '[smoke] rollback status=%s expected_sha=%s actual_sha=%s\n' "$rollback_status" "$update_sha" "$actual_rollback_sha"
+[[ "$rollback_status" -ne 0 ]]
+[[ "$actual_rollback_sha" == "$update_sha" ]]
 grep -q 'Rollback de codigo executado' /tmp/deploy-rollback.log
 echo '::endgroup::'
 

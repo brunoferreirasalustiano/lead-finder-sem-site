@@ -22,6 +22,14 @@ export class QualificationError extends Error {
 type Audit = { actor: string; source: string; reason?: string | undefined };
 const fingerprint = (parts: unknown[]) =>
   createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+const hasPostgresCode = (error: unknown, code: string): boolean => {
+  let current = error;
+  while (current && typeof current === 'object') {
+    if ((current as { code?: string }).code === code) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+};
 
 export async function getQualification(db: Database, leadId: string) {
   const lead = (
@@ -186,7 +194,7 @@ export async function upsertContact(
     });
   } catch (error) {
     if (error instanceof QualificationError) throw error;
-    if ((error as { code?: string }).code === '23505')
+    if (hasPostgresCode(error, '23505'))
       throw new QualificationError('Verified contact belongs to another lead', 'DUPLICATE_CONTACT');
     throw error;
   }

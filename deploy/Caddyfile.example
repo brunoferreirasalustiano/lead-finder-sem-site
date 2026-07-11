@@ -1,0 +1,40 @@
+{
+	email {$ACME_EMAIL:off}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(security_headers) {
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}
+
+{$API_DOMAIN:api.DOMINIO_EXEMPLO} {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy api:3000 {
+		health_uri /health/ready
+		health_interval 30s
+		health_timeout 5s
+	}
+}
+
+{$N8N_DOMAIN:automacao.DOMINIO_EXEMPLO} {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 16MB
+	}
+	reverse_proxy n8n:5678
+}
+

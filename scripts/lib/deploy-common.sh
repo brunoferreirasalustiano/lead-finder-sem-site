@@ -25,7 +25,8 @@ config_value() {
 }
 
 validate_backup_settings() {
-  local app_dir="$1" backup_dir="$2" retention="$3" root="${app_dir%/}/backups"
+  local app_dir="$1" backup_dir="$2" retention="$3" root
+  root="${app_dir%/}/backups"
   [[ "$backup_dir" == /* ]] || die 'BACKUP_DIR deve ser absoluto.'
   [[ "$backup_dir" != *'/../'* && "$backup_dir" != */.. && "$backup_dir" != *'//'* ]] || die 'BACKUP_DIR contem path traversal.'
   case "$backup_dir" in "$root"|"$root"/*) ;; *) die "BACKUP_DIR deve permanecer dentro de ${root}." ;; esac

@@ -3,7 +3,9 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.production.example
 coverage/
+/backups/
 *.tsbuildinfo
 *.log
 .DS_Store

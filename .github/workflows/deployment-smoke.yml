@@ -1,0 +1,20 @@
+name: Deployment smoke
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/deployment-smoke.yml'
+permissions:
+  contents: read
+jobs:
+  first-and-update-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Run disposable production deployment smoke
+        run: scripts/production-deploy-smoke.sh

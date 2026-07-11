@@ -1,0 +1,58 @@
+x-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: ${LOG_MAX_FILES:-5}
+
+x-security: &production-security
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    <<: *production-security
+    ports: !reset []
+    logging: *production-logging
+    networks: [database]
+  api:
+    <<: *production-security
+    ports: !reset []
+    expose: ['3000']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    logging: *production-logging
+    networks: [database, proxy]
+  migrate:
+    <<: *production-security
+    ports: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    logging: *production-logging
+    networks: [database]
+  worker:
+    <<: *production-security
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    logging: *production-logging
+    networks: [database]
+  n8n:
+    <<: *production-security
+    profiles: [n8n]
+    ports: !reset []
+    expose: ['5678']
+    environment:
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      N8N_PERSONALIZATION_ENABLED: 'false'
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
+      N8N_HOST: ${N8N_DOMAIN:-}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://${N8N_DOMAIN:-}/
+    logging: *production-logging
+    networks: [proxy]
+networks:
+  internal: { internal: true }
+  database: { internal: true }
+  proxy:

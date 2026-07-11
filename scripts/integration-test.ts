@@ -5,6 +5,7 @@ import { count, eq } from 'drizzle-orm';
 import {
   collectionJobs,
   createDatabase,
+  crmTasks,
   enqueueCollection,
   leadContacts,
   leadEvidence,
@@ -165,6 +166,104 @@ try {
   );
   assert.equal((await db.select({ value: count() }).from(leadContacts))[0]?.value, 1);
   assert.equal((await listOutreachEligibleLeads(db)).length, 1);
+
+  const actor = 'crm-integration';
+  const opportunityPayload = {
+    title: 'Website rebuild',
+    value: '12500.00',
+    expectedCloseAt: '2026-07-31T18:00:00Z',
+    owner: actor,
+    actor,
+    idempotencyKey: 'opportunity-create-001',
+  };
+  const opportunityCreated = await app.inject({
+    method: 'POST', url: `/leads/${lead.id}/opportunities`, payload: opportunityPayload,
+  });
+  const opportunityReplay = await app.inject({
+    method: 'POST', url: `/leads/${lead.id}/opportunities`, payload: opportunityPayload,
+  });
+  assert.equal(opportunityCreated.statusCode, 201);
+  assert.equal(opportunityReplay.statusCode, 200);
+  const opportunity = opportunityCreated.json<{ id: string; version: number }>();
+  assert.equal(opportunityReplay.json<{ id: string }>().id, opportunity.id);
+  assert.equal((await app.inject({
+    method: 'POST', url: `/leads/${lead.id}/opportunities`,
+    payload: { ...opportunityPayload, title: 'Conflicting retry' },
+  })).statusCode, 409);
+
+  const stageBase = { actor, expectedVersion: 1, idempotencyKey: 'stage-transition-001' };
+  const concurrentStages = await Promise.all([
+    app.inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, stage: 'EM_VALIDACAO' } }),
+    app.inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, idempotencyKey: 'stage-transition-002', stage: 'EM_VALIDACAO' } }),
+  ]);
+  assert.deepEqual(concurrentStages.map((response) => response.statusCode).sort(), [200, 409]);
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-invalid-001', stage: 'GANHO' },
+  })).statusCode, 422);
+
+  const notePayload = { body: 'Discovery completed', actor, idempotencyKey: 'note-create-0001' };
+  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 201);
+  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: { ...notePayload, body: 'Changed retry' } })).statusCode, 409);
+
+  const taskPayload = {
+    title: 'Overdue follow-up', dueAt: '2026-07-11T09:59:59Z', priority: 'ALTA',
+    assignee: actor, actor, idempotencyKey: 'task-create-0001',
+  };
+  const taskCreated = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
+  const taskReplay = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
+  assert.equal(taskCreated.statusCode, 201);
+  assert.equal(taskReplay.statusCode, 200);
+  const task = taskCreated.json<{ id: string; version: number }>();
+  assert.equal(taskReplay.json<{ id: string }>().id, task.id);
+  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 1);
+  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T09:59:59Z' })).json<unknown[]>().length, 0);
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/tasks/${task.id}/reschedule`,
+    payload: { actor, expectedVersion: task.version, idempotencyKey: 'task-reschedule-001', dueAt: '2026-07-11T10:30:00Z', reason: 'Customer request' },
+  })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T10:30:00Z' })).json<unknown[]>().length, 1);
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/tasks/${task.id}/complete`,
+    payload: { actor, expectedVersion: task.version + 1, idempotencyKey: 'task-complete-0001', completedAt: '2026-07-11T10:15:00Z' },
+  })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T11:00:00Z' })).json<unknown[]>().length, 0);
+
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-no-contact-001', stage: 'NAO_CONTATAR', reason: 'Explicit opt-out' },
+  })).statusCode, 200);
+  assert.equal((await listOutreachEligibleLeads(db)).length, 0);
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor, expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-bad', stage: 'NOVO' },
+  })).statusCode, 422);
+  assert.equal((await app.inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor, expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { ticket: 'CONSENT-1' } },
+  })).statusCode, 200);
+  const timeline = (await app.inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string }> }>().items;
+  assert.ok(timeline.length >= 9);
+  assert.equal(new Set(timeline.map((item) => item.id)).size, timeline.length, 'timeline must not duplicate events on retries');
+  for (let index = 1; index < timeline.length; index += 1)
+    assert.ok(timeline[index - 1]!.createdAt >= timeline[index]!.createdAt, 'timeline must be newest-first');
+  assert.ok(timeline.some((item) => item.eventType === 'STAGE_CHANGED'));
+
+  const excludedLeads = await db.insert(leads).values([
+    { osmType: 'node', osmId: 'blocked-crm', category: 'oficinas', score: 10, status: 'QUALIFICADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO', isBlocked: true },
+    { osmType: 'node', osmId: 'dnc-crm', category: 'oficinas', score: 10, status: 'QUALIFICADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO', doNotContact: true },
+    { osmType: 'node', osmId: 'incompatible-crm', category: 'oficinas', score: 10, status: 'PENDENTE_VALIDACAO', qualificationStatus: 'PENDENTE', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: 'stage-dnc-crm', category: 'oficinas', score: 10, status: 'QUALIFICADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NAO_CONTATAR' },
+  ]).returning();
+  await db.insert(crmTasks).values(excludedLeads.map((excluded, index) => ({
+    leadId: excluded.id, title: `Excluded ${index}`, dueAt: new Date('2026-07-11T09:00:00Z'), owner: actor,
+  })));
+  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 0,
+    'blocked, do-not-contact, incompatible, and NAO_CONTATAR leads must be absent from queues');
+  assert.equal((await listOutreachEligibleLeads(db)).some((candidate) => excludedLeads.some((excluded) => excluded.id === candidate.id)), false);
+  for (const excluded of excludedLeads) await db.delete(leads).where(eq(leads.id, excluded.id));
+
   const evidencePayload = {
     ...audit,
     reference: 'https://example.test/business',

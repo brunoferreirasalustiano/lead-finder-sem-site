@@ -20,6 +20,19 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-not-a-secret
         run: docker compose config
+      - name: Validate deployment scripts
+        run: |
+          bash -n scripts/setup-oracle-vps.sh
+          bash -n scripts/deploy-production.sh
+          bash -n scripts/backup-postgres.sh
+          bash -n scripts/restore-postgres.sh
+      - name: Validate production Docker Compose
+        env:
+          POSTGRES_PASSWORD: ci-not-a-secret
+          N8N_ENCRYPTION_KEY: ci-not-a-secret
+          API_DOMAIN: api.example.invalid
+          N8N_DOMAIN: automation.example.invalid
+        run: docker compose -f docker-compose.yml -f docker-compose.production.yml config
       - name: Build API image
         run: docker build -f apps/api/Dockerfile -t lead-finder-api:test .
       - name: Build worker image

@@ -1,5 +1,7 @@
 # Lead Finder Sem Site
 
+> Deploy manual na Oracle Cloud: consulte [`docs/ORACLE_DEPLOY.md`](docs/ORACLE_DEPLOY.md) para preparacao, HTTPS, tunel SSH, backup, restauracao e rollback.
+
 Automação self-hosted para localizar empresas sem site cadastrado usando fontes gratuitas. A primeira integração usa OpenStreetMap e Overpass API; o projeto foi desenhado para uma VPS Oracle Cloud Always Free, sem depender de APIs pagas.
 
 ## Arquitetura

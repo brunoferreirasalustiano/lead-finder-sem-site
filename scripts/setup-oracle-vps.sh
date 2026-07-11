@@ -66,4 +66,3 @@ Proximos passos manuais:
 3. Clone o repositorio privado em ${APP_DIR} como ${DEPLOY_USER}.
 4. Crie ${APP_DIR}/.env com permissao 600; este script nunca solicita secrets.
 SUMMARY
-

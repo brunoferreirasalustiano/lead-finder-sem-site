@@ -53,4 +53,3 @@ done
 compose exec -T api node -e "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 trap - ERR
 log "Deploy concluido no commit ${target_sha}."
-

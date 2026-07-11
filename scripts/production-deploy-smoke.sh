@@ -70,6 +70,7 @@ second_log="$(cat "$second_log_file")"
 grep -q 'Backup pre-deploy concluido antes das migrations' <<<"$second_log"
 backup="$(find "$app_dir/backups" -type f -name 'leadfinder-*.dump' -size +0c -print -quit)"
 [[ -n "$backup" ]]
+[[ -z "$(git status --porcelain)" ]]
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.tunnel.yml exec -T postgres psql -U leadfinder -d leadfinder -Atc "select count(*) from schema_migrations where version='smoke-data'" | grep -qx 1
 echo '::endgroup::'
 

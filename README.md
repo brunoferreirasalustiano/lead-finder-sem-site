@@ -300,7 +300,7 @@ Responsável:
 | 2026-07-11 | PR #3 / `dee9d6d765599255bfaf711de23bbb587785f354` | GitHub Actions | G1–G5 | CI `29154038462`; smoke `29154038485` | PASS |
 | 2026-07-11 | `f211d6eb6a9437b51cc14147f11f0d34cb426b6c` | `main` | G6 | `deployment-smoke/post-merge`; run `29155446772` | PASS |
 | pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
-| pendente | PR da Fase 1 | GitHub Actions | G0–G5, G8 | CI, integração PostgreSQL, smoke e multiarch | A VALIDAR |
+| 2026-07-11 | PR #14 / `2ff16a40536b7fdd6e9854c664a8db405624d168` | GitHub Actions | G0–G5, G8 | CI `29159498610`; smoke `29159498641` | PASS |
 | pendente | merge da Fase 1 | `main` | G6 | workflow pós-merge no squash SHA | BLOCKED ATÉ O MERGE |
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.

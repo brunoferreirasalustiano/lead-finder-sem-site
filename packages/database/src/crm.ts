@@ -48,6 +48,14 @@ async function requireCommercialLead(tx: Tx, leadId: string, lock = false) {
   return { ...lead, crmStage: stage };
 }
 
+async function requireOpportunityForLead(tx: Tx, leadId: string, opportunityId?: string) {
+  if (!opportunityId) return;
+  const opportunity = (await tx.select({ id: crmOpportunities.id }).from(crmOpportunities).where(and(
+    eq(crmOpportunities.id, opportunityId), eq(crmOpportunities.leadId, leadId),
+  )).limit(1))[0];
+  if (!opportunity) throw new CrmDomainError('Opportunity not found for lead', 'NOT_FOUND');
+}
+
 async function replay<T>(tx: Tx, scope: string, key: string, payload: unknown): Promise<MutationResult<T> | null> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${scope}:${key}`}))`);
   const existing = (await tx.select().from(crmIdempotencyKeys).where(and(
@@ -130,7 +138,7 @@ export async function updateCrmAssignment(db: Database, leadId: string, input: {
 }
 
 export async function addNote(db: Database, leadId: string, input: NoteCreateInput & { opportunityId?: string }) {
-  return db.transaction(async (tx) => { const scope = `lead:${leadId}:note`; const old = await replay<Note>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId);
+  return db.transaction(async (tx) => { const scope = `lead:${leadId}:note`; const old = await replay<Note>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId); await requireOpportunityForLead(tx, leadId, input.opportunityId);
     const row = (await tx.insert(crmNotes).values({ leadId, opportunityId: input.opportunityId, body: input.body, author: input.actor }).returning())[0]!;
     await event(tx, { leadId, opportunityId: input.opportunityId, eventType: 'NOTE_ADDED', actor: input.actor, newValue: row }); await remember(tx, scope, input.idempotencyKey, input, 'note', row.id, row); return { data: row, replayed: false }; });
 }
@@ -145,13 +153,15 @@ export async function addTag(db: Database, leadId: string, name: string, input: 
 export async function removeTag(db: Database, leadId: string, name: string, input: { actor: string; idempotencyKey: string }) {
   return db.transaction(async (tx) => { const payload = { name, ...input }; const scope = `lead:${leadId}:tag:remove`; const old = await replay<RemovedTagResult>(tx, scope, input.idempotencyKey, payload); if (old) return old; await requireCommercialLead(tx, leadId);
     const tag = (await tx.select().from(crmTags).where(eq(crmTags.normalizedName, normalizeTag(name))).limit(1))[0]; if (!tag) throw new CrmDomainError('Tag not found', 'NOT_FOUND');
-    await tx.delete(crmLeadTags).where(and(eq(crmLeadTags.leadId, leadId), eq(crmLeadTags.tagId, tag.id))); const result = { removed: true, tagId: tag.id, leadId };
+    const removed = await tx.delete(crmLeadTags).where(and(eq(crmLeadTags.leadId, leadId), eq(crmLeadTags.tagId, tag.id))).returning({ tagId: crmLeadTags.tagId });
+    if (removed.length === 0) throw new CrmDomainError('Tag is not assigned to lead', 'NOT_FOUND');
+    const result = { removed: true, tagId: tag.id, leadId };
     await event(tx, { leadId, eventType: 'TAG_REMOVED', actor: input.actor, newValue: result }); await remember(tx, scope, input.idempotencyKey, payload, 'tag', tag.id, result); return { data: result, replayed: false }; });
 }
 export const listTags = (db: Database, leadId: string, options?: ListOptions) => { const page = normalizeListOptions(options); return db.select({ id: crmTags.id, name: crmTags.name, createdAt: crmLeadTags.createdAt }).from(crmLeadTags).innerJoin(crmTags, eq(crmTags.id, crmLeadTags.tagId)).where(eq(crmLeadTags.leadId, leadId)).orderBy(asc(crmTags.name)).limit(page.limit).offset(page.offset); };
 
 export async function createTask(db: Database, leadId: string, input: TaskCreateInput & { opportunityId?: string }) {
-  return db.transaction(async (tx) => { const scope = `lead:${leadId}:task:create`; const old = await replay<Task>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId);
+  return db.transaction(async (tx) => { const scope = `lead:${leadId}:task:create`; const old = await replay<Task>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId); await requireOpportunityForLead(tx, leadId, input.opportunityId);
     const row = (await tx.insert(crmTasks).values({ leadId, opportunityId: input.opportunityId, title: input.title, description: input.description, dueAt: new Date(input.dueAt), priority: input.priority, owner: input.assignee }).returning())[0]!;
     await event(tx, { leadId, taskId: row.id, opportunityId: input.opportunityId, eventType: 'TASK_CREATED', actor: input.actor, newValue: row }); await remember(tx, scope, input.idempotencyKey, input, 'task', row.id, row); return { data: row, replayed: false }; });
 }

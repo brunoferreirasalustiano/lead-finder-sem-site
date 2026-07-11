@@ -2,7 +2,16 @@ import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { count, eq } from 'drizzle-orm';
-import { collectionJobs, createDatabase, enqueueCollection, leads } from '@lead-finder/database';
+import {
+  collectionJobs,
+  createDatabase,
+  enqueueCollection,
+  leadContacts,
+  leadEvidence,
+  leadQualificationHistory,
+  leads,
+  listOutreachEligibleLeads,
+} from '@lead-finder/database';
 import { OverpassClient } from '@lead-finder/overpass-client';
 import { buildApp } from '../apps/api/src/app.js';
 import { processNextJob } from '../apps/worker/src/process-job.js';
@@ -100,6 +109,115 @@ try {
   const claims = await Promise.all([processNextJob(db, overpass), processNextJob(db, overpass)]);
   assert.deepEqual(claims.sort(), [false, true]);
   assert.equal((await db.select({ value: count() }).from(leads))[0]?.value, 1);
+  const lead = (await db.select().from(leads).limit(1))[0]!;
+  const audit = { actor: 'integration-test', source: 'test', reason: 'phase-1 validation' };
+  assert.equal(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: `/leads/${lead.id}/qualification`,
+        payload: { ...audit, status: 'SEM_SITE_CONFIRMADO' },
+      })
+    ).statusCode,
+    422,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: `/leads/${lead.id}/qualification`,
+        payload: { ...audit, status: 'VALIDANDO' },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: `/leads/${lead.id}/qualification`,
+        payload: { ...audit, status: 'SEM_SITE_CONFIRMADO' },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (await listOutreachEligibleLeads(db)).length,
+    0,
+    'confirmed lead without verified contact must be blocked',
+  );
+  const contactPayload = {
+    ...audit,
+    type: 'TELEFONE',
+    value: '(11) 99999-1234',
+    confidence: 0.95,
+    verifiedAt: new Date().toISOString(),
+    isValid: true,
+    possibleWhatsapp: true,
+  };
+  const concurrentContacts = await Promise.all([
+    app.inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
+    app.inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
+  ]);
+  assert.deepEqual(
+    concurrentContacts.map((response) => response.statusCode),
+    [200, 200],
+  );
+  assert.equal((await db.select({ value: count() }).from(leadContacts))[0]?.value, 1);
+  assert.equal((await listOutreachEligibleLeads(db)).length, 1);
+  const evidencePayload = {
+    ...audit,
+    reference: 'https://example.test/business',
+    result: 'no-site',
+    confidence: 0.9,
+    observedAt: new Date().toISOString(),
+    notes: 'deterministic evidence',
+  };
+  await Promise.all([
+    app.inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
+    app.inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
+  ]);
+  assert.equal((await db.select({ value: count() }).from(leadEvidence))[0]?.value, 1);
+  assert.ok((await db.select({ value: count() }).from(leadQualificationHistory))[0]!.value >= 5);
+  const secondLead = (
+    await db
+      .insert(leads)
+      .values({
+        osmType: 'node',
+        osmId: 'dedup-2',
+        category: 'oficinas',
+        score: 10,
+        status: 'PENDENTE_VALIDACAO',
+      })
+      .returning()
+  )[0]!;
+  assert.equal(
+    (
+      await app.inject({
+        method: 'PUT',
+        url: `/leads/${secondLead.id}/contacts`,
+        payload: contactPayload,
+      })
+    ).statusCode,
+    409,
+    'verified phone must not identify two leads',
+  );
+  await db.delete(leads).where(eq(leads.id, secondLead.id));
+  assert.equal(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: `/leads/${lead.id}/qualification`,
+        payload: { ...audit, status: 'DESCARTADO', doNotContact: true },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (await listOutreachEligibleLeads(db)).length,
+    0,
+    'discarded/no-contact lead must never be selected',
+  );
   assert.equal(
     (await db.select().from(collectionJobs).where(eq(collectionJobs.status, 'COMPLETED'))).length,
     1,
@@ -130,7 +248,7 @@ try {
   assert.equal(csv.headers['content-disposition'], 'attachment; filename="leads.csv"');
   assert.match(csv.body, /"'=Oficina, ""São José""\nCentro"/);
   console.log(
-    'Integration evidence: ready=200, concurrentClaims=1, leads=1, duplicateLeads=1, failedJobs=1, csvInjection=neutralized',
+    'Integration evidence: ready=200, concurrentClaims=1, qualificationTransitions=validated, contacts=deduplicated, evidence=idempotent, audit=recorded, outreach=blocked, csvInjection=neutralized',
   );
 } finally {
   await app.close();

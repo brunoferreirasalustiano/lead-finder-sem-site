@@ -1,10 +1,6 @@
 {
-	email {$ACME_EMAIL:off}
-	servers {
-		trusted_proxies static private_ranges
-	}
+	email {$ACME_EMAIL}
 }
-
 (security_headers) {
 	header {
 		-Server
@@ -15,25 +11,14 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 }
-
-{$API_DOMAIN:api.DOMINIO_EXEMPLO} {
+{$API_DOMAIN} {
 	import security_headers
 	encode zstd gzip
-	request_body {
-		max_size 1MB
-	}
-	reverse_proxy api:3000 {
-		health_uri /health/ready
-		health_interval 30s
-		health_timeout 5s
-	}
+	reverse_proxy api:3000
 }
-
-{$N8N_DOMAIN:automacao.DOMINIO_EXEMPLO} {
+{$N8N_DOMAIN} {
 	import security_headers
 	encode zstd gzip
-	request_body {
-		max_size 16MB
-	}
+	request_body { max_size 16MB }
 	reverse_proxy n8n:5678
 }

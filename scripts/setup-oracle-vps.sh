@@ -4,9 +4,9 @@ set -Eeuo pipefail
 DEPLOY_USER="${DEPLOY_USER:-leadfinder-deploy}"
 APP_DIR="${APP_DIR:-/opt/lead-finder}"
 SSH_SERVICE="${SSH_SERVICE:-OpenSSH}"
-
-log() { printf '[setup] %s\n' "$*"; }
-die() { printf '[setup] ERROR: %s\n' "$*" >&2; exit 1; }
+LOG_PREFIX='[setup]'
+# shellcheck source=lib/deploy-common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/deploy-common.sh"
 
 [[ "${EUID}" -eq 0 ]] || die 'Execute como root (use sudo).'
 [[ -r /etc/os-release ]] || die 'Nao foi possivel identificar o sistema operacional.'
@@ -38,7 +38,15 @@ if ! id "${DEPLOY_USER}" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "${DEPLOY_USER}"
 fi
 usermod -aG docker "${DEPLOY_USER}"
-install -d -m 0750 -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" "${APP_DIR}" "${APP_DIR}/backups"
+assert_clone_target_safe "${APP_DIR}"
+if [[ ! -d "${APP_DIR}" ]]; then
+  install -d -m 0750 -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" "${APP_DIR}"
+elif [[ ! -d "${APP_DIR}/.git" ]]; then
+  chown "${DEPLOY_USER}:${DEPLOY_USER}" "${APP_DIR}"
+  chmod 0750 "${APP_DIR}"
+else
+  log "Repositorio existente preservado em ${APP_DIR}."
+fi
 
 log 'Configurando firewall sem alterar a porta ou a autenticacao SSH.'
 ufw default deny incoming

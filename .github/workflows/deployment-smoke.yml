@@ -1,6 +1,13 @@
 name: Deployment smoke
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/deployment-smoke.yml'
   pull_request:
     paths:
       - 'deploy/**'
@@ -9,6 +16,9 @@ on:
       - '.github/workflows/deployment-smoke.yml'
 permissions:
   contents: read
+concurrency:
+  group: deployment-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   first-and-update-deploy:
     runs-on: ubuntu-latest

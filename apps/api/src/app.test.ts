@@ -7,4 +7,6 @@ describe('csvCell', () => {
   );
   it('escapes commas, quotes and line breaks', () =>
     expect(csvCell('A,"B"\nC')).toBe('"A,""B""\nC"'));
+  it('documents the export cell behavior without changing the 100-row API cap', () =>
+    expect(csvCell(null)).toBe('""'));
 });

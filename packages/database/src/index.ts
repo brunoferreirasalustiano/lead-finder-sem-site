@@ -1,9 +1,15 @@
 import { and, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import type { LeadStatus, NormalizedLead } from '@lead-finder/shared';
+import {
+  normalizeAddress,
+  normalizeBusinessName,
+  type LeadStatus,
+  type NormalizedLead,
+} from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
 export * from './schema.js';
+export * from './qualification.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed
@@ -32,15 +38,12 @@ export async function insertLeads(
     latitude: lead.latitude?.toString(),
     longitude: lead.longitude?.toString(),
     status: deriveStatus(lead),
+    normalizedName: lead.name ? normalizeBusinessName(lead.name) || null : null,
+    normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
   }));
   if (values.length === 0) return 0;
-  return (
-    await db
-      .insert(leads)
-      .values(values)
-      .onConflictDoNothing({ target: [leads.osmType, leads.osmId] })
-      .returning({ id: leads.id })
-  ).length;
+  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
+    .length;
 }
 export interface LeadFilters {
   page: number;

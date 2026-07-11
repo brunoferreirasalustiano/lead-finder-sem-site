@@ -4,9 +4,23 @@ import {
   enqueueCollection,
   getLead,
   listLeads,
+  addEvidence,
+  getQualification,
+  listContacts,
+  listEvidence,
+  listHistory,
+  QualificationError,
+  updateQualification,
+  upsertContact,
   type Database,
 } from '@lead-finder/database';
-import { collectSchema, listLeadsSchema } from '@lead-finder/shared';
+import {
+  collectSchema,
+  contactInputSchema,
+  evidenceInputSchema,
+  listLeadsSchema,
+  qualificationUpdateSchema,
+} from '@lead-finder/shared';
 import { z } from 'zod';
 
 const idSchema = z.string().uuid();
@@ -43,6 +57,80 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid id' });
     const lead = await getLead(db, parsed.data);
     return lead ?? reply.status(404).send({ error: 'Lead not found' });
+  });
+  const qualificationError = (
+    error: unknown,
+    reply: { status: (code: number) => { send: (body: object) => unknown } },
+  ) => {
+    if (!(error instanceof QualificationError)) throw error;
+    const status =
+      error.code === 'NOT_FOUND' ? 404 : error.code === 'DUPLICATE_CONTACT' ? 409 : 422;
+    return reply.status(status).send({ error: error.message, code: error.code });
+  };
+  const leadId = (request: { params: unknown }) =>
+    idSchema.safeParse((request.params as { id?: unknown }).id);
+  app.get('/leads/:id/qualification', async (request, reply) => {
+    const id = leadId(request);
+    if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
+    try {
+      return {
+        ...(await getQualification(db, id.data)),
+        evidence: await listEvidence(db, id.data),
+      };
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
+  });
+  app.post('/leads/:id/evidence', async (request, reply) => {
+    const id = leadId(request);
+    const body = evidenceInputSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid evidence' });
+    try {
+      return reply.status(201).send(await addEvidence(db, id.data, body.data));
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
+  });
+  app.put('/leads/:id/contacts', async (request, reply) => {
+    const id = leadId(request);
+    const body = contactInputSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid contact' });
+    try {
+      return await upsertContact(db, id.data, body.data);
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
+  });
+  app.get('/leads/:id/contacts', async (request, reply) => {
+    const id = leadId(request);
+    if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
+    try {
+      await getQualification(db, id.data);
+      return listContacts(db, id.data);
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
+  });
+  app.patch('/leads/:id/qualification', async (request, reply) => {
+    const id = leadId(request);
+    const body = qualificationUpdateSchema.safeParse(request.body);
+    if (!id.success || !body.success)
+      return reply.status(400).send({ error: 'Invalid qualification update' });
+    try {
+      return await updateQualification(db, id.data, body.data);
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
+  });
+  app.get('/leads/:id/history', async (request, reply) => {
+    const id = leadId(request);
+    if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
+    try {
+      await getQualification(db, id.data);
+      return listHistory(db, id.data);
+    } catch (error) {
+      return qualificationError(error, reply);
+    }
   });
   app.post('/collect', async (request, reply) => {
     const parsed = collectSchema.safeParse(request.body);

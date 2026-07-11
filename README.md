@@ -128,14 +128,14 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 
 ### Fase 1 — Qualificação e enriquecimento
 
-- [ ] estados `PENDENTE`, `VALIDANDO`, `SITE_ENCONTRADO`, `SEM_SITE_CONFIRMADO`, `INCONCLUSIVO` e `DESCARTADO`;
-- [ ] evidências e fontes de validação;
-- [ ] contatos com tipo, valor, origem, confiança e verificação;
-- [ ] normalização de telefone e e-mail;
-- [ ] detecção de telefone potencialmente habilitado para WhatsApp;
-- [ ] deduplicação por telefone, nome e endereço;
-- [ ] bloqueio de outreach para não confirmados;
-- [ ] auditoria de alterações.
+- [x] estados `PENDENTE`, `VALIDANDO`, `SITE_ENCONTRADO`, `SEM_SITE_CONFIRMADO`, `INCONCLUSIVO` e `DESCARTADO`;
+- [x] evidências e fontes de validação;
+- [x] contatos com tipo, valor, origem, confiança e verificação;
+- [x] normalização de telefone, e-mail, nome empresarial e endereço;
+- [x] indicação conservadora de telefone potencialmente habilitado para WhatsApp;
+- [x] deduplicação por identificador da origem, telefone e nome combinado com endereço;
+- [x] bloqueio reutilizável de outreach para não confirmados, bloqueados, descartados ou sem contato validado;
+- [x] auditoria de alterações.
 
 **Conclusão:** nenhuma campanha consegue selecionar lead não validado.
 
@@ -300,6 +300,8 @@ Responsável:
 | 2026-07-11 | PR #3 / `dee9d6d765599255bfaf711de23bbb587785f354` | GitHub Actions | G1–G5 | CI `29154038462`; smoke `29154038485` | PASS |
 | 2026-07-11 | `f211d6eb6a9437b51cc14147f11f0d34cb426b6c` | `main` | G6 | `deployment-smoke/post-merge`; run `29155446772` | PASS |
 | pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
+| pendente | PR da Fase 1 | GitHub Actions | G0–G5, G8 | CI, integração PostgreSQL, smoke e multiarch | A VALIDAR |
+| pendente | merge da Fase 1 | `main` | G6 | workflow pós-merge no squash SHA | BLOCKED ATÉ O MERGE |
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
@@ -347,7 +349,17 @@ As migrations usam `schema_migrations`; executá-las novamente é seguro.
 - `GET /leads?page=1&pageSize=20&status=SEM_SITE_CADASTRADO&category=oficinas&city=Campinas&minScore=30`
 - `GET /leads/:id`
 - `GET /leads/export.csv`
+- `GET /leads/:id/qualification`
+- `PATCH /leads/:id/qualification`
+- `POST /leads/:id/evidence`
+- `GET /leads/:id/contacts`
+- `PUT /leads/:id/contacts`
+- `GET /leads/:id/history`
 - `POST /collect`
+
+`GET /leads/export.csv` exporta, de forma determinística, no máximo os primeiros 100 registros que correspondem aos filtros. Para conjuntos maiores, use a paginação de `GET /leads`; exportação paginada/completa permanece uma evolução explícita para evitar consumo de memória sem limite.
+
+O núcleo da Fase 1 não envia mensagens. Uma seleção futura para outreach deve obrigatoriamente usar `listOutreachEligibleLeads`: somente leads em `SEM_SITE_CONFIRMADO`, não bloqueados, sem marcação de não contato e com ao menos um contato válido e verificado são retornados.
 
 Exemplo:
 

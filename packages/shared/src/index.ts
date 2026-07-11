@@ -9,6 +9,20 @@ export const leadStatuses = [
   'INVALIDO',
 ] as const;
 export type LeadStatus = (typeof leadStatuses)[number];
+
+export const validationStatuses = [
+  'PENDENTE',
+  'VALIDANDO',
+  'SITE_ENCONTRADO',
+  'SEM_SITE_CONFIRMADO',
+  'INCONCLUSIVO',
+  'DESCARTADO',
+] as const;
+export type ValidationStatus = (typeof validationStatuses)[number];
+
+export const contactTypes = ['TELEFONE', 'WHATSAPP', 'EMAIL'] as const;
+export type ContactType = (typeof contactTypes)[number];
+
 export const categories = [
   'oficinas',
   'autoeletricas',
@@ -23,6 +37,11 @@ export const categories = [
 ] as const;
 export const categorySchema = z.enum(categories);
 export type Category = z.infer<typeof categorySchema>;
+
+const actorSchema = z.string().trim().min(1).max(120);
+const originSchema = z.string().trim().min(1).max(120);
+const reasonSchema = z.string().trim().min(3).max(500);
+const idempotencyKeySchema = z.string().trim().min(8).max(200);
 
 export const collectSchema = z
   .object({
@@ -45,6 +64,64 @@ export const listLeadsSchema = z
     minScore: z.coerce.number().int().min(0).max(100).optional(),
   })
   .strict();
+
+export const validationTransitionSchema = z
+  .object({
+    status: z.enum(validationStatuses),
+    actor: actorSchema,
+    origin: originSchema,
+    reason: reasonSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type ValidationTransitionInput = z.infer<typeof validationTransitionSchema>;
+
+export const evidenceSchema = z
+  .object({
+    source: z.string().trim().min(1).max(200),
+    evidenceType: z.string().trim().min(1).max(100),
+    value: z.string().trim().min(1).max(2_000),
+    metadata: z.record(z.string(), z.unknown()).default({}),
+    actor: actorSchema,
+    origin: originSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type EvidenceInput = z.infer<typeof evidenceSchema>;
+
+export const contactSchema = z
+  .object({
+    type: z.enum(contactTypes),
+    value: z.string().trim().min(3).max(320),
+    source: z.string().trim().min(1).max(200),
+    confidence: z.coerce.number().int().min(0).max(100),
+    actor: actorSchema,
+    origin: originSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type ContactInput = z.infer<typeof contactSchema>;
+
+export const contactActionSchema = z
+  .object({
+    actor: actorSchema,
+    origin: originSchema,
+    reason: reasonSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type ContactActionInput = z.infer<typeof contactActionSchema>;
+
+export const doNotContactSchema = z
+  .object({
+    blocked: z.boolean(),
+    actor: actorSchema,
+    origin: originSchema,
+    reason: reasonSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type DoNotContactInput = z.infer<typeof doNotContactSchema>;
 
 export interface NormalizedLead {
   osmType: 'node' | 'way' | 'relation';

@@ -130,13 +130,13 @@ export const opportunityUpdateSchema = commandSchema.extend({
 }).strict().superRefine((value, context) => {
   if (value.status === 'PERDIDA' && !value.lossReason) context.addIssue({ code: z.ZodIssueCode.custom, path: ['lossReason'], message: 'Loss reason is required' });
 });
-export const noteCreateSchema = z.object({ body: nonBlank(5000), actor: actorSchema, idempotencyKey: idempotencyKeySchema }).strict();
+export const noteCreateSchema = z.object({ body: nonBlank(5000), opportunityId: entityIdSchema.optional(), actor: actorSchema, idempotencyKey: idempotencyKeySchema }).strict();
 export const tagSchema = z.string().trim().min(1).max(50).regex(/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u);
 export const tagMutationSchema = z.object({ actor: actorSchema, idempotencyKey: idempotencyKeySchema }).strict();
 export const taskCreateSchema = z.object({
   title: nonBlank(200), description: z.string().trim().max(2000).optional(), dueAt: utcDateTimeSchema,
   priority: crmPrioritySchema.default('MEDIA'), assignee: nonBlank(100).optional(),
-  actor: actorSchema, idempotencyKey: idempotencyKeySchema,
+  opportunityId: entityIdSchema.optional(), actor: actorSchema, idempotencyKey: idempotencyKeySchema,
 }).strict();
 export const taskCompleteSchema = commandSchema.extend({ completedAt: utcDateTimeSchema.optional() }).strict();
 export const taskRescheduleSchema = commandSchema.extend({ dueAt: utcDateTimeSchema, reason: reasonSchema }).strict();

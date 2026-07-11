@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CrmDomainError, assertCrmTransition, canTransitionCrmStage, crmStageChangeSchema,
   crmStages, crmTransitionGraph, followUpFilterSchema, idempotencyKeySchema, moneySchema,
-  isEligibleForCommercialQueue, opportunityUpdateSchema, taskCreateSchema, utcDateTimeSchema,
+  isEligibleForCommercialQueue, noteCreateSchema, opportunityUpdateSchema, taskCreateSchema, utcDateTimeSchema,
 } from './crm.js';
 
 const command = { actor: 'user-1', idempotencyKey: 'request-123', expectedVersion: 0 };
@@ -58,5 +58,15 @@ describe('CRM contracts', () => {
     expect(opportunityUpdateSchema.safeParse({ ...command, status: 'PERDIDA', lossReason: 'Budget' }).success).toBe(true);
     expect(taskCreateSchema.safeParse({ title: 'Call', dueAt: '2026-07-11T12:00:00Z', actor: 'a', idempotencyKey: 'task-0001' }).success).toBe(true);
     expect(followUpFilterSchema.safeParse({ from: '2026-07-12T00:00:00Z', to: '2026-07-11T00:00:00Z' }).success).toBe(false);
+  });
+
+  it('accepts only valid opportunity UUIDs on notes and tasks', () => {
+    const opportunityId = '123e4567-e89b-12d3-a456-426614174000';
+    const note = { body: 'Context', actor: 'a', idempotencyKey: 'note-0001' };
+    const task = { title: 'Call', dueAt: '2026-07-11T12:00:00Z', actor: 'a', idempotencyKey: 'task-0001' };
+    expect(noteCreateSchema.safeParse({ ...note, opportunityId }).success).toBe(true);
+    expect(taskCreateSchema.safeParse({ ...task, opportunityId }).success).toBe(true);
+    expect(noteCreateSchema.safeParse({ ...note, opportunityId: 'invalid' }).success).toBe(false);
+    expect(taskCreateSchema.safeParse({ ...task, opportunityId: 'invalid' }).success).toBe(false);
   });
 });

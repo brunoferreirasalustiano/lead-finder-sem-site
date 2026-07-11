@@ -22,8 +22,8 @@ record_backup() { events+=(backup); [[ "${BACKUP_FAIL:-false}" != true ]]; }
 
 events=(); perform_predeploy_backup '' record_start record_wait record_backup; [[ ${#events[@]} -eq 0 ]] || die 'Primeiro deploy nao deve tentar backup.'
 events=(); perform_predeploy_backup db-id record_start record_wait record_backup; [[ "${events[*]}" == 'start wait:db-id backup' ]] || die 'Ordem de backup invalida.'
-events=(); BACKUP_FAIL=true; if (perform_predeploy_backup db-id record_start record_wait record_backup) >/dev/null 2>&1; then die 'Falha de pg_dump deveria cancelar.'; fi; unset BACKUP_FAIL
-events=(); WAIT_FAIL=true; if (perform_predeploy_backup db-id record_start record_wait record_backup) >/dev/null 2>&1; then die 'Banco nao saudavel deveria cancelar.'; fi; [[ "${events[*]}" == 'start wait:db-id' ]] || die 'Backup executado com banco parado.'; unset WAIT_FAIL
+events=(); BACKUP_FAIL=true; if perform_predeploy_backup db-id record_start record_wait record_backup >/dev/null 2>&1; then die 'Falha de pg_dump deveria cancelar.'; fi; unset BACKUP_FAIL
+events=(); WAIT_FAIL=true; if perform_predeploy_backup db-id record_start record_wait record_backup >/dev/null 2>&1; then die 'Banco nao saudavel deveria cancelar.'; fi; [[ "${events[*]}" == 'start wait:db-id' ]] || die 'Backup executado com banco parado.'; unset WAIT_FAIL
 events=(); perform_predeploy_backup db-id record_start record_wait record_backup; events+=(migration); [[ "${events[*]}" == 'start wait:db-id backup migration' ]] || die 'Backup deve preceder migration.'
 
 validate_backup_settings /opt/lead-finder /opt/lead-finder/backups 7

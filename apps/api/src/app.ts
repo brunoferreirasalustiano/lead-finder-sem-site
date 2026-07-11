@@ -10,6 +10,24 @@ import {
   listEvidence,
   listHistory,
   QualificationError,
+  CrmDomainError,
+  addNote,
+  addTag,
+  changeCrmStage,
+  completeTask,
+  createOpportunity,
+  createTask,
+  getCrm,
+  listNotes,
+  listOpportunities,
+  listOverdueTasks,
+  listTags,
+  listTasks,
+  listTimeline,
+  listUpcomingFollowUps,
+  removeTag,
+  rescheduleTask,
+  updateOpportunity,
   updateQualification,
   upsertContact,
   type Database,
@@ -20,6 +38,20 @@ import {
   evidenceInputSchema,
   listLeadsSchema,
   qualificationUpdateSchema,
+  crmStageChangeSchema,
+  followUpFilterSchema,
+  noteCreateSchema,
+  noteListFilterSchema,
+  opportunityCreateSchema,
+  opportunityListFilterSchema,
+  opportunityUpdateSchema,
+  tagListFilterSchema,
+  tagMutationSchema,
+  tagSchema,
+  taskCompleteSchema,
+  taskCreateSchema,
+  taskListFilterSchema,
+  taskRescheduleSchema,
 } from '@lead-finder/shared';
 import { z } from 'zod';
 
@@ -69,6 +101,24 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
   };
   const leadId = (request: { params: unknown }) =>
     idSchema.safeParse((request.params as { id?: unknown }).id);
+  const crmError = (
+    error: unknown,
+    reply: { status: (code: number) => { send: (body: object) => unknown } },
+  ) => {
+    if (!(error instanceof CrmDomainError)) throw error;
+    const status = error.code === 'NOT_FOUND' ? 404
+      : error.code === 'VERSION_CONFLICT' || error.code === 'IDEMPOTENCY_CONFLICT' ? 409 : 422;
+    return reply.status(status).send({ error: error.message, code: error.code });
+  };
+  const parseId = (params: unknown, key = 'id') =>
+    idSchema.safeParse((params as Record<string, unknown>)[key]);
+  const page = <T>(items: T[], query: { page: number; pageSize: number }) => ({
+    items: items.slice((query.page - 1) * query.pageSize, query.page * query.pageSize),
+    pagination: { ...query, total: items.length, totalPages: Math.ceil(items.length / query.pageSize) },
+  });
+  const crmRoute = async <T>(reply: Parameters<typeof crmError>[1], operation: () => Promise<T>) => {
+    try { return await operation(); } catch (error) { return crmError(error, reply); }
+  };
   app.get('/leads/:id/qualification', async (request, reply) => {
     const id = leadId(request);
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
@@ -131,6 +181,85 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
     } catch (error) {
       return qualificationError(error, reply);
     }
+  });
+  app.get('/leads/:id/crm', async (request, reply) => {
+    const id = leadId(request); if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
+    return crmRoute(reply, () => getCrm(db, id.data));
+  });
+  app.patch('/leads/:id/crm/stage', async (request, reply) => {
+    const id = leadId(request); const body = crmStageChangeSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM stage change', details: body.success ? undefined : body.error.flatten() });
+    return crmRoute(reply, () => changeCrmStage(db, id.data, body.data));
+  });
+  app.get('/leads/:id/opportunities', async (request, reply) => {
+    const id = leadId(request); const query = opportunityListFilterSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid opportunity query' });
+    const outcome = query.data.status === 'GANHA' ? 'GANHO' : query.data.status === 'PERDIDA' ? 'PERDIDO' : null;
+    return crmRoute(reply, async () => page((await listOpportunities(db, id.data)).filter((item) => !query.data.status || item.outcome === outcome), query.data));
+  });
+  app.post('/leads/:id/opportunities', async (request, reply) => {
+    const id = leadId(request); const body = opportunityCreateSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid opportunity' });
+    return crmRoute(reply, async () => reply.status(201).send(await createOpportunity(db, id.data, body.data)));
+  });
+  app.patch('/opportunities/:id', async (request, reply) => {
+    const id = parseId(request.params); const body = opportunityUpdateSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid opportunity update' });
+    return crmRoute(reply, () => updateOpportunity(db, id.data, body.data));
+  });
+  app.get('/leads/:id/notes', async (request, reply) => {
+    const id = leadId(request); const query = noteListFilterSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid note query' });
+    return crmRoute(reply, async () => page(await listNotes(db, id.data), query.data));
+  });
+  app.post('/leads/:id/notes', async (request, reply) => {
+    const id = leadId(request); const body = noteCreateSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid note' });
+    return crmRoute(reply, async () => reply.status(201).send(await addNote(db, id.data, body.data)));
+  });
+  app.get('/leads/:id/tags', async (request, reply) => {
+    const id = leadId(request); const query = tagListFilterSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid tag query' });
+    return crmRoute(reply, async () => page(await listTags(db, id.data), query.data));
+  });
+  for (const method of ['PUT', 'DELETE'] as const) app.route({ method, url: '/leads/:id/tags/:tag', handler: async (request, reply) => {
+    const id = leadId(request); const tag = tagSchema.safeParse((request.params as { tag?: unknown }).tag); const body = tagMutationSchema.safeParse(request.body);
+    if (!id.success || !tag.success || !body.success) return reply.status(400).send({ error: 'Invalid tag mutation' });
+    return crmRoute(reply, () => method === 'PUT' ? addTag(db, id.data, tag.data, body.data) : removeTag(db, id.data, tag.data, body.data));
+  }});
+  app.get('/leads/:id/tasks', async (request, reply) => {
+    const id = leadId(request); const query = taskListFilterSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid task query' });
+    return crmRoute(reply, async () => page((await listTasks(db, id.data)).filter((item) => (!query.data.status || item.status === query.data.status) && (!query.data.priority || item.priority === query.data.priority) && (!query.data.dueAfter || item.dueAt >= new Date(query.data.dueAfter)) && (!query.data.dueBefore || item.dueAt <= new Date(query.data.dueBefore))), query.data));
+  });
+  app.post('/leads/:id/tasks', async (request, reply) => {
+    const id = leadId(request); const body = taskCreateSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid task' });
+    return crmRoute(reply, async () => reply.status(201).send(await createTask(db, id.data, body.data)));
+  });
+  app.patch('/tasks/:id/complete', async (request, reply) => {
+    const id = parseId(request.params); const body = taskCompleteSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid task completion' });
+    return crmRoute(reply, () => completeTask(db, id.data, body.data));
+  });
+  app.patch('/tasks/:id/reschedule', async (request, reply) => {
+    const id = parseId(request.params); const body = taskRescheduleSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid task reschedule' });
+    return crmRoute(reply, () => rescheduleTask(db, id.data, body.data));
+  });
+  app.get('/leads/:id/timeline', async (request, reply) => {
+    const id = leadId(request); const query = noteListFilterSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid timeline query' });
+    return crmRoute(reply, async () => page(await listTimeline(db, id.data), query.data));
+  });
+  app.get('/crm/tasks/overdue', async (request, reply) => {
+    const query = followUpFilterSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid overdue query' });
+    const now = query.data.to ?? query.data.from; if (!now) return reply.status(400).send({ error: 'A deterministic UTC from or to timestamp is required' });
+    return crmRoute(reply, () => listOverdueTasks(db, new Date(now), query.data.pageSize));
+  });
+  app.get('/crm/follow-ups/upcoming', async (request, reply) => {
+    const query = followUpFilterSchema.safeParse(request.query); if (!query.success || !query.data.from || !query.data.to) return reply.status(400).send({ error: 'Valid UTC from and to timestamps are required' });
+    return crmRoute(reply, () => listUpcomingFollowUps(db, new Date(query.data.from!), new Date(query.data.to!), query.data.pageSize, query.data.owner));
   });
   app.post('/collect', async (request, reply) => {
     const parsed = collectSchema.safeParse(request.body);

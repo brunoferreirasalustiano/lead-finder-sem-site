@@ -18,7 +18,8 @@ read_env_value() {
 }
 
 config_value() {
-  local key="$1" fallback="$2" value="${!key:-}"
+  local key="$1" fallback="$2" value
+  value="${!key-}"
   if [[ -z "$value" ]]; then value="$(read_env_value "$key" .env || true)"; fi
   printf '%s' "${value:-$fallback}"
 }

@@ -106,12 +106,13 @@ if [[ "$public_ready" != true ]]; then
   docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml logs --no-color --tail=100 caddy api
   exit 1
 fi
-api_binding="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port api 3000 2>/dev/null || true)"
-postgres_binding="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port postgres 5432 2>/dev/null || true)"
-printf '[smoke] public API binding: %s\n' "${api_binding:-<none>}"
-printf '[smoke] public PostgreSQL binding: %s\n' "${postgres_binding:-<none>}"
-[[ -z "$api_binding" ]]
-[[ -z "$postgres_binding" ]]
+public_config="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml config --format json)"
+api_published_ports="$(jq '(.services.api.ports // []) | length' <<<"$public_config")"
+postgres_published_ports="$(jq '(.services.postgres.ports // []) | length' <<<"$public_config")"
+printf '[smoke] public API published ports: %s\n' "$api_published_ports"
+printf '[smoke] public PostgreSQL published ports: %s\n' "$postgres_published_ports"
+[[ "$api_published_ports" -eq 0 ]]
+[[ "$postgres_published_ports" -eq 0 ]]
 printf '[smoke] checking that API-only Caddyfile has no n8n reference\n'
 ! grep -q n8n deploy/Caddyfile.api.example
 echo '::endgroup::'

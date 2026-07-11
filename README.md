@@ -1,40 +1,326 @@
-# Lead Finder Sem Site
+# Lead Finder CRM — Prospecção de empresas sem site
 
-> Deploy manual na Oracle Cloud: consulte [`docs/ORACLE_DEPLOY.md`](docs/ORACLE_DEPLOY.md) para preparacao, HTTPS, tunel SSH, backup, restauracao e rollback.
+> Documento oficial de visão, arquitetura, execução, roadmap, critérios de aceite e evidências de teste.
+>
+> Ambiente oficial: **VPS Oracle Cloud**, com Ubuntu, Docker Compose, PostgreSQL, API, worker, Caddy e n8n opcional.
 
-Automação self-hosted para localizar empresas sem site cadastrado usando fontes gratuitas. A primeira integração usa OpenStreetMap e Overpass API; o projeto foi desenhado para uma VPS Oracle Cloud Always Free, sem depender de APIs pagas.
+O projeto localiza empresas com indícios de ausência de site, qualifica os leads e organiza a prospecção comercial para oferta de landing pages e sites institucionais. A evolução planejada transforma o coletor atual em um CRM de prospecção multicanal com e-mail, WhatsApp, follow-ups, propostas e métricas.
+
+## Regra fundamental do produto
+
+`SEM_SITE_CADASTRADO` significa apenas que a fonte consultada não informou um site. Isso **não comprova** que a empresa não possui site.
+
+Nenhuma abordagem comercial pode ser enviada antes de:
+
+1. validar a empresa e o indício de ausência de site;
+2. validar o contato e sua origem;
+3. confirmar que o lead não está bloqueado ou marcado como `NAO_CONTATAR`;
+4. aprovar a primeira mensagem;
+5. reservar a idempotência e o limite do canal.
+
+## Objetivo final
+
+```text
+Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
+-> CRM -> Aprovação -> Campanha -> E-mail/WhatsApp -> Resposta
+-> Follow-up -> Proposta -> Ganho/Perdido -> Métricas
+```
+
+## Estado atual
+
+### Implementado
+
+- [x] coleta via OpenStreetMap/Overpass;
+- [x] categorias permitidas e consultas protegidas;
+- [x] normalização, scoring e deduplicação OSM;
+- [x] PostgreSQL e migrations versionadas;
+- [x] fila transacional e worker;
+- [x] API REST, paginação, detalhes e CSV;
+- [x] testes unitários e integração com PostgreSQL real;
+- [x] imagens Docker de API e worker;
+- [x] validação AMD64 e ARM64;
+- [x] Docker Compose de produção;
+- [x] modos `tunnel` e `public`;
+- [x] Caddy, HTTPS e redes privadas;
+- [x] backup, restauração e rollback;
+- [x] smoke descartável de primeiro deploy e atualização;
+- [x] runbook da Oracle Cloud;
+- [x] validação pós-merge no commit exato do `main`.
+
+### Ainda não implementado
+
+- [ ] confirmação externa de ausência de site;
+- [ ] enriquecimento de telefone, WhatsApp, e-mail e redes sociais;
+- [ ] funil de CRM e histórico comercial;
+- [ ] tarefas, notas e follow-ups;
+- [ ] templates e campanhas;
+- [ ] envio por e-mail;
+- [ ] envio por WhatsApp oficial;
+- [ ] opt-out global e lista de bloqueio;
+- [ ] propostas comerciais e PDF;
+- [ ] dashboard de conversão;
+- [ ] automações completas no n8n;
+- [ ] validação operacional em VPS Oracle real.
 
 ## Arquitetura
 
-- `apps/api`: API REST Fastify; valida entradas, pagina leads, exporta CSV e enfileira coletas.
-- `apps/worker`: consome jobs no PostgreSQL, consulta Overpass, normaliza, pontua e persiste leads.
-- `packages/database`: schema Drizzle, repositórios, deduplicação e fila transacional.
-- `packages/overpass-client`: categorias permitidas, construção segura da consulta, timeout e retry.
-- `packages/lead-scoring`: regra pura e testável de pontuação.
-- `packages/shared`: contratos, enums e schemas Zod compartilhados.
-- `database/migrations`: SQL versionado.
-- `n8n/workflows`: reservado para integrações futuras; n8n Community Edition usa profile opcional.
+- `apps/api`: API REST Fastify; valida entradas, pagina leads, exporta CSV e enfileira operações.
+- `apps/worker`: consome jobs, consulta fontes externas, normaliza, pontua e persiste dados.
+- `packages/database`: schema Drizzle, repositórios, deduplicação, migrations e fila transacional.
+- `packages/overpass-client`: categorias, consultas seguras, timeout e retry.
+- `packages/lead-scoring`: regras puras de pontuação.
+- `packages/shared`: contratos, enums e schemas Zod.
+- `database/migrations`: SQL versionado e idempotente.
+- `n8n/workflows`: automações opcionais.
+- `deploy`: Caddyfiles e overrides de produção.
+- `scripts`: setup, deploy, backup, restauração e smoke.
 
-O PostgreSQL não publica porta no host. API e n8n escutam somente em `127.0.0.1` no Compose; use um reverse proxy com TLS em produção.
+## Ambiente oficial — Oracle Cloud VPS
 
-## Requisitos
+Todas as decisões devem considerar:
 
-- Node.js 22 e npm
-- Docker com Docker Compose
+- Ubuntu Server 22.04 ou 24.04;
+- compatibilidade AMD64 e ARM64;
+- Docker Engine e Docker Compose;
+- Caddy como única entrada pública em 80/443;
+- PostgreSQL, API, worker e n8n em redes privadas;
+- API somente em loopback no modo tunnel;
+- segredos fora do Git em `.env` com permissão `600`;
+- limites de CPU, memória, disco, logs e concorrência;
+- filas persistentes e operações idempotentes;
+- backup local e cópia externa criptografada;
+- restart policies, healthchecks e recuperação;
+- nenhuma dependência de navegador aberto;
+- e-mail e WhatsApp por APIs oficiais e headless.
 
-## Configuração
+Runbook: [`docs/ORACLE_DEPLOY.md`](docs/ORACLE_DEPLOY.md).
+
+## Plano de execução por partes
+
+Cada fase deve usar branch própria, pull request, gates obrigatórios e evidências. Uma fase só é concluída após integração e atualização deste documento.
+
+| Fase | Tarefa | Estado |
+|---|---|---|
+| Base técnica e Oracle | [#5 — homologar a stack em VPS Oracle real](../../issues/5) | CI concluída; VPS pendente |
+| Qualificação | [#6 — contatos, evidências e bloqueio de outreach](../../issues/6) | próxima implementação |
+| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | bloqueada por #6 |
+| Campanhas | [#8 — e-mail e WhatsApp idempotentes](../../issues/8) | bloqueada por #6 e #7 |
+| Propostas | [#9 — propostas de landing pages e sites](../../issues/9) | bloqueada por #7 |
+| Dashboard | [#10 — métricas e operação](../../issues/10) | depende das fases anteriores |
+| n8n | [#11 — automações recuperáveis](../../issues/11) | depende das APIs anteriores |
+
+Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issues/4).
+
+### Fase 0 — Base técnica e deploy
+
+**Estado:** concluída em CI; pendente de validação em VPS real.
+
+- [x] API, worker, PostgreSQL e migrations;
+- [x] Compose local e produção;
+- [x] tunnel, Caddy, HTTPS e n8n opcional;
+- [x] backup, restauração e rollback;
+- [x] CI, integração, smoke e multiarch;
+- [ ] primeiro deploy real na Oracle;
+- [ ] reinício e persistência;
+- [ ] backup e restauração reais;
+- [ ] atualização e rollback reais;
+- [ ] medição de CPU, memória, disco e logs.
+
+### Fase 1 — Qualificação e enriquecimento
+
+- [ ] estados `PENDENTE`, `VALIDANDO`, `SITE_ENCONTRADO`, `SEM_SITE_CONFIRMADO`, `INCONCLUSIVO` e `DESCARTADO`;
+- [ ] evidências e fontes de validação;
+- [ ] contatos com tipo, valor, origem, confiança e verificação;
+- [ ] normalização de telefone e e-mail;
+- [ ] detecção de telefone potencialmente habilitado para WhatsApp;
+- [ ] deduplicação por telefone, nome e endereço;
+- [ ] bloqueio de outreach para não confirmados;
+- [ ] auditoria de alterações.
+
+**Conclusão:** nenhuma campanha consegue selecionar lead não validado.
+
+### Fase 2 — CRM e funil comercial
+
+- [ ] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
+- [ ] regras de transição;
+- [ ] notas, tags, prioridade e responsável;
+- [ ] tarefas e próxima ação;
+- [ ] histórico imutável;
+- [ ] prevenção de ações concorrentes.
+
+**Conclusão:** transições inválidas são rejeitadas e todas as mudanças ficam auditáveis.
+
+### Fase 3 — Campanhas e mensagens
+
+- [ ] templates versionados de e-mail e WhatsApp;
+- [ ] variáveis seguras;
+- [ ] aprovação humana do primeiro contato;
+- [ ] limites globais e janelas de envio;
+- [ ] idempotência;
+- [ ] estados de tentativa, envio, entrega, erro, resposta e cancelamento;
+- [ ] pausa imediata;
+- [ ] retry limitado e dead-letter queue;
+- [ ] integração de e-mail configurável;
+- [ ] WhatsApp por integração oficial.
+
+**Conclusão:** retries e reinícios não produzem mensagens duplicadas.
+
+### Fase 4 — Propostas comerciais
+
+- [ ] catálogo de landing pages e sites;
+- [ ] escopo, prazo, preço e validade;
+- [ ] proposta vinculada ao lead e oportunidade;
+- [ ] PDF e link compartilhável;
+- [ ] versionamento e estados comerciais;
+- [ ] motivo de perda e valor ganho.
+
+**Conclusão:** oportunidade percorre do lead validado ao fechamento com histórico completo.
+
+### Fase 5 — Dashboard e operação
+
+- [ ] descoberta, validação, descarte e bloqueios;
+- [ ] contatos por canal;
+- [ ] taxas de resposta, reunião, proposta e fechamento;
+- [ ] desempenho por categoria, cidade, origem e campanha;
+- [ ] erros, dead letters e mensagens pendentes;
+- [ ] follow-ups e leads sem ação;
+- [ ] consumo da VPS e saúde dos serviços.
+
+**Conclusão:** métricas são reconciliáveis com eventos e registros do banco.
+
+### Fase 6 — Automação n8n
+
+- [ ] coleta agendada;
+- [ ] fila de validação;
+- [ ] revisão humana;
+- [ ] formação de campanhas;
+- [ ] follow-up sem resposta;
+- [ ] parada após resposta ou opt-out;
+- [ ] alertas;
+- [ ] exportação e restauração de workflows.
+
+**Conclusão:** desligar o n8n não corrompe estado nem impede operação manual.
+
+### Fase 7 — Homologação final na Oracle
+
+- [ ] deploy limpo;
+- [ ] DNS e TLS, quando aplicável;
+- [ ] coleta real controlada;
+- [ ] validação e CRM completos;
+- [ ] campanha em simulação;
+- [ ] envio apenas para contatos próprios de teste;
+- [ ] opt-out e bloqueio comprovados;
+- [ ] backup, restauração e rollback;
+- [ ] reinício e recuperação;
+- [ ] relatório final de capacidade.
+
+**Conclusão:** fluxo completo funciona na VPS com evidências reproduzíveis e sem envio indevido.
+
+## Política de execução autônoma
+
+O trabalho poderá avançar automaticamente quando:
+
+- estiver dentro do roadmap aprovado;
+- não exigir credenciais novas, pagamento ou acesso humano externo;
+- houver testes objetivos;
+- a mudança for reversível;
+- não houver risco de contato comercial real não autorizado.
+
+Processo padrão:
+
+1. selecionar uma tarefa;
+2. criar branch específica;
+3. implementar escopo mínimo completo;
+4. executar testes;
+5. abrir PR com riscos e evidências;
+6. corrigir falhas;
+7. integrar por squash;
+8. verificar o commit exato do `main`;
+9. atualizar README e tarefa.
+
+O Codex será solicitado apenas para:
+
+- Docker ou terminal local;
+- refatorações amplas em muitos arquivos;
+- reprodução no Windows;
+- arquivos indisponíveis no GitHub;
+- conexão e testes na VPS Oracle real.
+
+## Gates obrigatórios de qualidade
+
+| Gate | Validação | Evidência mínima |
+|---|---|---|
+| G0 | Escopo e regras de negócio | issue/PR com critérios de aceite |
+| G1 | Typecheck, lint e build | run da CI e commit SHA |
+| G2 | Testes unitários | quantidade e resultado |
+| G3 | Integração PostgreSQL | job e logs |
+| G4 | Smoke descartável | primeiro deploy, atualização e rollback |
+| G5 | AMD64 e ARM64 | builds e manifests |
+| G6 | Pós-merge | status no commit exato do `main` |
+| G7 | VPS Oracle real | comandos, logs, ambiente e resultado |
+| G8 | Segurança comercial | bloqueios, opt-out e idempotência |
+
+Nenhum gate deve ser ignorado com `continue-on-error` para deixar o pipeline verde.
+
+## Registro e autenticação das evidências
+
+Uma evidência válida deve conter:
+
+- data e hora UTC;
+- commit SHA completo;
+- branch ou PR;
+- ambiente;
+- comando, workflow ou cenário;
+- run ID, URL ou log;
+- resultado `PASS`, `FAIL` ou `BLOCKED`;
+- observações e risco residual;
+- responsável.
+
+Modelo:
+
+```text
+Data UTC:
+Commit SHA:
+PR/branch:
+Ambiente:
+Gate:
+Comando ou workflow:
+Run/log:
+Resultado:
+Observações:
+Responsável:
+```
+
+### Evidências consolidadas
+
+| Data UTC | Commit/PR | Ambiente | Gates | Evidência | Resultado |
+|---|---|---|---|---|---|
+| 2026-07-11 | PR #2 / `a3c9c197...` | GitHub Actions | G1–G5 | CI `29152954163`; smoke `29152954166` | PASS |
+| 2026-07-11 | `94c51c4364cd292040ea747d687ba922dab708be` | `main` | base Oracle | squash do PR #2 | PASS |
+| 2026-07-11 | PR #3 / `dee9d6d765599255bfaf711de23bbb587785f354` | GitHub Actions | G1–G5 | CI `29154038462`; smoke `29154038485` | PASS |
+| 2026-07-11 | `f211d6eb6a9437b51cc14147f11f0d34cb426b6c` | `main` | G6 | `deployment-smoke/post-merge`; run `29155446772` | PASS |
+| pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
+
+A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
+
+## Requisitos locais
+
+- Node.js 22 ou superior;
+- npm;
+- Docker Engine;
+- Docker Compose.
+
+## Configuração local
 
 ```bash
 cp .env.example .env
 ```
 
-Defina `POSTGRES_PASSWORD` e ajuste `DATABASE_URL`. Os padrões funcionais são Campinas/SP/Brasil e limite máximo de 50 por coleta. Nenhuma credencial real acompanha o repositório.
+Defina `POSTGRES_PASSWORD` e ajuste `DATABASE_URL`. Nenhuma credencial real acompanha o repositório.
 
 Variáveis principais: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `OVERPASS_URL`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_MAX_RETRIES`, `WORKER_POLL_INTERVAL_MS` e `DAILY_LEAD_LIMIT`.
 
-Variáveis numéricas são validadas na inicialização. Portas devem estar entre 1 e 65535; timeout Overpass entre 1 e 120 segundos; retries entre 0 e 10; polling entre 1 segundo e 1 hora; limite diário entre 1 e 10.000.
-
-## Execução
+## Execução local
 
 ```bash
 npm install
@@ -44,34 +330,40 @@ npm run dev:api
 npm run dev:worker
 ```
 
-Stack em containers:
+Stack completa:
 
 ```bash
 docker compose up --build
 docker compose --profile integration up -d n8n
 ```
 
-As migrations possuem controle em `schema_migrations`; executar `docker compose run --rm migrate` novamente é seguro e informa que a versão já foi aplicada.
+As migrations usam `schema_migrations`; executá-las novamente é seguro.
 
-## API
+## API atual
 
 - `GET /health`
-- `GET /health/live` verifica o processo
-- `GET /health/ready` verifica a conexão PostgreSQL
+- `GET /health/live`
+- `GET /health/ready`
 - `GET /leads?page=1&pageSize=20&status=SEM_SITE_CADASTRADO&category=oficinas&city=Campinas&minScore=30`
 - `GET /leads/:id`
-- `GET /leads/export.csv` (máximo de 100 linhas por exportação nesta versão)
+- `GET /leads/export.csv`
 - `POST /collect`
 
-Exemplo de coleta:
+Exemplo:
 
 ```json
-{ "city": "Campinas", "state": "SP", "country": "Brasil", "category": "oficinas", "limit": 50 }
+{
+  "city": "Campinas",
+  "state": "SP",
+  "country": "Brasil",
+  "category": "oficinas",
+  "limit": 50
+}
 ```
 
-Categorias: `oficinas`, `autoeletricas`, `saloes-de-beleza`, `barbearias`, `clinicas`, `consultorios`, `restaurantes`, `lanchonetes`, `empresas-de-seguranca` e `prestadores-de-servicos`.
+Categorias atuais: `oficinas`, `autoeletricas`, `saloes-de-beleza`, `barbearias`, `clinicas`, `consultorios`, `restaurantes`, `lanchonetes`, `empresas-de-seguranca` e `prestadores-de-servicos`.
 
-## Qualidade
+## Comandos de qualidade
 
 ```bash
 npm run typecheck
@@ -79,15 +371,13 @@ npm run lint
 npm test
 npm run test:coverage
 npm run build
+npm run test:integration
 docker compose config
 docker build -f apps/api/Dockerfile -t lead-finder-api:test .
 docker build -f apps/worker/Dockerfile -t lead-finder-worker:test .
-npm run test:integration
 ```
 
-O teste de integração usa PostgreSQL real e um servidor Overpass mock local determinístico. Uma coleta contra a Overpass pública é opcional e não faz parte do critério de aprovação da CI.
-
-O workflow manual `Operational smoke` executa a stack completa com Docker Compose. O input `run_live_overpass` é `false` por padrão; habilite-o apenas para uma coleta pública opcional após o mock determinístico passar.
+A integração usa PostgreSQL real e Overpass mock determinístico. A consulta pública é opcional e nunca substitui o mock como critério da CI.
 
 ## Operação
 
@@ -98,21 +388,42 @@ docker compose stop api worker
 docker compose down -v --remove-orphans
 ```
 
-Diagnóstico: `live` com erro indica falha do processo; `ready` com HTTP 503 indica indisponibilidade do PostgreSQL. O healthcheck do worker confirma que seu processo principal continua ativo.
+- `live` com erro indica falha do processo;
+- `ready` com HTTP 503 indica indisponibilidade do PostgreSQL;
+- o healthcheck do worker confirma o processo principal.
 
-Backup e restauração:
+## Backup e restauração
+
+Desenvolvimento:
 
 ```bash
 docker compose exec -T postgres pg_dump -U leadfinder -d leadfinder -Fc > leadfinder.dump
 docker compose exec -T postgres pg_restore -U leadfinder -d leadfinder --clean --if-exists < leadfinder.dump
 ```
 
-Na Oracle VPS, instale Docker Engine/Compose, permita externamente apenas SSH e as portas do reverse proxy, mantenha PostgreSQL sem porta publicada, configure `.env` fora do Git e coloque TLS na frente da API/n8n. O deploy não é automatizado nesta etapa.
+Na Oracle, use os scripts do runbook. Backups não devem permanecer somente no disco da VPS.
 
-## Segurança e limitações
+## Segurança e conformidade operacional
 
-Consultas Overpass são montadas somente a partir de categorias permitidas. Há limites de payload, paginação, timeout, backoff limitado e tratamento de 429/502/504. O índice único `(osm_type, osm_id)` protege contra duplicidade concorrente.
+- nenhuma credencial no Git;
+- PostgreSQL sem porta pública;
+- API e n8n atrás de Caddy ou tunnel;
+- payload, paginação, timeout e retries limitados;
+- tratamento de 429, 502 e 504;
+- deduplicação concorrente;
+- logs sem dados sensíveis;
+- opt-out futuro bloqueia todos os canais;
+- nenhum envio para lead não validado;
+- WhatsApp somente por integração oficial;
+- campanhas com pausa imediata e auditoria.
 
-O dado OSM pode estar incompleto ou desatualizado; “sem site cadastrado” não prova que a empresa não possui site. O status exige validação humana antes de qualquer uso comercial. Esta versão não envia mensagens, não valida existência externa de sites, não agenda cota diária global entre múltiplas réplicas e não inclui deploy Oracle.
+## Limitações atuais
 
-Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada em produtos derivados.
+- OSM pode estar incompleto ou desatualizado;
+- ausência de site no OSM não confirma ausência real;
+- esta versão ainda não envia mensagens;
+- não há validação externa de site ou contato;
+- não há cota comercial global entre réplicas;
+- o deploy foi comprovado em CI, mas ainda não homologado em VPS Oracle real.
+
+Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada.

@@ -14,7 +14,9 @@
 {$API_DOMAIN} {
 	import security_headers
 	encode zstd gzip
-	request_body { max_size 1MB }
+	request_body {
+		max_size 1MB
+	}
 	reverse_proxy api:3000 {
 		health_uri /health/ready
 		health_interval 30s

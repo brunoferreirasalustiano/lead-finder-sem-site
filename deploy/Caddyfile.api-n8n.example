@@ -19,6 +19,8 @@
 {$N8N_DOMAIN} {
 	import security_headers
 	encode zstd gzip
-	request_body { max_size 16MB }
+	request_body {
+		max_size 16MB
+	}
 	reverse_proxy n8n:5678
 }

@@ -93,7 +93,12 @@ export COMPOSE_PROJECT_NAME="${project}public" API_DOMAIN=localhost ACME_EMAIL=t
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml up -d --build postgres api worker caddy
 public_ready=false
 for _attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:18080/health/ready >/dev/null; then public_ready=true; break; fi
+  printf '[smoke] public readiness attempt %s/30\n' "$_attempt"
+  if curl -fsS http://127.0.0.1:18080/health/ready >/dev/null; then
+    public_ready=true
+    printf '[smoke] public proxy is ready\n'
+    break
+  fi
   sleep 2
 done
 if [[ "$public_ready" != true ]]; then
@@ -101,8 +106,13 @@ if [[ "$public_ready" != true ]]; then
   docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml logs --no-color --tail=100 caddy api
   exit 1
 fi
-[[ -z "$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port api 3000 2>/dev/null || true)" ]]
-[[ -z "$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port postgres 5432 2>/dev/null || true)" ]]
+api_binding="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port api 3000 2>/dev/null || true)"
+postgres_binding="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml port postgres 5432 2>/dev/null || true)"
+printf '[smoke] public API binding: %s\n' "${api_binding:-<none>}"
+printf '[smoke] public PostgreSQL binding: %s\n' "${postgres_binding:-<none>}"
+[[ -z "$api_binding" ]]
+[[ -z "$postgres_binding" ]]
+printf '[smoke] checking that API-only Caddyfile has no n8n reference\n'
 ! grep -q n8n deploy/Caddyfile.api.example
 echo '::endgroup::'
 

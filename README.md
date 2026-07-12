@@ -102,8 +102,8 @@ Cada fase deve usar branch própria, pull request, gates obrigatórios e evidên
 | Fase | Tarefa | Estado |
 |---|---|---|
 | Base técnica e Oracle | [#5 — homologar a stack em VPS Oracle real](../../issues/5) | CI concluída; VPS pendente |
-| Qualificação | [#6 — contatos, evidências e bloqueio de outreach](../../issues/6) | próxima implementação |
-| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | bloqueada por #6 |
+| Qualificação | [#6 — contatos, evidências e bloqueio de outreach](../../issues/6) | concluída no PR #14 |
+| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | ativa em `feat/crm-pipeline-core` |
 | Campanhas | [#8 — e-mail e WhatsApp idempotentes](../../issues/8) | bloqueada por #6 e #7 |
 | Propostas | [#9 — propostas de landing pages e sites](../../issues/9) | bloqueada por #7 |
 | Dashboard | [#10 — métricas e operação](../../issues/10) | depende das fases anteriores |
@@ -128,6 +128,8 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 
 ### Fase 1 — Qualificação e enriquecimento
 
+**Estado:** concluída no PR #14, commit `d95e860104ab9a88e3801f9ba340543d00c7c9c8`.
+
 - [x] estados `PENDENTE`, `VALIDANDO`, `SITE_ENCONTRADO`, `SEM_SITE_CONFIRMADO`, `INCONCLUSIVO` e `DESCARTADO`;
 - [x] evidências e fontes de validação;
 - [x] contatos com tipo, valor, origem, confiança e verificação;
@@ -140,6 +142,8 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 **Conclusão:** nenhuma campanha consegue selecionar lead não validado.
 
 ### Fase 2 — CRM e funil comercial
+
+**Estado:** ativa; implementação em validação na issue #7.
 
 - [ ] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
 - [ ] regras de transição;
@@ -300,8 +304,9 @@ Responsável:
 | 2026-07-11 | PR #3 / `dee9d6d765599255bfaf711de23bbb587785f354` | GitHub Actions | G1–G5 | CI `29154038462`; smoke `29154038485` | PASS |
 | 2026-07-11 | `f211d6eb6a9437b51cc14147f11f0d34cb426b6c` | `main` | G6 | `deployment-smoke/post-merge`; run `29155446772` | PASS |
 | pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
-| pendente | PR da Fase 1 | GitHub Actions | G0–G5, G8 | CI, integração PostgreSQL, smoke e multiarch | A VALIDAR |
-| pendente | merge da Fase 1 | `main` | G6 | workflow pós-merge no squash SHA | BLOCKED ATÉ O MERGE |
+| 2026-07-11 | PR #14 / `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | GitHub Actions | G0–G5, G8 | CI `29159498610`; Deployment Smoke `29159498641` | PASS |
+| 2026-07-11 | `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | `main` | G6 | `deployment-smoke.yml` não disparou: o merge não alterou paths monitorados | NOT RUN |
+| pendente | PR da Fase 2 | GitHub Actions | G0–G5, G8 | CI, PostgreSQL real, imagens e multiarch | EM VALIDAÇÃO |
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
@@ -355,11 +360,38 @@ As migrations usam `schema_migrations`; executá-las novamente é seguro.
 - `GET /leads/:id/contacts`
 - `PUT /leads/:id/contacts`
 - `GET /leads/:id/history`
+- `GET /leads/:id/crm`
+- `PATCH /leads/:id/crm/stage`
+- `GET /leads/:id/opportunities`
+- `POST /leads/:id/opportunities`
+- `PATCH /opportunities/:id`
+- `GET /leads/:id/notes`
+- `POST /leads/:id/notes`
+- `GET /leads/:id/tags`
+- `PUT /leads/:id/tags/:tag`
+- `DELETE /leads/:id/tags/:tag`
+- `GET /leads/:id/tasks`
+- `POST /leads/:id/tasks`
+- `PATCH /tasks/:id/complete`
+- `PATCH /tasks/:id/reschedule`
+- `GET /leads/:id/timeline`
+- `GET /crm/tasks/overdue`
+- `GET /crm/follow-ups/upcoming`
 - `POST /collect`
 
 `GET /leads/export.csv` exporta, de forma determinística, no máximo os primeiros 100 registros que correspondem aos filtros. Para conjuntos maiores, use a paginação de `GET /leads`; exportação paginada/completa permanece uma evolução explícita para evitar consumo de memória sem limite.
 
 O núcleo da Fase 1 não envia mensagens. Uma seleção futura para outreach deve obrigatoriamente usar `listOutreachEligibleLeads`: somente leads em `SEM_SITE_CONFIRMADO`, não bloqueados, sem marcação de não contato e com ao menos um contato válido e verificado são retornados.
+
+## Núcleo CRM da Fase 2
+
+A migration idempotente `0003_crm_pipeline.sql` cria oportunidades, notas, tags, tarefas, idempotência e timeline comercial imutável. Estágio, prioridade, responsável, próxima ação e versão otimista permanecem no lead; valores monetários usam `numeric(15,2)` e datas usam `timestamptz` em UTC.
+
+Transições usam uma máquina explícita. Conflitos de versão e idempotência retornam HTTP 409; regras de domínio e transições inválidas retornam 422. A saída de `NAO_CONTATAR` exige ação `REACTIVATE`, motivo, ator e metadados de auditoria. Leads `DESCARTADO`, `isBlocked`, `doNotContact` ou `NAO_CONTATAR` não entram em filas comerciais.
+
+Mutações registram a timeline na mesma transação e usam chave de idempotência com fingerprint do payload. Retry idêntico retorna o recurso anterior sem novo evento; reutilização da chave com payload diferente é conflito. Não existe envio real de e-mail ou WhatsApp nesta fase.
+
+Riscos residuais antes do merge: G6 é obrigatoriamente pós-merge; `deployment-smoke.yml` só executa em push para `main` quando houver mudanças em `deploy/**`, `scripts/**`, `docker-compose*.yml` ou no próprio workflow. Um workflow não disparado deve ser registrado como `NOT RUN`, nunca como aprovado.
 
 Exemplo:
 

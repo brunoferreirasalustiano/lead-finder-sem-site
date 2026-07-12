@@ -46,13 +46,13 @@ Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
 - [x] smoke descartável de primeiro deploy e atualização;
 - [x] runbook da Oracle Cloud;
 - [x] validação pós-merge no commit exato do `main`.
+- [x] funil de CRM, oportunidades e histórico comercial;
+- [x] tarefas, notas, tags e follow-ups.
 
 ### Ainda não implementado
 
 - [ ] confirmação externa de ausência de site;
 - [ ] enriquecimento de telefone, WhatsApp, e-mail e redes sociais;
-- [ ] funil de CRM e histórico comercial;
-- [ ] tarefas, notas e follow-ups;
 - [ ] templates e campanhas;
 - [ ] envio por e-mail;
 - [ ] envio por WhatsApp oficial;
@@ -143,14 +143,14 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 
 ### Fase 2 — CRM e funil comercial
 
-**Estado:** ativa; implementação em validação na issue #7.
+**Estado:** ativa; implementação validada no PR #15 e aguardando merge e G6.
 
-- [ ] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
-- [ ] regras de transição;
-- [ ] notas, tags, prioridade e responsável;
-- [ ] tarefas e próxima ação;
-- [ ] histórico imutável;
-- [ ] prevenção de ações concorrentes.
+- [x] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
+- [x] regras de transição;
+- [x] notas, tags, prioridade e responsável;
+- [x] tarefas e próxima ação;
+- [x] histórico imutável;
+- [x] prevenção de ações concorrentes.
 
 **Conclusão:** transições inválidas são rejeitadas e todas as mudanças ficam auditáveis.
 
@@ -306,7 +306,8 @@ Responsável:
 | pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
 | 2026-07-11 | PR #14 / `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | GitHub Actions | G0–G5, G8 | CI `29159498610`; Deployment Smoke `29159498641` | PASS |
 | 2026-07-11 | `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | `main` | G6 | `deployment-smoke.yml` não disparou: o merge não alterou paths monitorados | NOT RUN |
-| pendente | PR da Fase 2 | GitHub Actions | G0–G5, G8 | CI, PostgreSQL real, imagens e multiarch | EM VALIDAÇÃO |
+| 2026-07-12 | PR #15 / `60ca740a40c036bccaced358ee44edf01bc47f01` | GitHub Actions / PostgreSQL 16 | G0–G5, G8 | CI `29175918041`; Deployment Smoke `29175918046`; integração, imagens e multiarch | PASS |
+| pendente | merge do PR #15 | `main` | G6 | validação no commit exato do squash | BLOCKED ATÉ O MERGE |
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
@@ -393,6 +394,8 @@ Transições usam uma máquina explícita. Conflitos de versão e idempotência 
 Mutações registram a timeline na mesma transação e usam chave de idempotência com fingerprint do payload. Retry idêntico retorna o recurso anterior sem novo evento; reutilização da chave com payload diferente é conflito. Não existe envio real de e-mail ou WhatsApp nesta fase.
 
 Riscos residuais antes do merge: G6 é obrigatoriamente pós-merge; `deployment-smoke.yml` só executa em push para `main` quando houver mudanças em `deploy/**`, `scripts/**`, `docker-compose*.yml` ou no próprio workflow. Um workflow não disparado deve ser registrado como `NOT RUN`, nunca como aprovado.
+
+A API ainda não possui autenticação/autorização. Os endpoints CRM devem permanecer atrás do perímetro privado até a implementação desses controles.
 
 Exemplo:
 

@@ -137,7 +137,7 @@ export async function updateCrmAssignment(db: Database, leadId: string, input: {
   });
 }
 
-export async function addNote(db: Database, leadId: string, input: NoteCreateInput & { opportunityId?: string }) {
+export async function addNote(db: Database, leadId: string, input: NoteCreateInput & { opportunityId?: string | undefined }) {
   return db.transaction(async (tx) => { const scope = `lead:${leadId}:note`; const old = await replay<Note>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId); await requireOpportunityForLead(tx, leadId, input.opportunityId);
     const row = (await tx.insert(crmNotes).values({ leadId, opportunityId: input.opportunityId, body: input.body, author: input.actor }).returning())[0]!;
     await event(tx, { leadId, opportunityId: input.opportunityId, eventType: 'NOTE_ADDED', actor: input.actor, newValue: row }); await remember(tx, scope, input.idempotencyKey, input, 'note', row.id, row); return { data: row, replayed: false }; });
@@ -160,7 +160,7 @@ export async function removeTag(db: Database, leadId: string, name: string, inpu
 }
 export const listTags = (db: Database, leadId: string, options?: ListOptions) => { const page = normalizeListOptions(options); return db.select({ id: crmTags.id, name: crmTags.name, createdAt: crmLeadTags.createdAt }).from(crmLeadTags).innerJoin(crmTags, eq(crmTags.id, crmLeadTags.tagId)).where(eq(crmLeadTags.leadId, leadId)).orderBy(asc(crmTags.name)).limit(page.limit).offset(page.offset); };
 
-export async function createTask(db: Database, leadId: string, input: TaskCreateInput & { opportunityId?: string }) {
+export async function createTask(db: Database, leadId: string, input: TaskCreateInput & { opportunityId?: string | undefined }) {
   return db.transaction(async (tx) => { const scope = `lead:${leadId}:task:create`; const old = await replay<Task>(tx, scope, input.idempotencyKey, input); if (old) return old; await requireCommercialLead(tx, leadId); await requireOpportunityForLead(tx, leadId, input.opportunityId);
     const row = (await tx.insert(crmTasks).values({ leadId, opportunityId: input.opportunityId, title: input.title, description: input.description, dueAt: new Date(input.dueAt), priority: input.priority, owner: input.assignee }).returning())[0]!;
     await event(tx, { leadId, taskId: row.id, opportunityId: input.opportunityId, eventType: 'TASK_CREATED', actor: input.actor, newValue: row }); await remember(tx, scope, input.idempotencyKey, input, 'task', row.id, row); return { data: row, replayed: false }; });

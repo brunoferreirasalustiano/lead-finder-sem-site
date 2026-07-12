@@ -1,5 +1,6 @@
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -11,6 +12,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { leadStatuses, qualificationStatuses } from '@lead-finder/shared';
 import { crmPriorities, crmStages, taskStatuses } from '@lead-finder/shared';
 export const leadStatusEnum = pgEnum('lead_status', leadStatuses);
@@ -191,3 +193,95 @@ export const crmIdempotencyKeys = pgTable('crm_idempotency_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
 });
+
+export const campaigns = pgTable('campaigns', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull(), idempotencyKey: text('idempotency_key').notNull().unique(),
+  payloadFingerprint: text('payload_fingerprint').notNull(), state: text('state').notNull().default('RASCUNHO'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const campaignVersions = pgTable('campaign_versions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'restrict' }),
+  versionNumber: integer('version_number').notNull(), state: text('state').notNull().default('RASCUNHO'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_versions_campaign_id_version_number_key').on(table.campaignId, table.versionNumber),
+  uniqueIndex('campaign_versions_id_campaign_id_key').on(table.id, table.campaignId),
+]);
+export const campaignTemplates = pgTable('campaign_templates', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  campaignVersionId: uuid('campaign_version_id').notNull(),
+  channel: text('channel').notNull(), content: text('content').notNull(),
+  allowedVariables: jsonb('allowed_variables').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [uniqueIndex('campaign_templates_campaign_version_id_channel_key').on(table.campaignVersionId, table.channel)]);
+export const campaignRecipients = pgTable('campaign_recipients', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'restrict' }),
+  campaignVersionId: uuid('campaign_version_id').notNull().references(() => campaignVersions.id, { onDelete: 'restrict' }),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'restrict' }),
+  channel: text('channel').notNull(), state: text('state').notNull().default('PENDENTE'),
+  recipientSnapshot: jsonb('recipient_snapshot').notNull(), idempotencyKey: text('idempotency_key').notNull(),
+  payloadFingerprint: text('payload_fingerprint').notNull(), version: integer('version').notNull().default(1),
+  availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_recipients_campaign_id_idempotency_key_key').on(table.campaignId, table.idempotencyKey),
+  uniqueIndex('campaign_recipients_campaign_id_campaign_version_id_lead_id_channel_key').on(table.campaignId, table.campaignVersionId, table.leadId, table.channel),
+  foreignKey({ columns: [table.campaignVersionId, table.campaignId], foreignColumns: [campaignVersions.id, campaignVersions.campaignId] }).onDelete('restrict'),
+  index('campaign_recipients_queue_idx').on(table.state, table.availableAt, table.id).where(sql`${table.state} in ('PENDENTE', 'ELEGIVEL')`),
+]);
+export const campaignAttempts = pgTable('campaign_attempts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  recipientId: uuid('recipient_id').notNull().references(() => campaignRecipients.id, { onDelete: 'restrict' }),
+  state: text('state').notNull().default('PENDENTE'), payloadSnapshot: jsonb('payload_snapshot').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+  version: integer('version').notNull().default(1), availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_attempts_recipient_id_idempotency_key_key').on(table.recipientId, table.idempotencyKey),
+  index('campaign_attempts_queue_idx').on(table.state, table.availableAt, table.id).where(sql`${table.state} in ('PENDENTE', 'APROVADA')`),
+]);
+export const campaignProviderEvents = pgTable('campaign_provider_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  attemptId: uuid('attempt_id').notNull().references(() => campaignAttempts.id, { onDelete: 'restrict' }),
+  provider: text('provider').notNull(), externalId: text('external_id').notNull(), eventType: text('event_type').notNull(),
+  payload: jsonb('payload').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_provider_events_provider_external_id_key').on(table.provider, table.externalId),
+  index('campaign_provider_events_attempt_idx').on(table.attemptId, table.occurredAt, table.id),
+]);
+export const campaignOptOuts = pgTable('campaign_opt_outs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'restrict' }),
+  channel: text('channel'), reason: text('reason').notNull(), source: text('source').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_opt_outs_global_uidx').on(table.leadId).where(sql`${table.channel} is null`),
+  uniqueIndex('campaign_opt_outs_channel_uidx').on(table.leadId, table.channel).where(sql`${table.channel} is not null`),
+]);
+export const campaignOutbox = pgTable('campaign_outbox', {
+  id: uuid('id').defaultRandom().primaryKey(), aggregateType: text('aggregate_type').notNull(),
+  aggregateId: uuid('aggregate_id').notNull(), eventType: text('event_type').notNull(), payload: jsonb('payload').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+  status: text('status').notNull().default('PENDING'), attempts: integer('attempts').notNull().default(0),
+  availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_outbox_aggregate_type_aggregate_id_idempotency_key_key').on(table.aggregateType, table.aggregateId, table.idempotencyKey),
+  index('campaign_outbox_queue_idx').on(table.status, table.availableAt, table.id).where(sql`${table.status} = 'PENDING'`),
+]);
+export const campaignDeadLetters = pgTable('campaign_dead_letters', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  outboxId: uuid('outbox_id').notNull().unique().references(() => campaignOutbox.id, { onDelete: 'restrict' }),
+  correlationId: text('correlation_id').notNull(), payload: jsonb('payload').notNull(), error: text('error').notNull(),
+  attempts: integer('attempts').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [index('campaign_dead_letters_created_idx').on(table.createdAt, table.id)]);

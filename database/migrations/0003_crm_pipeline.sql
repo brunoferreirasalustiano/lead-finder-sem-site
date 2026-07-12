@@ -38,10 +38,10 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS leads_crm_queue_idx
   ON leads(crm_stage, crm_priority, crm_next_action_at)
-  WHERE crm_stage IS NOT NULL AND crm_stage::text NOT IN ('PERDIDO', 'GANHO', 'NAO_CONTATAR');
+  WHERE crm_stage IS NOT NULL AND crm_stage NOT IN ('PERDIDO', 'GANHO', 'NAO_CONTATAR');
 CREATE INDEX IF NOT EXISTS leads_crm_owner_idx
   ON leads(crm_owner, crm_next_action_at)
-  WHERE crm_owner IS NOT NULL AND crm_stage::text NOT IN ('PERDIDO', 'GANHO', 'NAO_CONTATAR');
+  WHERE crm_owner IS NOT NULL AND crm_stage NOT IN ('PERDIDO', 'GANHO', 'NAO_CONTATAR');
 
 CREATE TABLE IF NOT EXISTS crm_opportunities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

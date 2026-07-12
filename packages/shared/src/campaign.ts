@@ -127,7 +127,9 @@ export function renderCampaignTemplate(template: CampaignTemplate, values: Reado
   for (const name of templateVariables(template.content)) if (!Object.hasOwn(values, name)) throw new CampaignDomainError(`Missing template variable: ${name}`, 'MISSING_VARIABLE');
   for (const value of Object.values(values)) if (unsafeTemplate.test(value)) throw new CampaignDomainError('Unsafe template variable value', 'INVALID_TEMPLATE');
   placeholder.lastIndex = 0;
-  return template.content.replace(placeholder, (_match, name: string) => values[name]!);
+  const rendered = template.content.replace(placeholder, (_match, name: string) => values[name]!);
+  if (unsafeTemplate.test(rendered)) throw new CampaignDomainError('Unsafe rendered template', 'INVALID_TEMPLATE');
+  return rendered;
 }
 
 const normalizeFingerprintPart = (value: string) => value.normalize('NFKC').replace(/\r\n?/g, '\n').trim().replace(/[ \t]+/g, ' ');

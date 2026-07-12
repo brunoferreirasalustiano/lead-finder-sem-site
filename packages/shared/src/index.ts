@@ -1,6 +1,7 @@
 import { z } from 'zod';
 export { parseApiConfig, parseWorkerConfig } from './config.js';
 export * from './qualification.js';
+export * from './crm.js';
 
 export const leadStatuses = [
   'SEM_SITE_CADASTRADO',

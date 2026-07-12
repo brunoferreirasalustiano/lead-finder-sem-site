@@ -267,6 +267,7 @@ export async function listOutreachEligibleLeads(db: Database, limit = 50) {
         eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'),
         eq(leads.isBlocked, false),
         eq(leads.doNotContact, false),
+        sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`,
       ),
     )
     .limit(limit);

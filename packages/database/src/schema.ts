@@ -12,8 +12,12 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { leadStatuses, qualificationStatuses } from '@lead-finder/shared';
+import { crmPriorities, crmStages, taskStatuses } from '@lead-finder/shared';
 export const leadStatusEnum = pgEnum('lead_status', leadStatuses);
 export const qualificationStatusEnum = pgEnum('qualification_status', qualificationStatuses);
+export const crmStageEnum = pgEnum('crm_stage', crmStages);
+export const crmPriorityEnum = pgEnum('crm_priority', crmPriorities);
+export const commercialTaskStatusEnum = pgEnum('commercial_task_status', taskStatuses);
 export const leads = pgTable(
   'leads',
   {
@@ -43,6 +47,12 @@ export const leads = pgTable(
     isBlocked: boolean('is_blocked').notNull().default(false),
     doNotContact: boolean('do_not_contact').notNull().default(false),
     isClosed: boolean('is_closed').notNull().default(false),
+    crmStage: crmStageEnum('crm_stage'),
+    crmPriority: crmPriorityEnum('crm_priority').notNull().default('MEDIA'),
+    crmOwner: text('crm_owner'),
+    crmNextActionAt: timestamp('crm_next_action_at', { withTimezone: true }),
+    crmVersion: integer('crm_version').notNull().default(1),
+    crmUpdatedAt: timestamp('crm_updated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -117,4 +127,67 @@ export const leadQualificationHistory = pgTable('lead_qualification_history', {
   source: text('source').notNull(),
   reason: text('reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const crmOpportunities = pgTable('crm_opportunities', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  amount: numeric('amount', { precision: 15, scale: 2 }),
+  currency: text('currency').notNull().default('BRL'),
+  expectedCloseAt: timestamp('expected_close_at', { withTimezone: true }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+  outcome: text('outcome'),
+  lossReason: text('loss_reason'),
+  owner: text('owner'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmNotes = pgTable('crm_notes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  opportunityId: uuid('opportunity_id').references(() => crmOpportunities.id, { onDelete: 'cascade' }),
+  body: text('body').notNull(), author: text('author').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmTags = pgTable('crm_tags', {
+  id: uuid('id').defaultRandom().primaryKey(), name: text('name').notNull(),
+  normalizedName: text('normalized_name').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmLeadTags = pgTable('crm_lead_tags', {
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  tagId: uuid('tag_id').notNull().references(() => crmTags.id, { onDelete: 'cascade' }),
+  actor: text('actor').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmTasks = pgTable('crm_tasks', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  opportunityId: uuid('opportunity_id').references(() => crmOpportunities.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(), description: text('description'),
+  status: commercialTaskStatusEnum('status').notNull().default('PENDENTE'),
+  priority: crmPriorityEnum('priority').notNull().default('MEDIA'), owner: text('owner'),
+  dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }), completionNote: text('completion_note'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmTimelineEvents = pgTable('crm_timeline_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  opportunityId: uuid('opportunity_id').references(() => crmOpportunities.id, { onDelete: 'set null' }),
+  taskId: uuid('task_id').references(() => crmTasks.id, { onDelete: 'set null' }),
+  eventType: text('event_type').notNull(), actor: text('actor').notNull(), reason: text('reason'),
+  previousValue: jsonb('previous_value'), newValue: jsonb('new_value').notNull(),
+  metadata: jsonb('metadata').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const crmIdempotencyKeys = pgTable('crm_idempotency_keys', {
+  scope: text('scope').notNull(), idempotencyKey: text('idempotency_key').notNull(),
+  payloadFingerprint: text('payload_fingerprint').notNull(), resourceType: text('resource_type').notNull(),
+  resourceId: uuid('resource_id').notNull(), result: jsonb('result').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
 });

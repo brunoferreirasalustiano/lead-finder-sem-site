@@ -147,8 +147,10 @@ export const listNotes = (db: Database, leadId: string, options?: ListOptions) =
 export async function addTag(db: Database, leadId: string, name: string, input: { actor: string; idempotencyKey: string }) {
   return db.transaction(async (tx) => { const payload = { name, ...input }; const scope = `lead:${leadId}:tag:add`; const old = await replay<TagResult>(tx, scope, input.idempotencyKey, payload); if (old) return old; await requireCommercialLead(tx, leadId);
     const tag = (await tx.insert(crmTags).values({ name: name.trim(), normalizedName: normalizeTag(name) }).onConflictDoUpdate({ target: crmTags.normalizedName, set: { name: name.trim() } }).returning())[0]!;
-    await tx.insert(crmLeadTags).values({ leadId, tagId: tag.id, actor: input.actor }).onConflictDoNothing();
-    const result = { ...tag, leadId }; await event(tx, { leadId, eventType: 'TAG_ADDED', actor: input.actor, newValue: result }); await remember(tx, scope, input.idempotencyKey, payload, 'tag', tag.id, result); return { data: result, replayed: false }; });
+    const association = await tx.insert(crmLeadTags).values({ leadId, tagId: tag.id, actor: input.actor }).onConflictDoNothing().returning({ tagId: crmLeadTags.tagId });
+    const result = { ...tag, leadId };
+    if (association.length > 0) await event(tx, { leadId, eventType: 'TAG_ADDED', actor: input.actor, newValue: result });
+    await remember(tx, scope, input.idempotencyKey, payload, 'tag', tag.id, result); return { data: result, replayed: false }; });
 }
 export async function removeTag(db: Database, leadId: string, name: string, input: { actor: string; idempotencyKey: string }) {
   return db.transaction(async (tx) => { const payload = { name, ...input }; const scope = `lead:${leadId}:tag:remove`; const old = await replay<RemovedTagResult>(tx, scope, input.idempotencyKey, payload); if (old) return old; await requireCommercialLead(tx, leadId);

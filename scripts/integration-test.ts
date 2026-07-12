@@ -256,6 +256,9 @@ try {
   const tagBody = { actor, idempotencyKey: 'tag-add-0000001' };
   assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
   assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/different`, payload: tagBody })).statusCode, 409);
+  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: `/leads/${lead.id}/tags` })).json<{ items: unknown[] }>().items.length, 1);
   const removeTagBody = { actor, idempotencyKey: 'tag-remove-00001' };
   assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);

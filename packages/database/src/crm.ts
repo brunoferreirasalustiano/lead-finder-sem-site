@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, gte, lt, lte, sql } from 'drizzle-orm';
 import {
   assertCrmTransition, CrmDomainError, isEligibleForCommercialQueue,
-  type CrmPriority, type CrmStage, type CrmStageChangeInput,
+  type CrmPriority, type CrmStageChangeInput,
   type NoteCreateInput, type OpportunityCreateInput, type OpportunityUpdateInput,
   type TaskCompleteInput, type TaskCreateInput, type TaskRescheduleInput,
 } from '@lead-finder/shared';
@@ -38,7 +38,7 @@ type TagResult = typeof crmTags.$inferSelect & { leadId: string };
 type RemovedTagResult = { removed: boolean; tagId: string; leadId: string };
 
 async function requireCommercialLead(tx: Tx, leadId: string, lock = false) {
-  let query = tx.select().from(leads).where(eq(leads.id, leadId));
+  const query = tx.select().from(leads).where(eq(leads.id, leadId));
   const rows = lock ? await query.for('update').limit(1) : await query.limit(1);
   const lead = rows[0];
   if (!lead) throw new CrmDomainError('Lead not found', 'NOT_FOUND');

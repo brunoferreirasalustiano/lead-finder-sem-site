@@ -114,7 +114,10 @@ try {
   });
   const claims = await Promise.all([processNextJob(db, overpass), processNextJob(db, overpass)]);
   assert.deepEqual(claims.sort(), [false, true]);
-  assert.equal((await db.select({ value: count() }).from(leads))[0]?.value, 1);
+  assert.equal(
+    (await db.select({ value: count() }).from(leads).where(eq(leads.osmId, '1001')))[0]?.value,
+    1,
+  );
   const lead = (await db.select().from(leads).limit(1))[0]!;
   const audit = { actor: 'integration-test', source: 'test', reason: 'phase-1 validation' };
   assert.equal(
@@ -379,7 +382,10 @@ try {
     body: JSON.stringify({ elements: [{ type: 'node', id: 1001, tags: { name: 'duplicate' } }] }),
   });
   assert.equal(await processNextJob(db, overpass), true);
-  assert.equal((await db.select({ value: count() }).from(leads))[0]?.value, 1);
+  assert.equal(
+    (await db.select({ value: count() }).from(leads).where(eq(leads.osmId, '1001')))[0]?.value,
+    1,
+  );
 
   await enqueueCollection(db, payload);
   responses.push({ status: 200, body: '{invalid-json' });

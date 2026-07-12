@@ -4,7 +4,12 @@ import { once } from 'node:events';
 import { count, eq } from 'drizzle-orm';
 import {
   collectionJobs,
+  addNote,
+  createOpportunity,
+  createTask,
   createDatabase,
+  crmNotes,
+  crmTimelineEvents,
   crmTasks,
   enqueueCollection,
   leadContacts,
@@ -202,14 +207,29 @@ try {
     payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-invalid-001', stage: 'GANHO' },
   })).statusCode, 422);
 
-  const notePayload = { body: 'Discovery completed', actor, idempotencyKey: 'note-create-0001' };
+  const won = await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+    actor, expectedVersion: opportunity.version, idempotencyKey: 'opportunity-win-001', status: 'GANHA',
+  } });
+  assert.equal(won.statusCode, 200);
+  assert.ok(won.json<{ closedAt: string | null }>().closedAt);
+  assert.equal((await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+    actor, expectedVersion: opportunity.version + 1, idempotencyKey: 'opportunity-loss-missing', status: 'PERDIDA',
+  } })).statusCode, 400);
+  const lost = await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+    actor, expectedVersion: opportunity.version + 1, idempotencyKey: 'opportunity-loss-001', status: 'PERDIDA', lossReason: 'Budget deferred',
+  } });
+  assert.equal(lost.statusCode, 200);
+  assert.equal(lost.json<{ lossReason: string }>().lossReason, 'Budget deferred');
+  assert.ok(lost.json<{ closedAt: string | null }>().closedAt);
+
+  const notePayload = { body: 'Discovery completed', opportunityId: opportunity.id, actor, idempotencyKey: 'note-create-0001' };
   assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 201);
   assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 200);
   assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: { ...notePayload, body: 'Changed retry' } })).statusCode, 409);
 
   const taskPayload = {
     title: 'Overdue follow-up', dueAt: '2026-07-11T09:59:59Z', priority: 'ALTA',
-    assignee: actor, actor, idempotencyKey: 'task-create-0001',
+    assignee: actor, opportunityId: opportunity.id, actor, idempotencyKey: 'task-create-0001',
   };
   const taskCreated = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
   const taskReplay = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
@@ -230,6 +250,17 @@ try {
   })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T11:00:00Z' })).json<unknown[]>().length, 0);
 
+  const tagBody = { actor, idempotencyKey: 'tag-add-0000001' };
+  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: `/leads/${lead.id}/tags` })).json<{ items: unknown[] }>().items.length, 1);
+  const removeTagBody = { actor, idempotencyKey: 'tag-remove-00001' };
+  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
+  const beforeAbsentTag = (await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value;
+  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/absent`, payload: { actor, idempotencyKey: 'tag-remove-absent' } })).statusCode, 404);
+  assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, beforeAbsentTag);
+
   assert.equal((await app.inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-no-contact-001', stage: 'NAO_CONTATAR', reason: 'Explicit opt-out' },
@@ -246,9 +277,31 @@ try {
   const timeline = (await app.inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string }> }>().items;
   assert.ok(timeline.length >= 9);
   assert.equal(new Set(timeline.map((item) => item.id)).size, timeline.length, 'timeline must not duplicate events on retries');
+  assert.equal(timeline.filter((item) => item.eventType === 'TAG_ADDED').length, 1, 'tag retry must not duplicate TAG_ADDED');
+  assert.equal(timeline.filter((item) => item.eventType === 'TAG_REMOVED').length, 1, 'tag retry must not duplicate TAG_REMOVED');
   for (let index = 1; index < timeline.length; index += 1)
     assert.ok(timeline[index - 1]!.createdAt >= timeline[index]!.createdAt, 'timeline must be newest-first');
   assert.ok(timeline.some((item) => item.eventType === 'STAGE_CHANGED'));
+
+  const otherLead = (await db.insert(leads).values({
+    osmType: 'node', osmId: 'cross-resource-lead', category: 'oficinas', score: 10,
+    status: 'QUALIFICADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+  }).returning())[0]!;
+  const otherOpportunity = (await createOpportunity(db, otherLead.id, {
+    title: 'Other lead opportunity', value: '10.00', actor, idempotencyKey: 'other-opportunity-001',
+  })).data;
+  const notesBeforeCrossLead = (await db.select({ value: count() }).from(crmNotes))[0]!.value;
+  const timelineBeforeCrossLead = (await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value;
+  await assert.rejects(addNote(db, lead.id, {
+    body: 'Must roll back', opportunityId: otherOpportunity.id, actor, idempotencyKey: 'cross-note-000001',
+  }));
+  await assert.rejects(createTask(db, lead.id, {
+    title: 'Must roll back', dueAt: '2026-07-11T12:00:00Z', opportunityId: otherOpportunity.id,
+    actor, idempotencyKey: 'cross-task-000001',
+  }));
+  assert.equal((await db.select({ value: count() }).from(crmNotes))[0]!.value, notesBeforeCrossLead);
+  assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, timelineBeforeCrossLead);
+  await db.delete(leads).where(eq(leads.id, otherLead.id));
 
   const excludedLeads = await db.insert(leads).values([
     { osmType: 'node', osmId: 'blocked-crm', category: 'oficinas', score: 10, status: 'QUALIFICADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO', isBlocked: true },

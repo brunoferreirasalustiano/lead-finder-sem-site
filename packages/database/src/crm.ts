@@ -126,7 +126,7 @@ export async function changeCrmStage(db: Database, leadId: string, input: CrmSta
   });
 }
 
-export async function updateCrmAssignment(db: Database, leadId: string, input: { owner?: string | null; priority?: CrmPriority; nextActionAt?: Date | null; actor: string; expectedVersion: number; idempotencyKey: string }) {
+export async function updateCrmAssignment(db: Database, leadId: string, input: { owner?: string | null | undefined; priority?: CrmPriority | undefined; nextActionAt?: Date | null | undefined; actor: string; expectedVersion: number; idempotencyKey: string }) {
   return db.transaction(async (tx) => {
     const scope = `lead:${leadId}:assignment`; const old = await replay<Lead>(tx, scope, input.idempotencyKey, input); if (old) return old;
     const current = await requireCommercialLead(tx, leadId);

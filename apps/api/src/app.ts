@@ -27,6 +27,7 @@ import {
   removeTag,
   rescheduleTask,
   updateOpportunity,
+  updateCrmAssignment,
   updateQualification,
   upsertContact,
   type Database,
@@ -38,6 +39,7 @@ import {
   listLeadsSchema,
   qualificationUpdateSchema,
   crmStageChangeSchema,
+  crmAssignmentUpdateSchema,
   CrmDomainError,
   followUpFilterSchema,
   noteCreateSchema,
@@ -195,6 +197,15 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
     const id = leadId(request); const body = crmStageChangeSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM stage change', details: body.success ? undefined : body.error.flatten() });
     return crmRoute(reply, async () => (await changeCrmStage(db, id.data, body.data)).data);
+  });
+  app.patch('/leads/:id/crm', async (request, reply) => {
+    const id = leadId(request); const body = crmAssignmentUpdateSchema.safeParse(request.body);
+    if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM assignment update' });
+    const { nextActionAt, ...input } = body.data;
+    return crmRoute(reply, async () => (await updateCrmAssignment(db, id.data, {
+      ...input,
+      nextActionAt: nextActionAt === undefined ? undefined : nextActionAt === null ? null : new Date(nextActionAt),
+    })).data);
   });
   app.get('/leads/:id/opportunities', async (request, reply) => {
     const id = leadId(request); const query = opportunityListFilterSchema.safeParse(request.query);

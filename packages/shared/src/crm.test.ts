@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CrmDomainError, assertCrmTransition, canTransitionCrmStage, crmStageChangeSchema,
+  CrmDomainError, assertCrmTransition, canTransitionCrmStage, crmAssignmentUpdateSchema, crmStageChangeSchema,
   crmStages, crmTransitionGraph, followUpFilterSchema, idempotencyKeySchema, moneySchema,
   isEligibleForCommercialQueue, noteCreateSchema, opportunityUpdateSchema, taskCreateSchema, utcDateTimeSchema,
 } from './crm.js';
@@ -58,6 +58,13 @@ describe('CRM contracts', () => {
     expect(opportunityUpdateSchema.safeParse({ ...command, status: 'PERDIDA', lossReason: 'Budget' }).success).toBe(true);
     expect(taskCreateSchema.safeParse({ title: 'Call', dueAt: '2026-07-11T12:00:00Z', actor: 'a', idempotencyKey: 'task-0001' }).success).toBe(true);
     expect(followUpFilterSchema.safeParse({ from: '2026-07-12T00:00:00Z', to: '2026-07-11T00:00:00Z' }).success).toBe(false);
+  });
+
+  it('requires an actual assignment change and UTC next action', () => {
+    expect(crmAssignmentUpdateSchema.safeParse(command).success).toBe(false);
+    expect(crmAssignmentUpdateSchema.safeParse({ ...command, priority: 'ALTA' }).success).toBe(true);
+    expect(crmAssignmentUpdateSchema.safeParse({ ...command, owner: null, nextActionAt: '2026-07-12T12:00:00Z' }).success).toBe(true);
+    expect(crmAssignmentUpdateSchema.safeParse({ ...command, nextActionAt: '2026-07-12T09:00:00-03:00' }).success).toBe(false);
   });
 
   it('accepts only valid opportunity UUIDs on notes and tasks', () => {

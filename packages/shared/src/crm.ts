@@ -88,6 +88,16 @@ export const crmStageChangeSchema = commandSchema.extend({
 });
 export type CrmStageChangeInput = z.infer<typeof crmStageChangeSchema>;
 
+export const crmAssignmentUpdateSchema = commandSchema.extend({
+  owner: nonBlank(100).nullable().optional(),
+  priority: crmPrioritySchema.optional(),
+  nextActionAt: utcDateTimeSchema.nullable().optional(),
+}).strict().refine(
+  (value) => value.owner !== undefined || value.priority !== undefined || value.nextActionAt !== undefined,
+  { message: 'At least one CRM assignment field is required' },
+);
+export type CrmAssignmentUpdateInput = z.infer<typeof crmAssignmentUpdateSchema>;
+
 export function assertCrmTransition(from: CrmStage, input: CrmStageChangeInput): void {
   const controlledExit = from === 'NAO_CONTATAR' && input.action === 'REACTIVATE';
   const controlledReopen = (from === 'GANHO' || from === 'PERDIDO') && input.action === 'REOPEN';

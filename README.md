@@ -361,6 +361,7 @@ As migrations usam `schema_migrations`; executá-las novamente é seguro.
 - `PUT /leads/:id/contacts`
 - `GET /leads/:id/history`
 - `GET /leads/:id/crm`
+- `PATCH /leads/:id/crm`
 - `PATCH /leads/:id/crm/stage`
 - `GET /leads/:id/opportunities`
 - `POST /leads/:id/opportunities`

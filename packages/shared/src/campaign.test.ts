@@ -77,6 +77,17 @@ describe('campaign templates', () => {
   it.each(['<script>alert(1)</script>', '<b>texto</b>', 'javascript:alert(1)', 'texto onclick=alert(1)'])('rejects active rendered value: %s', (value) => {
     expect(() => renderCampaignTemplate(defineCampaignTemplate('{{name}}', ['name']), { name: value })).toThrowError(CampaignDomainError);
   });
+  it.each([
+    ['<{{tag}}>x</{{tag}}>', ['tag'], { tag: 'script' }],
+    ['{{scheme}}:alert(1)', ['scheme'], { scheme: 'javascript' }],
+    ['on{{event}}=alert(1)', ['event'], { event: 'click' }],
+    ['{{open}}b>x</b{{close}}', ['open', 'close'], { open: '<', close: '>' }],
+  ])('rejects active content assembled in the final output: %s', (content, allowedVariables, values) => {
+    expect(() => renderCampaignTemplate(defineCampaignTemplate(content, allowedVariables), values)).toThrowError(CampaignDomainError);
+  });
+  it('continues rendering valid plain text assembled from template and values', () => {
+    expect(renderCampaignTemplate(defineCampaignTemplate('{{greeting}}, {{name}}!', ['greeting', 'name']), { greeting: 'Olá', name: 'Ana' })).toBe('Olá, Ana!');
+  });
 });
 
 describe('campaign fingerprint', () => {

@@ -43,6 +43,8 @@ describe('campaign eligibility', () => {
     ['channel opt-out', { optOuts: ['EMAIL'] as const }, 'CHANNEL_OPT_OUT'],
     ['global opt-out', { optOuts: ['TODOS'] as const }, 'CHANNEL_OPT_OUT'],
     ['approval missing', { firstContactApproval: null }, 'FIRST_CONTACT_APPROVAL_REQUIRED'],
+    ['approval actor blank', { firstContactApproval: { approvedBy: '   ', approvedAt: '2026-07-12T12:01:00Z' } }, 'FIRST_CONTACT_APPROVAL_REQUIRED'],
+    ['approval date invalid', { firstContactApproval: { approvedBy: 'reviewer', approvedAt: 'not-a-date' } }, 'FIRST_CONTACT_APPROVAL_REQUIRED'],
   ])('blocks %s independently', (_name, patch, reason) => expect(evaluateCampaignEligibility({ ...eligible, ...patch })).toEqual({ eligible: false, reason }));
   it('applies opt-out by channel and permits later contacts without first-contact approval', () => {
     expect(evaluateCampaignEligibility({ ...eligible, contact: { ...eligible.contact, channel: 'WHATSAPP' }, optOuts: ['EMAIL'] })).toEqual({ eligible: true });
@@ -62,8 +64,18 @@ describe('campaign templates', () => {
     expect(() => renderCampaignTemplate(template, { name: 'Ana' })).toThrowError(CampaignDomainError);
     expect(() => renderCampaignTemplate(template, { name: 'Ana', business: 'X', secret: 'Y' })).toThrowError(CampaignDomainError);
   });
-  it.each(['Olá {{name', 'Olá {name}', 'Olá {{ user.name }}', 'Olá {{constructor}}', '<script>alert(1)</script>', '<a href="javascript:alert(1)">x</a>'])('rejects malformed, arbitrary or active input: %s', (content) => {
+  it.each(['__proto__', 'prototype', 'constructor'])('rejects reserved allowed variable: %s', (name) => {
+    expect(() => defineCampaignTemplate(`Olá {{${name}}}`, [name])).toThrowError(CampaignDomainError);
+  });
+  it.each(['Olá {{name', 'Olá {name}', 'Olá {{ user.name }}', 'Olá {{__proto__}}', 'Olá {{prototype}}', 'Olá {{constructor}}', '<script>alert(1)</script>', '<a href="javascript:alert(1)">x</a>'])('rejects malformed, reserved, arbitrary or active input: %s', (content) => {
     expect(() => defineCampaignTemplate(content, ['name'])).toThrowError(CampaignDomainError);
+  });
+  it('rejects inherited values', () => {
+    const inherited = Object.create({ name: 'Ana' }) as Record<string, string>;
+    expect(() => renderCampaignTemplate(defineCampaignTemplate('Olá {{name}}', ['name']), inherited)).toThrowError(CampaignDomainError);
+  });
+  it.each(['<script>alert(1)</script>', '<b>texto</b>', 'javascript:alert(1)', 'texto onclick=alert(1)'])('rejects active rendered value: %s', (value) => {
+    expect(() => renderCampaignTemplate(defineCampaignTemplate('{{name}}', ['name']), { name: value })).toThrowError(CampaignDomainError);
   });
 });
 

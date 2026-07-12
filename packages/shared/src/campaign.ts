@@ -95,17 +95,19 @@ export function evaluateCampaignEligibility(candidate: CampaignEligibilityCandid
   if (candidate.crmStage === 'NAO_CONTATAR') return { eligible: false, reason: 'CRM_DO_NOT_CONTACT' };
   if (candidate.optOuts.includes('TODOS') || candidate.optOuts.includes(candidate.contact.channel)) return { eligible: false, reason: 'CHANNEL_OPT_OUT' };
   const approval = candidate.firstContactApproval;
-  if (candidate.isFirstContact && (!approval || !approval.approvedBy.trim() || !approval.approvedAt)) return { eligible: false, reason: 'FIRST_CONTACT_APPROVAL_REQUIRED' };
+  if (candidate.isFirstContact && (!approval || !approval.approvedBy.trim() || !Number.isFinite(new Date(approval.approvedAt).getTime()))) return { eligible: false, reason: 'FIRST_CONTACT_APPROVAL_REQUIRED' };
   return { eligible: true };
 }
 
 const variableName = /^[A-Za-z][A-Za-z0-9_]*$/;
+const reservedVariableNames = new Set(['__proto__', 'prototype', 'constructor']);
 const placeholder = /{{\s*([A-Za-z][A-Za-z0-9_]*)\s*}}/g;
 const unsafeTemplate = /<\s*\/?\s*[A-Za-z][^>]*>|javascript\s*:|on[A-Za-z]+\s*=|{{{?|}}}?/i;
+const isAllowedVariableName = (name: string) => variableName.test(name) && !reservedVariableNames.has(name);
 export interface CampaignTemplate { content: string; allowedVariables: readonly string[] }
 export function defineCampaignTemplate(content: string, allowedVariables: readonly string[]): CampaignTemplate {
   const unique = [...new Set(allowedVariables)];
-  if (!content || unique.some((name) => !variableName.test(name))) throw new CampaignDomainError('Invalid template definition', 'INVALID_TEMPLATE');
+  if (!content || unique.some((name) => !isAllowedVariableName(name))) throw new CampaignDomainError('Invalid template definition', 'INVALID_TEMPLATE');
   validateTemplate(content, unique);
   return { content, allowedVariables: unique };
 }
@@ -117,12 +119,13 @@ export function templateVariables(content: string): string[] {
 export function validateTemplate(content: string, allowedVariables: readonly string[]): void {
   const stripped = content.replace(placeholder, '');
   if (unsafeTemplate.test(stripped) || /[{}]/.test(stripped)) throw new CampaignDomainError('Malformed or unsafe template', 'INVALID_TEMPLATE');
-  for (const name of templateVariables(content)) if (!allowedVariables.includes(name)) throw new CampaignDomainError(`Unknown template variable: ${name}`, 'UNKNOWN_VARIABLE');
+  for (const name of templateVariables(content)) if (!isAllowedVariableName(name) || !allowedVariables.includes(name)) throw new CampaignDomainError(`Unknown template variable: ${name}`, 'UNKNOWN_VARIABLE');
 }
 export function renderCampaignTemplate(template: CampaignTemplate, values: Readonly<Record<string, string>>): string {
   validateTemplate(template.content, template.allowedVariables);
   for (const key of Object.keys(values)) if (!template.allowedVariables.includes(key)) throw new CampaignDomainError(`Unknown template variable: ${key}`, 'UNKNOWN_VARIABLE');
-  for (const name of templateVariables(template.content)) if (!(name in values)) throw new CampaignDomainError(`Missing template variable: ${name}`, 'MISSING_VARIABLE');
+  for (const name of templateVariables(template.content)) if (!Object.hasOwn(values, name)) throw new CampaignDomainError(`Missing template variable: ${name}`, 'MISSING_VARIABLE');
+  for (const value of Object.values(values)) if (unsafeTemplate.test(value)) throw new CampaignDomainError('Unsafe template variable value', 'INVALID_TEMPLATE');
   placeholder.lastIndex = 0;
   return template.content.replace(placeholder, (_match, name: string) => values[name]!);
 }

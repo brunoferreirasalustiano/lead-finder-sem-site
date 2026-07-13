@@ -85,9 +85,10 @@ try {
 
   const stage = await changeCrmStage(db, lead.id, {
     actor,
-    expectedVersion: 1,
-    idempotencyKey: 'stage-transition-001',
-    stage: 'EM_VALIDACAO',
+    expectedVersion: 2,
+    idempotencyKey: 'stage-no-contact-001',
+    stage: 'NAO_CONTATAR',
+    reason: 'Explicit opt-out',
   });
   assert.equal(stage.replayed, true);
 

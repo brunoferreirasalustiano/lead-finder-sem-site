@@ -37,17 +37,19 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
   const workerId = validWorkerId(input.workerId);
   const now = input.now ?? new Date();
   const expiresAt = outboxLeaseExpiration(now, input.leaseMs);
+  const nowIso = now.toISOString();
+  const expiresAtIso = expiresAt.toISOString();
   const token = input.token ?? randomUUID();
   const rows = await db.execute<{
     id: string; event_type: string; payload: unknown; idempotency_key: string;
-    claim_generation: number; claim_expires_at: Date;
+    claim_generation: number; claim_expires_at: Date | string;
   }>(sql`
     WITH candidate AS (
       SELECT id
       FROM campaign_outbox
       WHERE status = 'PENDING'
-        AND available_at <= ${now}
-        AND (claim_expires_at IS NULL OR claim_expires_at <= ${now})
+        AND available_at <= ${nowIso}::timestamptz
+        AND (claim_expires_at IS NULL OR claim_expires_at <= ${nowIso}::timestamptz)
       ORDER BY available_at ASC, id ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1
@@ -56,8 +58,8 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
     SET claim_worker_id = ${workerId},
         claim_token = ${token}::uuid,
         claim_generation = outbox.claim_generation + 1,
-        claimed_at = ${now},
-        claim_expires_at = ${expiresAt},
+        claimed_at = ${nowIso}::timestamptz,
+        claim_expires_at = ${expiresAtIso}::timestamptz,
         attempts = outbox.attempts + 1
     FROM candidate
     WHERE outbox.id = candidate.id
@@ -67,7 +69,7 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
   const row = rows[0];
   return row ? {
     id: row.id, eventType: row.event_type, payload: row.payload, idempotencyKey: row.idempotency_key,
-    workerId, token, generation: row.claim_generation, expiresAt: row.claim_expires_at,
+    workerId, token, generation: row.claim_generation, expiresAt: new Date(row.claim_expires_at),
   } : null;
 }
 
@@ -76,16 +78,17 @@ export async function completeCampaignOutbox(
   claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>,
   now = new Date(),
 ): Promise<boolean> {
+  const nowIso = now.toISOString();
   const rows = await db.execute<{ id: string }>(sql`
     UPDATE campaign_outbox
-    SET status = 'PUBLISHED', published_at = ${now},
+    SET status = 'PUBLISHED', published_at = ${nowIso}::timestamptz,
         claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
     WHERE id = ${claim.id}::uuid
       AND status = 'PENDING'
       AND claim_worker_id = ${claim.workerId}
       AND claim_token = ${claim.token}::uuid
       AND claim_generation = ${claim.generation}
-      AND claim_expires_at > ${now}
+      AND claim_expires_at > ${nowIso}::timestamptz
     RETURNING id
   `);
   return rows.length === 1;

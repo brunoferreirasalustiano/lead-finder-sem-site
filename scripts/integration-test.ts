@@ -185,7 +185,7 @@ try {
     type: 'TELEFONE',
     value: '(11) 99999-1234',
     confidence: 0.95,
-    verifiedAt: new Date().toISOString(),
+    verifiedAt: '2026-07-11T12:00:00.000Z',
     isValid: true,
     possibleWhatsapp: true,
   };
@@ -351,7 +351,7 @@ try {
     reference: 'https://example.test/business',
     result: 'no-site',
     confidence: 0.9,
-    observedAt: new Date().toISOString(),
+    observedAt: '2026-07-11T12:00:00.000Z',
     notes: 'deterministic evidence',
   };
   await Promise.all([

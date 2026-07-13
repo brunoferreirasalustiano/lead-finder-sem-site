@@ -271,8 +271,22 @@ try {
   assert.equal((await db.select({ value: count() }).from(campaignOptOuts).where(eq(campaignOptOuts.leadId, lead.id)))[0]?.value, 2);
 
   const attemptOutbox = (await db.select().from(campaignOutbox).where(and(eq(campaignOutbox.aggregateId, attempt.data.id), eq(campaignOutbox.eventType, 'ATTEMPT_CREATED'))).limit(1))[0]!;
+  const claimedAt = new Date('2026-07-13T00:00:00Z');
+  await db.update(campaignOutbox).set({
+    claimWorkerId: 'dead-letter-worker',
+    claimToken: randomUUID(),
+    claimGeneration: 1,
+    claimedAt,
+    claimExpiresAt: new Date(claimedAt.getTime() + 60_000),
+  }).where(eq(campaignOutbox.id, attemptOutbox.id));
   const dead = await moveOutboxToDeadLetter(db, { outboxId: attemptOutbox.id, correlationId: `correlation-${suffix}`, error: 'Permanent failure', attempts: 5 });
   assert.equal(dead.data.payload && typeof dead.data.payload, 'object'); assert.equal(dead.data.attempts, 5);
+  const failedOutbox = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, attemptOutbox.id)).limit(1))[0]!;
+  assert.equal(failedOutbox.status, 'FAILED');
+  assert.equal(failedOutbox.claimWorkerId, null);
+  assert.equal(failedOutbox.claimToken, null);
+  assert.equal(failedOutbox.claimedAt, null);
+  assert.equal(failedOutbox.claimExpiresAt, null);
   assert.equal((await moveOutboxToDeadLetter(db, { outboxId: attemptOutbox.id, correlationId: `correlation-${suffix}`, error: 'Permanent failure', attempts: 5 })).replayed, true);
   assert.equal((await db.select({ value: count() }).from(campaignDeadLetters).where(eq(campaignDeadLetters.outboxId, attemptOutbox.id)))[0]?.value, 1);
   await assert.rejects(db.delete(campaignAttempts).where(eq(campaignAttempts.id, attempt.data.id)), (error) => hasPgCode(error, '55000'));

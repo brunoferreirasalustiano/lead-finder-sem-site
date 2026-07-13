@@ -130,11 +130,11 @@ try {
   assert.equal(recipientReplay.replayed, true);
 
   const attempt = (await db.select().from(campaignAttempts))
-    .find((row) => (row.payloadSnapshot as { body?: string }).body === 'Olá');
+    .find((row) => (row.payloadSnapshot as { body?: string }).body === 'Hello');
   assert.ok(attempt, 'scheduled campaign attempt must exist after restart');
   const attemptReplay = await createAttemptWithOutbox(db, {
     recipientId: attempt.recipientId,
-    payloadSnapshot: { to: 'lead@example.test', body: 'Olá' },
+    payloadSnapshot: { to: 'lead@example.test', body: 'Hello' },
     idempotencyKey: attempt.idempotencyKey,
     availableAt: attempt.availableAt,
   });

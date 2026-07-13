@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { count, eq } from 'drizzle-orm';
+import { count, eq, sql } from 'drizzle-orm';
 import {
   collectionJobs,
   addNote,
@@ -45,6 +45,18 @@ const overpass = new OverpassClient({
 const app = buildApp(db, { dailyLeadLimit: 5 });
 
 try {
+  await db.execute(sql`
+    truncate table
+      campaign_provider_events,
+      campaign_dead_letters,
+      campaign_attempts,
+      campaign_outbox,
+      campaign_recipients,
+      campaign_opt_outs,
+      campaign_templates,
+      campaign_versions,
+      campaigns
+  `);
   await db.delete(collectionJobs);
   await db.delete(leads);
   const ready = await app.inject({ method: 'GET', url: '/health/ready' });

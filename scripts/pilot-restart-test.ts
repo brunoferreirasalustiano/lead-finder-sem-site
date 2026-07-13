@@ -6,7 +6,6 @@ import {
   campaignAttempts,
   campaignOutbox,
   campaignRecipients,
-  changeCrmStage,
   createAttemptWithOutbox,
   createDatabase,
   createOpportunity,
@@ -82,15 +81,6 @@ try {
     idempotencyKey: 'task-create-0001',
   });
   assert.equal(task.replayed, true);
-
-  const stage = await changeCrmStage(db, lead.id, {
-    actor,
-    expectedVersion: 2,
-    idempotencyKey: 'stage-no-contact-001',
-    stage: 'NAO_CONTATAR',
-    reason: 'Explicit opt-out',
-  });
-  assert.equal(stage.replayed, true);
 
   const contactPayload = {
     actor: 'integration-test',

@@ -12,6 +12,7 @@ export * from './schema.js';
 export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
+export * from './campaign-outbox.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed

@@ -57,10 +57,21 @@ try {
       campaign_opt_outs,
       campaign_templates,
       campaign_versions,
-      campaigns
+      campaigns,
+      crm_timeline_events,
+      crm_idempotency_keys,
+      crm_lead_tags,
+      crm_notes,
+      crm_tasks,
+      crm_opportunities,
+      crm_tags,
+      lead_evidence,
+      lead_contacts,
+      lead_qualification_history,
+      collection_jobs,
+      leads
+    restart identity
   `);
-  await db.delete(collectionJobs);
-  await db.delete(leads);
   const ready = await app.inject({ method: 'GET', url: '/health/ready' });
   assert.equal(ready.statusCode, 200);
 

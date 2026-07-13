@@ -414,3 +414,5 @@ try {
   server.close();
   await close();
 }
+
+await import('../packages/database/src/campaign.integration.js');

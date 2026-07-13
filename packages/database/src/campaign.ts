@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, desc, eq, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import {
   assertCampaignTransition, campaignTransitionGraph, campaignVersionTransitionGraph,
   type CampaignChannel, type CampaignRecipientState, type CampaignState, type CampaignVersionState,
@@ -280,7 +280,7 @@ export async function reserveSimulatedRecipient(db: Database, input: Parameters<
 
 export const listEligibleCampaignLeads = (db: Database, channel: CampaignChannel, limit: number, offset: number) => db
   .selectDistinctOn([leads.id], { lead: leads, contact: leadContacts }).from(leads)
-  .innerJoin(leadContacts, and(eq(leadContacts.leadId, leads.id), eq(leadContacts.isValid, true), sql`${leadContacts.verifiedAt} is not null`, channel === 'EMAIL' ? eq(leadContacts.type, 'EMAIL') : sql`${leadContacts.type} in ('WHATSAPP','TELEFONE')`))
+  .innerJoin(leadContacts, and(eq(leadContacts.leadId, leads.id), eq(leadContacts.isValid, true), sql`${leadContacts.verifiedAt} is not null`, channel === 'EMAIL' ? eq(leadContacts.type, 'EMAIL') : or(eq(leadContacts.type, 'WHATSAPP'), and(eq(leadContacts.type, 'TELEFONE'), eq(leadContacts.possibleWhatsapp, true)))))
   .where(and(eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'), eq(leads.isBlocked, false), eq(leads.doNotContact, false), sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`, sql`not exists (select 1 from campaign_opt_outs o where o.lead_id = ${leads.id} and (o.channel is null or o.channel = ${channel}))`))
   .orderBy(asc(leads.id), desc(leadContacts.verifiedAt), asc(leadContacts.id)).limit(Math.min(100, Math.max(1, limit))).offset(Math.max(0, offset));
 export const listCampaignRecipients = (db: Database, campaignId: string, limit: number, offset: number) => db.select().from(campaignRecipients).where(eq(campaignRecipients.campaignId, campaignId)).orderBy(desc(campaignRecipients.createdAt), desc(campaignRecipients.id)).limit(limit).offset(offset);

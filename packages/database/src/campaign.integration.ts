@@ -5,7 +5,8 @@ import {
   campaignAttempts, campaignDeadLetters, campaignOptOuts, campaignOutbox, campaignProviderEvents,
   campaignRecipients, campaignTemplates, campaignVersions, createAttemptWithOutbox,
   createCampaignWithVersion, createDatabase, createRecipientWithOutbox, leads, listAvailableOutbox,
-  moveOutboxToDeadLetter, recordOptOut, recordProviderEvent, updateRecipientState,
+  listEligibleCampaignLeads, moveOutboxToDeadLetter, recordOptOut, recordProviderEvent, updateRecipientState,
+  leadContacts,
   CampaignPersistenceError,
 } from './index.js';
 
@@ -38,6 +39,33 @@ try {
     osmType: 'node', osmId: `campaign-${suffix}`, category: 'oficinas', score: 90,
     status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
   }).returning())[0]!;
+  const eligibilityLeads = await db.insert(leads).values([
+    { osmType: 'node', osmId: `whatsapp-false-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: `whatsapp-true-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: `email-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
+  ]).returning();
+  const incompatiblePhone = eligibilityLeads[0]!; const compatiblePhone = eligibilityLeads[1]!; const emailLead = eligibilityLeads[2]!;
+  const verifiedAt = new Date('2026-07-12T12:00:00Z');
+  await db.insert(leadContacts).values([
+    { leadId: incompatiblePhone.id, type: 'TELEFONE', originalValue: '+551100000001', normalizedValue: '+551100000001', source: 'test', confidence: '1', verifiedAt, isValid: true, possibleWhatsapp: false },
+    { leadId: compatiblePhone.id, type: 'TELEFONE', originalValue: '+551100000002', normalizedValue: '+551100000002', source: 'test', confidence: '1', verifiedAt, isValid: true, possibleWhatsapp: true },
+    { leadId: emailLead.id, type: 'EMAIL', originalValue: 'eligible@example.test', normalizedValue: 'eligible@example.test', source: 'test', confidence: '1', verifiedAt, isValid: true, possibleWhatsapp: false },
+  ]);
+  const persistenceBefore = {
+    recipients: (await db.select({ value: count() }).from(campaignRecipients))[0]!.value,
+    attempts: (await db.select({ value: count() }).from(campaignAttempts))[0]!.value,
+    outbox: (await db.select({ value: count() }).from(campaignOutbox))[0]!.value,
+  };
+  const whatsappEligible = await listEligibleCampaignLeads(db, 'WHATSAPP', 100, 0);
+  assert.equal(whatsappEligible.some((item) => item.lead.id === incompatiblePhone.id), false);
+  assert.equal(whatsappEligible.some((item) => item.lead.id === compatiblePhone.id), true);
+  const emailEligible = await listEligibleCampaignLeads(db, 'EMAIL', 100, 0);
+  assert.equal(emailEligible.some((item) => item.lead.id === emailLead.id), true);
+  assert.deepEqual({
+    recipients: (await db.select({ value: count() }).from(campaignRecipients))[0]!.value,
+    attempts: (await db.select({ value: count() }).from(campaignAttempts))[0]!.value,
+    outbox: (await db.select({ value: count() }).from(campaignOutbox))[0]!.value,
+  }, persistenceBefore, 'eligibility selection used by simulation must not persist excluded contacts');
   const campaignInput = { name: `Campaign ${suffix}`, channel: 'EMAIL' as const, content: 'Olá {{name}}', allowedVariables: ['name'], idempotencyKey: `campaign-${suffix}` };
   const createdCampaign = await createCampaignWithVersion(db, campaignInput);
   const replayedCampaign = await createCampaignWithVersion(db, campaignInput);

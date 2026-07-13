@@ -47,16 +47,18 @@ Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
 - [x] runbook da Oracle Cloud;
 - [x] validação pós-merge no commit exato do `main`.
 - [x] funil de CRM, oportunidades e histórico comercial;
-- [x] tarefas, notas, tags e follow-ups.
+- [x] tarefas, notas, tags e follow-ups;
+- [x] contratos, templates versionados e regras seguras de campanhas;
+- [x] persistência transacional de campanhas, outbox, opt-out e dead letters;
+- [x] API de gestão, aprovação, preview e campanha exclusivamente simulada;
+- [x] gate determinístico de prontidão do piloto com relatório por SHA.
 
 ### Ainda não implementado
 
 - [ ] confirmação externa de ausência de site;
 - [ ] enriquecimento de telefone, WhatsApp, e-mail e redes sociais;
-- [ ] templates e campanhas;
 - [ ] envio por e-mail;
 - [ ] envio por WhatsApp oficial;
-- [ ] opt-out global e lista de bloqueio;
 - [ ] propostas comerciais e PDF;
 - [ ] dashboard de conversão;
 - [ ] automações completas no n8n;
@@ -103,8 +105,9 @@ Cada fase deve usar branch própria, pull request, gates obrigatórios e evidên
 |---|---|---|
 | Base técnica e Oracle | [#5 — homologar a stack em VPS Oracle real](../../issues/5) | CI concluída; VPS pendente |
 | Qualificação | [#6 — contatos, evidências e bloqueio de outreach](../../issues/6) | concluída no PR #14 |
-| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | ativa em `feat/crm-pipeline-core` |
-| Campanhas | [#8 — e-mail e WhatsApp idempotentes](../../issues/8) | bloqueada por #6 e #7 |
+| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | concluída no PR #15; G6 PASS |
+| Campanhas | [#8 — e-mail e WhatsApp idempotentes](../../issues/8) | domínio, persistência e API simulada concluídos; worker #19 ativo |
+| Piloto interno | [#33 — captação e oferta manual](../../issues/33) | pronto para operação manual; gate automático concluído no PR #38 |
 | Propostas | [#9 — propostas de landing pages e sites](../../issues/9) | bloqueada por #7 |
 | Dashboard | [#10 — métricas e operação](../../issues/10) | depende das fases anteriores |
 | n8n | [#11 — automações recuperáveis](../../issues/11) | depende das APIs anteriores |
@@ -143,7 +146,7 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 
 ### Fase 2 — CRM e funil comercial
 
-**Estado:** ativa; implementação validada no PR #15 e aguardando merge e G6.
+**Estado:** concluída no PR #15; G6 validado no commit `236e939722ac5d95e022742d7ee58998fb1f6cc2`.
 
 - [x] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
 - [x] regras de transição;
@@ -156,14 +159,17 @@ Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issu
 
 ### Fase 3 — Campanhas e mensagens
 
-- [ ] templates versionados de e-mail e WhatsApp;
-- [ ] variáveis seguras;
-- [ ] aprovação humana do primeiro contato;
+**Estado:** domínio, persistência e API de simulação concluídos (#16–#18); worker seguro pendente em #19.
+
+- [x] templates versionados de e-mail e WhatsApp;
+- [x] variáveis seguras;
+- [x] aprovação humana do primeiro contato;
 - [ ] limites globais e janelas de envio;
-- [ ] idempotência;
-- [ ] estados de tentativa, envio, entrega, erro, resposta e cancelamento;
-- [ ] pausa imediata;
-- [ ] retry limitado e dead-letter queue;
+- [x] idempotência;
+- [x] estados persistidos de destinatário, tentativa, evento, outbox e dead letter;
+- [x] pausa, retomada e cancelamento na gestão;
+- [ ] observação imediata de pausa, cancelamento, resposta e opt-out pelo worker;
+- [ ] retry limitado e recuperação auditável de dead-letter no worker;
 - [ ] integração de e-mail configurável;
 - [ ] WhatsApp por integração oficial.
 
@@ -307,7 +313,10 @@ Responsável:
 | 2026-07-11 | PR #14 / `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | GitHub Actions | G0–G5, G8 | CI `29159498610`; Deployment Smoke `29159498641` | PASS |
 | 2026-07-11 | `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | `main` | G6 | `deployment-smoke.yml` não disparou: o merge não alterou paths monitorados | NOT RUN |
 | 2026-07-12 | PR #15 / `60ca740a40c036bccaced358ee44edf01bc47f01` | GitHub Actions / PostgreSQL 16 | G0–G5, G8 | CI `29175918041`; Deployment Smoke `29175918046`; integração, imagens e multiarch | PASS |
-| pendente | merge do PR #15 | `main` | G6 | validação no commit exato do squash | BLOCKED ATÉ O MERGE |
+| 2026-07-12 | `236e939722ac5d95e022742d7ee58998fb1f6cc2` / PR #15 | `main` | G6 | `deployment-smoke/post-merge`; run `29193004346` | PASS |
+| 2026-07-13 | `a19f7af8effe198ac28e5f4d96586c32d1be4823` / PR #30 | `main` | G0–G6, G8 | CI, PostgreSQL, multiarch e `deployment-smoke/post-merge` | PASS |
+| 2026-07-13 | `bafd0370f9ce463c761596295fe8e5a5f4639087` / PR #37 | `main` | G6 | CI `29263328249`; Check Runs `validate`, `integration` e `multiarch` | PASS |
+| 2026-07-13 | `4bae82d1ca301bc6e71870dc71fa7b303a3468b7` / PR #38 | `main` | G1–G6 | CI `29287783121`; smoke `29287783139`; artefato `pilot-readiness-*` | PASS |
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
@@ -379,6 +388,25 @@ As migrations usam `schema_migrations`; executá-las novamente é seguro.
 - `GET /leads/:id/timeline`
 - `GET /crm/tasks/overdue`
 - `GET /crm/follow-ups/upcoming`
+- `POST /campaigns/preview`
+- `POST /campaigns`
+- `GET /campaigns`
+- `GET /campaigns/:id`
+- `POST /campaigns/:id/versions`
+- `GET /campaigns/:id/versions`
+- `GET /campaign-versions/:id/templates`
+- `POST /campaign-versions/:id/submit`
+- `POST /campaign-versions/:id/approve`
+- `POST /campaigns/:id/activate`
+- `POST /campaigns/:id/pause`
+- `POST /campaigns/:id/resume`
+- `POST /campaigns/:id/cancel`
+- `GET /campaigns/eligible/leads`
+- `POST /campaigns/:id/simulations`
+- `GET /campaigns/:id/recipients`
+- `GET /recipients/:id/attempts`
+- `GET /campaigns/:id/audit`
+- `GET /campaigns/failures`
 - `POST /collect`
 
 `GET /leads/export.csv` exporta, de forma determinística, no máximo os primeiros 100 registros que correspondem aos filtros. Para conjuntos maiores, use a paginação de `GET /leads`; exportação paginada/completa permanece uma evolução explícita para evitar consumo de memória sem limite.
@@ -393,7 +421,7 @@ Transições usam uma máquina explícita. Conflitos de versão e idempotência 
 
 Mutações registram a timeline na mesma transação e usam chave de idempotência com fingerprint do payload. Retry idêntico retorna o recurso anterior sem novo evento; reutilização da chave com payload diferente é conflito. Não existe envio real de e-mail ou WhatsApp nesta fase.
 
-Riscos residuais antes do merge: G6 é obrigatoriamente pós-merge; `deployment-smoke.yml` só executa em push para `main` quando houver mudanças em `deploy/**`, `scripts/**`, `docker-compose*.yml` ou no próprio workflow. Um workflow não disparado deve ser registrado como `NOT RUN`, nunca como aprovado.
+O núcleo de campanhas permanece sem envio externo: preview e simulação produzem snapshots, tentativas e outbox auditáveis, mas não chamam provedores. O próximo passo técnico é o worker seguro da issue #19, com limites distribuídos, retry controlado, dead-letter e observação de bloqueios antes da execução.
 
 A API ainda não possui autenticação/autorização. Os endpoints CRM devem permanecer atrás do perímetro privado até a implementação desses controles.
 
@@ -420,6 +448,8 @@ npm test
 npm run test:coverage
 npm run build
 npm run test:integration
+npm run test:pilot
+npm run test:pilot:restart
 docker compose config
 docker build -f apps/api/Dockerfile -t lead-finder-api:test .
 docker build -f apps/worker/Dockerfile -t lead-finder-worker:test .

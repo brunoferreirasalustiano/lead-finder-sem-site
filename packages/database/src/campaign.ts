@@ -42,6 +42,15 @@ const lock = (tx: Tx, scope: string, key: string) => tx.execute(sql`select pg_ad
 const assertFingerprint = (actual: string, expected: string) => {
   if (actual !== expected) throw new CampaignPersistenceError('Idempotency key reused with divergent payload', 'IDEMPOTENCY_CONFLICT');
 };
+const assertScheduledFingerprint = (existing: {
+  payloadFingerprint: string; availableAt: Date; createdAt: Date;
+}, current: string, legacy: string, requestedAvailableAt?: Date) => {
+  if (existing.payloadFingerprint === current) return;
+  const isLegacyUnscheduledReplay = requestedAvailableAt === undefined
+    && existing.payloadFingerprint === legacy
+    && existing.availableAt.getTime() === existing.createdAt.getTime();
+  if (!isLegacyUnscheduledReplay) assertFingerprint(existing.payloadFingerprint, current);
+};
 export const assertCampaignAcceptsReservations = (campaignState: string, versionState: string) => {
   if (campaignState !== 'ATIVA') throw new CampaignPersistenceError('Campaign does not accept new simulated reservations', 'LOGICAL_CONFLICT');
   if (versionState !== 'APROVADA') throw new CampaignPersistenceError('Campaign version is not approved', 'LOGICAL_CONFLICT');
@@ -76,6 +85,7 @@ export async function createRecipientWithOutbox(db: Database, input: {
   requireActiveApproved?: boolean;
 }) {
   const payload = { campaignId: input.campaignId, campaignVersionId: input.campaignVersionId, leadId: input.leadId, channel: input.channel, snapshot: input.snapshot };
+  const legacyFingerprint = persistenceFingerprint(payload);
   const fingerprint = persistenceFingerprint({ ...payload, availableAt: input.availableAt?.toISOString() ?? null });
   try {
     return await db.transaction(async (tx) => {
@@ -83,7 +93,10 @@ export async function createRecipientWithOutbox(db: Database, input: {
       const existing = (await tx.select().from(campaignRecipients).where(and(
         eq(campaignRecipients.campaignId, input.campaignId), eq(campaignRecipients.idempotencyKey, input.idempotencyKey),
       )).limit(1))[0];
-      if (existing) { assertFingerprint(existing.payloadFingerprint, fingerprint); return { data: existing, replayed: true }; }
+      if (existing) {
+        assertScheduledFingerprint(existing, fingerprint, legacyFingerprint, input.availableAt);
+        return { data: existing, replayed: true };
+      }
       if (input.requireActiveApproved) {
         const campaign = (await tx.select().from(campaigns).where(eq(campaigns.id, input.campaignId)).for('update').limit(1))[0];
         if (!campaign) throw new CampaignPersistenceError('Campaign not found', 'NOT_FOUND');
@@ -109,13 +122,17 @@ export async function createAttemptWithOutbox(db: Database, input: {
   recipientId: string; payloadSnapshot: Readonly<Record<string, unknown>>; idempotencyKey: string; availableAt?: Date;
 }) {
   const payload = { recipientId: input.recipientId, payloadSnapshot: input.payloadSnapshot };
+  const legacyFingerprint = persistenceFingerprint(payload);
   const fingerprint = persistenceFingerprint({ ...payload, availableAt: input.availableAt?.toISOString() ?? null });
   return db.transaction(async (tx) => {
     await lock(tx, `recipient:${input.recipientId}:attempt`, input.idempotencyKey);
     const existing = (await tx.select().from(campaignAttempts).where(and(
       eq(campaignAttempts.recipientId, input.recipientId), eq(campaignAttempts.idempotencyKey, input.idempotencyKey),
     )).limit(1))[0];
-    if (existing) { assertFingerprint(existing.payloadFingerprint, fingerprint); return { data: existing, replayed: true }; }
+    if (existing) {
+      assertScheduledFingerprint(existing, fingerprint, legacyFingerprint, input.availableAt);
+      return { data: existing, replayed: true };
+    }
     const attempt = (await tx.insert(campaignAttempts).values({
       recipientId: input.recipientId, payloadSnapshot: input.payloadSnapshot, idempotencyKey: input.idempotencyKey,
       payloadFingerprint: fingerprint, availableAt: input.availableAt,

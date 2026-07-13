@@ -6,7 +6,7 @@ import {
   campaignRecipients, campaignTemplates, campaignVersions, createAttemptWithOutbox,
   createCampaignWithVersion, createDatabase, createRecipientWithOutbox, leads, listAvailableOutbox,
   listEligibleCampaignLeads, moveOutboxToDeadLetter, recordOptOut, recordProviderEvent, updateRecipientState,
-  leadContacts,
+  leadContacts, persistenceFingerprint,
   CampaignPersistenceError,
 } from './index.js';
 
@@ -77,6 +77,56 @@ try {
   await assert.rejects(db.insert(campaignTemplates).values({
     campaignVersionId: randomUUID(), channel: 'EMAIL', content: 'Orphan', allowedVariables: [], fingerprint: '0'.repeat(64),
   }), (error) => hasPgCode(error, '23503'));
+
+  const legacyLead = (await db.insert(leads).values({
+    osmType: 'node', osmId: `campaign-legacy-${suffix}`, category: 'oficinas', score: 90,
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+  }).returning())[0]!;
+  const legacyRecipientPayload = {
+    campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: legacyLead.id,
+    channel: 'EMAIL' as const, snapshot: { leadName: 'Legacy recipient' },
+  };
+  const legacyRecipient = (await db.insert(campaignRecipients).values({
+    ...legacyRecipientPayload, recipientSnapshot: legacyRecipientPayload.snapshot,
+    idempotencyKey: `recipient-legacy-${suffix}`,
+    payloadFingerprint: persistenceFingerprint(legacyRecipientPayload),
+  }).returning())[0]!;
+  assert.equal(legacyRecipient.availableAt.getTime(), legacyRecipient.createdAt.getTime());
+  const legacyRecipientReplay = await createRecipientWithOutbox(db, {
+    ...legacyRecipientPayload, idempotencyKey: legacyRecipient.idempotencyKey,
+  });
+  assert.equal(legacyRecipientReplay.replayed, true);
+  assert.equal(legacyRecipientReplay.data.id, legacyRecipient.id);
+  await expectCode(createRecipientWithOutbox(db, {
+    ...legacyRecipientPayload, snapshot: { leadName: 'Divergent legacy recipient' },
+    idempotencyKey: legacyRecipient.idempotencyKey,
+  }), 'IDEMPOTENCY_CONFLICT');
+  await expectCode(createRecipientWithOutbox(db, {
+    ...legacyRecipientPayload, idempotencyKey: legacyRecipient.idempotencyKey,
+    availableAt: new Date(legacyRecipient.availableAt.getTime() + 1_000),
+  }), 'IDEMPOTENCY_CONFLICT');
+  await db.update(campaignRecipients).set({
+    availableAt: new Date(legacyRecipient.availableAt.getTime() + 1_000),
+  }).where(eq(campaignRecipients.id, legacyRecipient.id));
+  await expectCode(createRecipientWithOutbox(db, {
+    ...legacyRecipientPayload, idempotencyKey: legacyRecipient.idempotencyKey,
+  }), 'IDEMPOTENCY_CONFLICT');
+
+  const nullLead = (await db.insert(leads).values({
+    osmType: 'node', osmId: `campaign-null-${suffix}`, category: 'oficinas', score: 90,
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+  }).returning())[0]!;
+  const nullRecipientInput = {
+    campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: nullLead.id,
+    channel: 'EMAIL' as const, snapshot: { leadName: 'Null schedule' }, idempotencyKey: `recipient-null-${suffix}`,
+  };
+  const nullRecipient = await createRecipientWithOutbox(db, nullRecipientInput);
+  const nullRecipientReplay = await createRecipientWithOutbox(db, nullRecipientInput);
+  assert.equal(nullRecipientReplay.replayed, true);
+  assert.equal(nullRecipientReplay.data.id, nullRecipient.data.id);
+  await expectCode(createRecipientWithOutbox(db, {
+    ...nullRecipientInput, snapshot: { leadName: 'Divergent null schedule' },
+  }), 'IDEMPOTENCY_CONFLICT');
 
   const recipientInput = {
     campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: lead.id, channel: 'EMAIL' as const,
@@ -165,6 +215,47 @@ try {
   )).limit(1))[0]!;
   assert.equal(attempt.data.availableAt.toISOString(), attemptInput.availableAt.toISOString());
   assert.equal(scheduledAttemptOutbox.availableAt.toISOString(), attemptInput.availableAt.toISOString());
+  await expectCode(createAttemptWithOutbox(db, {
+    ...attemptInput, payloadSnapshot: { to: 'other@example.test', body: 'Changed' },
+  }), 'IDEMPOTENCY_CONFLICT');
+
+  const legacyAttemptPayload = { recipientId: legacyRecipient.id, payloadSnapshot: { body: 'Legacy attempt' } };
+  const legacyAttempt = (await db.insert(campaignAttempts).values({
+    ...legacyAttemptPayload, idempotencyKey: `attempt-legacy-${suffix}`,
+    payloadFingerprint: persistenceFingerprint(legacyAttemptPayload),
+  }).returning())[0]!;
+  assert.equal(legacyAttempt.availableAt.getTime(), legacyAttempt.createdAt.getTime());
+  const legacyAttemptReplay = await createAttemptWithOutbox(db, {
+    ...legacyAttemptPayload, idempotencyKey: legacyAttempt.idempotencyKey,
+  });
+  assert.equal(legacyAttemptReplay.replayed, true);
+  assert.equal(legacyAttemptReplay.data.id, legacyAttempt.id);
+  await expectCode(createAttemptWithOutbox(db, {
+    ...legacyAttemptPayload, payloadSnapshot: { body: 'Divergent legacy attempt' },
+    idempotencyKey: legacyAttempt.idempotencyKey,
+  }), 'IDEMPOTENCY_CONFLICT');
+  await expectCode(createAttemptWithOutbox(db, {
+    ...legacyAttemptPayload, idempotencyKey: legacyAttempt.idempotencyKey,
+    availableAt: new Date(legacyAttempt.availableAt.getTime() + 1_000),
+  }), 'IDEMPOTENCY_CONFLICT');
+  await db.update(campaignAttempts).set({
+    availableAt: new Date(legacyAttempt.availableAt.getTime() + 1_000),
+  }).where(eq(campaignAttempts.id, legacyAttempt.id));
+  await expectCode(createAttemptWithOutbox(db, {
+    ...legacyAttemptPayload, idempotencyKey: legacyAttempt.idempotencyKey,
+  }), 'IDEMPOTENCY_CONFLICT');
+
+  const nullAttemptInput = {
+    recipientId: nullRecipient.data.id, payloadSnapshot: { body: 'Null schedule attempt' },
+    idempotencyKey: `attempt-null-${suffix}`,
+  };
+  const nullAttempt = await createAttemptWithOutbox(db, nullAttemptInput);
+  const nullAttemptReplay = await createAttemptWithOutbox(db, nullAttemptInput);
+  assert.equal(nullAttemptReplay.replayed, true);
+  assert.equal(nullAttemptReplay.data.id, nullAttempt.data.id);
+  await expectCode(createAttemptWithOutbox(db, {
+    ...nullAttemptInput, payloadSnapshot: { body: 'Divergent null attempt' },
+  }), 'IDEMPOTENCY_CONFLICT');
   await assert.rejects(db.update(campaignAttempts).set({ payloadSnapshot: { body: 'Mutated' } }).where(eq(campaignAttempts.id, attempt.data.id)), (error) => hasPgCode(error, '55000'));
   await assert.rejects(db.delete(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)), (error) => hasPgCode(error, '55000'));
 

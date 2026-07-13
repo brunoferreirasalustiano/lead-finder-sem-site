@@ -11,6 +11,7 @@ import { collectionJobs, leads, type NewLead } from './schema.js';
 export * from './schema.js';
 export * from './qualification.js';
 export * from './crm.js';
+export * from './campaign.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed

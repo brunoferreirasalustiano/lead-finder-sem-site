@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CampaignPersistenceError, persistenceFingerprint } from './campaign.js';
+import { assertCampaignAcceptsReservations, CampaignPersistenceError, persistenceFingerprint } from './campaign.js';
 
 describe('campaign persistence primitives', () => {
   it('creates deterministic fingerprints independent of object key order', () => {
@@ -12,5 +12,12 @@ describe('campaign persistence primitives', () => {
   it('exposes deterministic persistence conflict codes', () => {
     const error = new CampaignPersistenceError('stale', 'VERSION_CONFLICT');
     expect(error).toMatchObject({ name: 'CampaignPersistenceError', code: 'VERSION_CONFLICT', message: 'stale' });
+  });
+
+  it('permits reservations only for active campaigns with an approved version', () => {
+    expect(() => assertCampaignAcceptsReservations('ATIVA', 'APROVADA')).not.toThrow();
+    for (const state of ['RASCUNHO', 'PAUSADA', 'CANCELADA', 'CONCLUIDA'])
+      expect(() => assertCampaignAcceptsReservations(state, 'APROVADA')).toThrowError(CampaignPersistenceError);
+    expect(() => assertCampaignAcceptsReservations('ATIVA', 'PENDENTE_APROVACAO')).toThrowError(CampaignPersistenceError);
   });
 });

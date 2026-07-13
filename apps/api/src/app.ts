@@ -31,6 +31,22 @@ import {
   updateQualification,
   upsertContact,
   type Database,
+  CampaignPersistenceError,
+  createAttemptWithOutbox,
+  createCampaignVersion,
+  createCampaignWithVersion,
+  getCampaign,
+  listCampaignAudit,
+  listCampaigns,
+  listCampaignFailures,
+  listCampaignRecipients,
+  listCampaignTemplates,
+  listCampaignVersions,
+  listEligibleCampaignLeads,
+  listRecipientAttempts,
+  reserveSimulatedRecipient,
+  transitionCampaign,
+  transitionCampaignVersion,
 } from '@lead-finder/database';
 import {
   collectSchema,
@@ -54,8 +70,19 @@ import {
   taskCreateSchema,
   taskListFilterSchema,
   taskRescheduleSchema,
+  CampaignDomainError,
+  campaignApprovalSchema,
+  campaignCreateSchema,
+  campaignEligibleListSchema,
+  campaignListSchema,
+  campaignPreviewSchema,
+  campaignSimulationSchema,
+  campaignStateCommandSchema,
+  campaignVersionCreateSchema,
+  defineCampaignTemplate,
 } from '@lead-finder/shared';
 import { z } from 'zod';
+import { simulateCampaignMessage } from './campaign-simulation.js';
 
 const idSchema = z.string().uuid();
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
@@ -126,6 +153,18 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
   const crmRoute = async <T>(reply: Parameters<typeof crmError>[1], operation: () => Promise<T>) => {
     try { return await operation(); } catch (error) { return crmError(error, reply); }
   };
+  const campaignError = (error: unknown, reply: Parameters<typeof crmError>[1]) => {
+    if (error instanceof CampaignPersistenceError) {
+      const status = error.code === 'NOT_FOUND' ? 404 : error.code === 'IDEMPOTENCY_CONFLICT' || error.code === 'LOGICAL_CONFLICT' || error.code === 'VERSION_CONFLICT' ? 409 : 422;
+      return reply.status(status).send({ error: error.message, code: error.code });
+    }
+    if (error instanceof CampaignDomainError) return reply.status(422).send({ error: error.message, code: error.code });
+    throw error;
+  };
+  const campaignRoute = async <T>(reply: Parameters<typeof crmError>[1], operation: () => Promise<T>) => {
+    try { return await operation(); } catch (error) { return campaignError(error, reply); }
+  };
+  const idempotencyKey = (headers: Record<string, unknown>) => z.string().trim().min(1).max(200).safeParse(headers['idempotency-key']);
   app.get('/leads/:id/qualification', async (request, reply) => {
     const id = leadId(request);
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
@@ -276,6 +315,94 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
   app.get('/crm/follow-ups/upcoming', async (request, reply) => {
     const query = followUpFilterSchema.safeParse(request.query); if (!query.success || !query.data.from || !query.data.to) return reply.status(400).send({ error: 'Valid UTC from and to timestamps are required' });
     return crmRoute(reply, () => listUpcomingFollowUps(db, new Date(query.data.from!), new Date(query.data.to!), query.data.pageSize, query.data.owner));
+  });
+  app.post('/campaigns/preview', async (request, reply) => {
+    const body = campaignPreviewSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: 'Invalid campaign preview', code: 'INVALID_REQUEST' });
+    try { return simulateCampaignMessage(body.data); }
+    catch (error) { return campaignError(error, reply); }
+  });
+  app.post('/campaigns', async (request, reply) => {
+    const body = campaignCreateSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!body.success || !key.success) return reply.status(400).send({ error: 'Invalid campaign or Idempotency-Key', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => { defineCampaignTemplate(body.data.content, body.data.allowedVariables); const result = await createCampaignWithVersion(db, { ...body.data, idempotencyKey: key.data }); return reply.status(creationStatus(result.replayed)).send(result.data); });
+  });
+  app.get('/campaigns/:id', async (request, reply) => {
+    const id = parseId(request.params); if (!id.success) return reply.status(400).send({ error: 'Invalid campaign id', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, () => getCampaign(db, id.data));
+  });
+  app.get('/campaigns', async (request, reply) => {
+    const query = campaignListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid campaign query', code: 'INVALID_REQUEST' });
+    return page(await listCampaigns(db, query.data.pageSize, (query.data.page - 1) * query.data.pageSize), query.data);
+  });
+  app.post('/campaigns/:id/versions', async (request, reply) => {
+    const id = parseId(request.params); const body = campaignVersionCreateSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid campaign version', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => { defineCampaignTemplate(body.data.content, body.data.allowedVariables); const result = await createCampaignVersion(db, { campaignId: id.data, ...body.data, idempotencyKey: key.data }); return reply.status(creationStatus(result.replayed)).send(result.data); });
+  });
+  app.get('/campaigns/:id/versions', async (request, reply) => {
+    const id = parseId(request.params); if (!id.success) return reply.status(400).send({ error: 'Invalid campaign id', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, () => listCampaignVersions(db, id.data));
+  });
+  app.get('/campaign-versions/:id/templates', async (request, reply) => {
+    const id = parseId(request.params); if (!id.success) return reply.status(400).send({ error: 'Invalid campaign version id', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, () => listCampaignTemplates(db, id.data));
+  });
+  app.post('/campaign-versions/:id/submit', async (request, reply) => {
+    const id = parseId(request.params); const body = campaignApprovalSchema.pick({ actor: true }).safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid version submission', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => (await transitionCampaignVersion(db, { campaignVersionId: id.data, state: 'PENDENTE_APROVACAO', actor: body.data.actor, idempotencyKey: key.data })).data);
+  });
+  app.post('/campaign-versions/:id/approve', async (request, reply) => {
+    const id = parseId(request.params); const body = campaignApprovalSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid human approval', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => (await transitionCampaignVersion(db, { campaignVersionId: id.data, state: 'APROVADA', actor: body.data.actor, approvedAt: new Date(body.data.approvedAt), idempotencyKey: key.data })).data);
+  });
+  for (const [action, state] of [['activate', 'ATIVA'], ['pause', 'PAUSADA'], ['resume', 'ATIVA'], ['cancel', 'CANCELADA']] as const) app.post(`/campaigns/:id/${action}`, async (request, reply) => {
+    const id = parseId(request.params); const body = campaignStateCommandSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: `Invalid campaign ${action}`, code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => (await transitionCampaign(db, { campaignId: id.data, state, ...body.data, idempotencyKey: key.data })).data);
+  });
+  app.get('/campaigns/eligible/leads', async (request, reply) => {
+    const query = campaignEligibleListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid eligibility query', code: 'INVALID_REQUEST' });
+    const items = await listEligibleCampaignLeads(db, query.data.channel, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
+    return page(items, query.data);
+  });
+  app.post('/campaigns/:id/simulations', async (request, reply) => {
+    const id = parseId(request.params); const body = campaignSimulationSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid campaign simulation', code: 'INVALID_REQUEST' });
+    return campaignRoute(reply, async () => {
+      const templates = await listCampaignTemplates(db, body.data.campaignVersionId);
+      const template = templates.find((item) => item.channel === body.data.channel);
+      if (!template) throw new CampaignPersistenceError('Template not found for channel', 'NOT_FOUND');
+      const eligible = await listEligibleCampaignLeads(db, body.data.channel, body.data.pageSize, (body.data.page - 1) * body.data.pageSize);
+      const items = [];
+      for (const item of eligible) {
+        const snapshot = { leadId: item.lead.id, name: item.lead.name ?? '', contact: item.contact.normalizedValue, channel: body.data.channel };
+        const recipient = await reserveSimulatedRecipient(db, { campaignId: id.data, campaignVersionId: body.data.campaignVersionId, leadId: item.lead.id, channel: body.data.channel, snapshot, idempotencyKey: `${key.data}:${item.lead.id}` });
+        const allowedVariables = template.allowedVariables as string[];
+        const values = Object.fromEntries(allowedVariables.map((name) => [name, name === 'name' || name === 'business' ? snapshot.name : name === 'contact' ? snapshot.contact : '']));
+        const simulated = simulateCampaignMessage({ channel: body.data.channel, content: template.content, allowedVariables, values });
+        const attempt = await createAttemptWithOutbox(db, { recipientId: recipient.data.id, payloadSnapshot: { ...simulated }, idempotencyKey: `${key.data}:${item.lead.id}:attempt` });
+        items.push({ recipient: recipient.data, attempt: attempt.data, simulation: simulated });
+      }
+      return { mode: 'SIMULATION', dispatched: false, items, pagination: { page: body.data.page, pageSize: body.data.pageSize, hasMore: eligible.length === body.data.pageSize } };
+    });
+  });
+  const campaignLists: Array<[string, (id: string, limit: number, offset: number) => Promise<unknown[]>]> = [
+    ['/campaigns/:id/recipients', (id: string, limit: number, offset: number) => listCampaignRecipients(db, id, limit, offset)],
+    ['/recipients/:id/attempts', (id: string, limit: number, offset: number) => listRecipientAttempts(db, id, limit, offset)],
+    ['/campaigns/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset)],
+    ['/campaign-versions/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset)],
+  ];
+  for (const [url, list] of campaignLists) app.get(url, async (request, reply) => {
+    const id = parseId(request.params); const query = campaignListSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid campaign query', code: 'INVALID_REQUEST' });
+    const items = await list(id.data, query.data.pageSize, (query.data.page - 1) * query.data.pageSize); return page(items, query.data);
+  });
+  app.get('/campaigns/failures', async (request, reply) => {
+    const query = campaignListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid failure query', code: 'INVALID_REQUEST' });
+    return page(await listCampaignFailures(db, query.data.pageSize, (query.data.page - 1) * query.data.pageSize), query.data);
   });
   app.post('/collect', async (request, reply) => {
     const parsed = collectSchema.safeParse(request.body);

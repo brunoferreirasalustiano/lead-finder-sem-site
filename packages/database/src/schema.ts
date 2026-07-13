@@ -213,7 +213,7 @@ export const campaignVersions = pgTable('campaign_versions', {
 ]);
 export const campaignTemplates = pgTable('campaign_templates', {
   id: uuid('id').defaultRandom().primaryKey(),
-  campaignVersionId: uuid('campaign_version_id').notNull(),
+  campaignVersionId: uuid('campaign_version_id').notNull().references(() => campaignVersions.id, { onDelete: 'restrict' }),
   channel: text('channel').notNull(), content: text('content').notNull(),
   allowedVariables: jsonb('allowed_variables').notNull(), fingerprint: text('fingerprint').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import {
-  assertCampaignTransition, campaignTransitionGraph, campaignVersionTransitionGraph,
+  assertCampaignTransition, campaignRecipientTransitionGraph, campaignTransitionGraph, campaignVersionTransitionGraph,
   type CampaignChannel, type CampaignRecipientState, type CampaignState, type CampaignVersionState,
 } from '@lead-finder/shared';
 import type { Database } from './index.js';
@@ -76,7 +76,7 @@ export async function createRecipientWithOutbox(db: Database, input: {
   requireActiveApproved?: boolean;
 }) {
   const payload = { campaignId: input.campaignId, campaignVersionId: input.campaignVersionId, leadId: input.leadId, channel: input.channel, snapshot: input.snapshot };
-  const fingerprint = persistenceFingerprint(payload);
+  const fingerprint = persistenceFingerprint({ ...payload, availableAt: input.availableAt?.toISOString() ?? null });
   try {
     return await db.transaction(async (tx) => {
       await lock(tx, `campaign:${input.campaignId}:recipient`, input.idempotencyKey);
@@ -109,7 +109,7 @@ export async function createAttemptWithOutbox(db: Database, input: {
   recipientId: string; payloadSnapshot: Readonly<Record<string, unknown>>; idempotencyKey: string; availableAt?: Date;
 }) {
   const payload = { recipientId: input.recipientId, payloadSnapshot: input.payloadSnapshot };
-  const fingerprint = persistenceFingerprint(payload);
+  const fingerprint = persistenceFingerprint({ ...payload, availableAt: input.availableAt?.toISOString() ?? null });
   return db.transaction(async (tx) => {
     await lock(tx, `recipient:${input.recipientId}:attempt`, input.idempotencyKey);
     const existing = (await tx.select().from(campaignAttempts).where(and(
@@ -142,6 +142,16 @@ export async function updateRecipientState(db: Database, input: {
       if (!row) throw new CampaignPersistenceError('Recipient not found', 'NOT_FOUND');
       return { data: row, replayed: true };
     }
+    const current = (await tx.select().from(campaignRecipients)
+      .where(eq(campaignRecipients.id, input.recipientId)).for('update').limit(1))[0];
+    if (!current) throw new CampaignPersistenceError('Recipient not found', 'NOT_FOUND');
+    if (current.version !== input.expectedVersion)
+      throw new CampaignPersistenceError('Recipient version conflict', 'VERSION_CONFLICT');
+    assertCampaignTransition(
+      campaignRecipientTransitionGraph,
+      current.state as CampaignRecipientState,
+      input.state,
+    );
     const row = (await tx.update(campaignRecipients).set({
       state: input.state, version: sql`${campaignRecipients.version} + 1`, updatedAt: new Date(),
     }).where(and(eq(campaignRecipients.id, input.recipientId), eq(campaignRecipients.version, input.expectedVersion))).returning())[0];

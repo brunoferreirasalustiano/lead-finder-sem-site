@@ -74,6 +74,9 @@ try {
   await expectCode(createCampaignWithVersion(db, { ...campaignInput, name: 'Divergent' }), 'IDEMPOTENCY_CONFLICT');
   const version = (await db.select().from(campaignVersions).where(eq(campaignVersions.campaignId, createdCampaign.data.id)).limit(1))[0]!;
   assert.equal((await db.select({ value: count() }).from(campaignTemplates).where(eq(campaignTemplates.campaignVersionId, version.id)))[0]?.value, 1);
+  await assert.rejects(db.insert(campaignTemplates).values({
+    campaignVersionId: randomUUID(), channel: 'EMAIL', content: 'Orphan', allowedVariables: [], fingerprint: '0'.repeat(64),
+  }), (error) => hasPgCode(error, '23503'));
 
   const recipientInput = {
     campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: lead.id, channel: 'EMAIL' as const,
@@ -86,9 +89,17 @@ try {
   assert.deepEqual(concurrent.map((result) => result.replayed).sort(), [false, true]);
   assert.equal(new Set(concurrent.map((result) => result.data.id)).size, 1);
   await expectCode(createRecipientWithOutbox(db, { ...recipientInput, snapshot: { leadName: 'Changed' } }), 'IDEMPOTENCY_CONFLICT');
+  await expectCode(createRecipientWithOutbox(db, {
+    ...recipientInput, availableAt: new Date('2026-07-12T12:00:01Z'),
+  }), 'IDEMPOTENCY_CONFLICT');
   const recipient = concurrent[0].data;
   assert.equal((await db.select({ value: count() }).from(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)))[0]?.value, 1);
   assert.equal((await db.select({ value: count() }).from(campaignOutbox).where(and(eq(campaignOutbox.aggregateId, recipient.id), eq(campaignOutbox.eventType, 'RECIPIENT_CREATED'))))[0]?.value, 1);
+  const recipientOutbox = (await db.select().from(campaignOutbox).where(and(
+    eq(campaignOutbox.aggregateId, recipient.id), eq(campaignOutbox.eventType, 'RECIPIENT_CREATED'),
+  )).limit(1))[0]!;
+  assert.equal(recipient.availableAt.toISOString(), recipientInput.availableAt.toISOString());
+  assert.equal(recipientOutbox.availableAt.toISOString(), recipientInput.availableAt.toISOString());
 
   const rollbackKey = `rollback-${suffix}`;
   await assert.rejects(createRecipientWithOutbox(db, {
@@ -101,22 +112,59 @@ try {
   assert.deepEqual(storedSnapshot, recipientInput.snapshot);
   await assert.rejects(db.update(campaignRecipients).set({ recipientSnapshot: { leadName: 'Mutated' } }).where(eq(campaignRecipients.id, recipient.id)), (error) => hasPgCode(error, '55000'));
 
+  const validTransition = await updateRecipientState(db, {
+    recipientId: recipient.id, state: 'ELEGIVEL', expectedVersion: 1, idempotencyKey: `state-valid-${suffix}`,
+  });
+  assert.equal(validTransition.data.state, 'ELEGIVEL'); assert.equal(validTransition.data.version, 2);
+  const transitionReplay = await updateRecipientState(db, {
+    recipientId: recipient.id, state: 'ELEGIVEL', expectedVersion: 1, idempotencyKey: `state-valid-${suffix}`,
+  });
+  assert.equal(transitionReplay.replayed, true); assert.equal(transitionReplay.data.id, recipient.id);
+  await expectCode(updateRecipientState(db, {
+    recipientId: recipient.id, state: 'PENDENTE', expectedVersion: 2, idempotencyKey: `state-invalid-${suffix}`,
+  }), 'INVALID_TRANSITION');
+  await expectCode(updateRecipientState(db, {
+    recipientId: recipient.id, state: 'BLOQUEADO', expectedVersion: 1, idempotencyKey: `state-stale-${suffix}`,
+  }), 'VERSION_CONFLICT');
+  const terminalTransition = await updateRecipientState(db, {
+    recipientId: recipient.id, state: 'CANCELADO', expectedVersion: 2, idempotencyKey: `state-terminal-${suffix}`,
+  });
+  assert.equal(terminalTransition.data.state, 'CANCELADO'); assert.equal(terminalTransition.data.version, 3);
+  await expectCode(updateRecipientState(db, {
+    recipientId: recipient.id, state: 'ELEGIVEL', expectedVersion: 3, idempotencyKey: `state-terminal-exit-${suffix}`,
+  }), 'INVALID_TRANSITION');
+
+  const concurrentLead = (await db.insert(leads).values({
+    osmType: 'node', osmId: `campaign-concurrent-${suffix}`, category: 'oficinas', score: 90,
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+  }).returning())[0]!;
+  const concurrentRecipient = (await createRecipientWithOutbox(db, {
+    ...recipientInput, leadId: concurrentLead.id, idempotencyKey: `recipient-concurrent-${suffix}`,
+  })).data;
   const stateResults = await Promise.allSettled([
-    updateRecipientState(db, { recipientId: recipient.id, state: 'ELEGIVEL', expectedVersion: 1, idempotencyKey: `state-a-${suffix}` }),
-    updateRecipientState(db, { recipientId: recipient.id, state: 'BLOQUEADO', expectedVersion: 1, idempotencyKey: `state-b-${suffix}` }),
+    updateRecipientState(db, { recipientId: concurrentRecipient.id, state: 'ELEGIVEL', expectedVersion: 1, idempotencyKey: `state-a-${suffix}` }),
+    updateRecipientState(db, { recipientId: concurrentRecipient.id, state: 'BLOQUEADO', expectedVersion: 1, idempotencyKey: `state-b-${suffix}` }),
   ]);
   assert.equal(stateResults.filter((result) => result.status === 'fulfilled').length, 1);
   const rejected = stateResults.find((result) => result.status === 'rejected') as PromiseRejectedResult;
   assert.equal((rejected.reason as CampaignPersistenceError).code, 'VERSION_CONFLICT');
-  const currentRecipient = (await db.select().from(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)).limit(1))[0]!;
-  assert.equal(currentRecipient.version, 2);
-  await expectCode(updateRecipientState(db, { recipientId: recipient.id, state: 'CANCELADO', expectedVersion: 1, idempotencyKey: `stale-${suffix}` }), 'VERSION_CONFLICT');
+  const currentConcurrentRecipient = (await db.select().from(campaignRecipients)
+    .where(eq(campaignRecipients.id, concurrentRecipient.id)).limit(1))[0]!;
+  assert.equal(currentConcurrentRecipient.version, 2);
 
   const attemptInput = { recipientId: recipient.id, payloadSnapshot: { to: 'lead@example.test', body: 'Hello' }, idempotencyKey: `attempt-${suffix}`, availableAt: new Date('2026-07-12T12:00:00Z') };
   const attempt = await createAttemptWithOutbox(db, attemptInput);
   const attemptReplay = await createAttemptWithOutbox(db, attemptInput);
   assert.equal(attemptReplay.replayed, true); assert.equal(attempt.data.id, attemptReplay.data.id);
+  await expectCode(createAttemptWithOutbox(db, {
+    ...attemptInput, availableAt: new Date('2026-07-12T12:00:01Z'),
+  }), 'IDEMPOTENCY_CONFLICT');
   assert.equal((await db.select({ value: count() }).from(campaignAttempts).where(eq(campaignAttempts.recipientId, recipient.id)))[0]?.value, 1);
+  const scheduledAttemptOutbox = (await db.select().from(campaignOutbox).where(and(
+    eq(campaignOutbox.aggregateId, attempt.data.id), eq(campaignOutbox.eventType, 'ATTEMPT_CREATED'),
+  )).limit(1))[0]!;
+  assert.equal(attempt.data.availableAt.toISOString(), attemptInput.availableAt.toISOString());
+  assert.equal(scheduledAttemptOutbox.availableAt.toISOString(), attemptInput.availableAt.toISOString());
   await assert.rejects(db.update(campaignAttempts).set({ payloadSnapshot: { body: 'Mutated' } }).where(eq(campaignAttempts.id, attempt.data.id)), (error) => hasPgCode(error, '55000'));
   await assert.rejects(db.delete(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)), (error) => hasPgCode(error, '55000'));
 

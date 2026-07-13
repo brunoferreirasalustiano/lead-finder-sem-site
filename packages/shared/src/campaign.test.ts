@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CampaignDomainError, assertCampaignTransition, campaignAttemptStates, campaignAttemptTransitionGraph,
-  campaignFingerprint, campaignRecipientStates, campaignRecipientTransitionGraph, campaignStates,
+  campaignApprovalSchema, campaignEligibleListSchema, campaignFingerprint, campaignRecipientStates, campaignRecipientTransitionGraph, campaignSimulationSchema, campaignStates,
   campaignTransitionGraph, campaignVersionStates, campaignVersionTransitionGraph, cancelCampaign,
   defineCampaignTemplate, evaluateCampaignEligibility, pauseCampaign, renderCampaignTemplate,
   resumeCampaign, type CampaignEligibilityCandidate,
@@ -94,5 +94,17 @@ describe('campaign fingerprint', () => {
   it('is deterministic for normalized content', () => {
     expect(campaignFingerprint([' Olá   mundo ', 'linha\r\nfinal'])).toBe(campaignFingerprint(['Olá mundo', 'linha\nfinal']));
     expect(campaignFingerprint(['a', 'b'])).not.toBe(campaignFingerprint(['b', 'a']));
+  });
+});
+
+describe('campaign API contracts', () => {
+  it('bounds deterministic simulation and eligible-list pagination', () => {
+    expect(campaignSimulationSchema.safeParse({ campaignVersionId: '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa', channel: 'EMAIL', pageSize: 51 }).success).toBe(false);
+    expect(campaignEligibleListSchema.parse({ channel: 'WHATSAPP' })).toMatchObject({ page: 1, pageSize: 20 });
+  });
+  it('requires explicit human approval identity and UTC timestamp', () => {
+    expect(campaignApprovalSchema.safeParse({ actor: ' ', approvedAt: '2026-07-12T12:00:00Z' }).success).toBe(false);
+    expect(campaignApprovalSchema.safeParse({ actor: 'reviewer', approvedAt: 'invalid' }).success).toBe(false);
+    expect(campaignApprovalSchema.safeParse({ actor: 'reviewer', approvedAt: '2026-07-12T12:00:00Z' }).success).toBe(true);
   });
 });

@@ -137,3 +137,22 @@ export function campaignFingerprint(parts: readonly string[]): string {
   const normalized = parts.map(normalizeFingerprintPart);
   return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
+
+const campaignPageFields = { page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) };
+export const campaignCreateSchema = z.object({
+  name: z.string().trim().min(1).max(200), channel: campaignChannelSchema,
+  content: z.string().min(1).max(20_000), allowedVariables: z.array(z.string()).max(50),
+}).strict();
+export const campaignVersionCreateSchema = campaignCreateSchema.omit({ name: true });
+export const campaignStateCommandSchema = z.object({ expectedVersion: z.number().int().positive(), actor: z.string().trim().min(1).max(200) }).strict();
+export const campaignApprovalSchema = z.object({ actor: z.string().trim().min(1).max(200), approvedAt: z.string().datetime({ offset: false }) }).strict();
+export const campaignPreviewSchema = z.object({
+  channel: campaignChannelSchema, content: z.string().min(1).max(20_000), allowedVariables: z.array(z.string()).max(50),
+  values: z.record(z.string(), z.string().max(10_000)),
+}).strict();
+export const campaignListSchema = z.object(campaignPageFields).strict();
+export const campaignEligibleListSchema = z.object({ ...campaignPageFields, channel: campaignChannelSchema }).strict();
+export const campaignSimulationSchema = z.object({
+  campaignVersionId: z.string().uuid(), channel: campaignChannelSchema,
+  page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(50).default(20),
+}).strict();

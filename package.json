@@ -22,7 +22,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "dev:api": "tsx watch apps/api/src/index.ts",
     "dev:worker": "tsx watch apps/worker/src/index.ts",
-    "test:pilot": "tsx scripts/integration-test.ts"
+    "test:pilot": "tsx scripts/integration-test.ts",
+    "test:pilot:restart": "tsx scripts/pilot-restart-test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",

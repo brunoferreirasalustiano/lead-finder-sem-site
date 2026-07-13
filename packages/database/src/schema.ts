@@ -273,11 +273,16 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
   status: text('status').notNull().default('PENDING'), attempts: integer('attempts').notNull().default(0),
   availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+  claimWorkerId: text('claim_worker_id'), claimToken: uuid('claim_token'),
+  claimGeneration: integer('claim_generation').notNull().default(0),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
   publishedAt: timestamp('published_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('campaign_outbox_aggregate_type_aggregate_id_idempotency_key_key').on(table.aggregateType, table.aggregateId, table.idempotencyKey),
   index('campaign_outbox_queue_idx').on(table.status, table.availableAt, table.id).where(sql`${table.status} = 'PENDING'`),
+  index('campaign_outbox_claim_queue_idx').on(table.availableAt, table.claimExpiresAt, table.id).where(sql`${table.status} = 'PENDING'`),
 ]);
 export const campaignDeadLetters = pgTable('campaign_dead_letters', {
   id: uuid('id').defaultRandom().primaryKey(),

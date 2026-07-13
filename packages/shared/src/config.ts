@@ -18,6 +18,8 @@ const apiSchema = commonSchema.extend({
 });
 
 const workerSchema = commonSchema.extend({
+  WORKER_ID: z.string().trim().min(1).max(200).optional(),
+  OUTBOX_LEASE_MS: integerFromEnvironment('OUTBOX_LEASE_MS', 1_000, 3_600_000, 30_000),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   OVERPASS_TIMEOUT_MS: integerFromEnvironment('OVERPASS_TIMEOUT_MS', 1_000, 120_000, 30_000),
   OVERPASS_MAX_RETRIES: integerFromEnvironment('OVERPASS_MAX_RETRIES', 0, 10, 3),

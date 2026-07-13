@@ -210,7 +210,14 @@ export async function moveOutboxToDeadLetter(db: Database, input: { outboxId: st
     if (!outbox) throw new CampaignPersistenceError('Outbox record not found', 'NOT_FOUND');
     const existing = (await tx.select().from(campaignDeadLetters).where(eq(campaignDeadLetters.outboxId, input.outboxId)).limit(1))[0];
     if (existing) return { data: existing, replayed: true };
-    await tx.update(campaignOutbox).set({ status: 'FAILED', attempts: input.attempts }).where(eq(campaignOutbox.id, input.outboxId));
+    await tx.update(campaignOutbox).set({
+      status: 'FAILED',
+      attempts: input.attempts,
+      claimWorkerId: null,
+      claimToken: null,
+      claimedAt: null,
+      claimExpiresAt: null,
+    }).where(eq(campaignOutbox.id, input.outboxId));
     const row = (await tx.insert(campaignDeadLetters).values({ outboxId: input.outboxId, correlationId: input.correlationId, payload: outbox.payload, error: input.error, attempts: input.attempts }).returning())[0]!;
     return { data: row, replayed: false };
   });

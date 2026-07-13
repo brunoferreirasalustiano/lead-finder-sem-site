@@ -11,6 +11,7 @@ describe('environment configuration', () => {
       OVERPASS_MAX_RETRIES: 3,
       WORKER_POLL_INTERVAL_MS: 60000,
       DAILY_LEAD_LIMIT: 50,
+      OUTBOX_LEASE_MS: 30000,
     });
   });
 
@@ -28,6 +29,8 @@ describe('environment configuration', () => {
     ['OVERPASS_MAX_RETRIES', '11'],
     ['WORKER_POLL_INTERVAL_MS', 'NaN'],
     ['DAILY_LEAD_LIMIT', '0'],
+    ['OUTBOX_LEASE_MS', '999'],
+    ['OUTBOX_LEASE_MS', '3600001'],
   ])('rejects invalid worker variable %s=%s', (name, value) => {
     expect(() => parseWorkerConfig({ ...database, [name]: value })).toThrow(name);
   });

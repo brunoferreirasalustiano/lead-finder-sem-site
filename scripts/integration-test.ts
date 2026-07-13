@@ -1,6 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { count, eq, sql } from 'drizzle-orm';
 import {
   collectionJobs,
@@ -428,3 +430,56 @@ try {
 }
 
 await import('../packages/database/src/campaign.integration.js');
+
+const pilotReportPath = process.env['PILOT_REPORT_PATH'];
+if (pilotReportPath) {
+  const reportDatabase = createDatabase(databaseUrl);
+  try {
+    const counts = (await reportDatabase.db.execute<{
+      leads: number;
+      completed_collection_jobs: number;
+      verified_contacts: number;
+      crm_timeline_events: number;
+      campaigns: number;
+      campaign_recipients: number;
+      campaign_attempts: number;
+      campaign_outbox_events: number;
+    }>(sql`
+      select
+        (select count(*)::int from leads) as leads,
+        (select count(*)::int from collection_jobs where status = 'COMPLETED') as completed_collection_jobs,
+        (select count(*)::int from lead_contacts where is_valid = true and verified_at is not null) as verified_contacts,
+        (select count(*)::int from crm_timeline_events) as crm_timeline_events,
+        (select count(*)::int from campaigns) as campaigns,
+        (select count(*)::int from campaign_recipients) as campaign_recipients,
+        (select count(*)::int from campaign_attempts) as campaign_attempts,
+        (select count(*)::int from campaign_outbox) as campaign_outbox_events
+    `))[0]!;
+
+    const report = {
+      schemaVersion: 1,
+      sha: process.env['GITHUB_SHA'] ?? 'local',
+      generatedAt: new Date().toISOString(),
+      result: 'PASS',
+      networkMode: 'loopback-overpass-mock-only',
+      counts,
+      gates: {
+        collectionMockAndPersistence: 'PASS',
+        qualificationAndVerifiedContact: 'PASS',
+        commercialBlocks: 'PASS',
+        crmAndAudit: 'PASS',
+        simulatedCampaign: 'PASS',
+        idempotentReplay: 'PASS',
+        eligibleListingAndCsv: 'PASS',
+        restartWithoutDuplicates: 'PASS',
+        externalSendDisabled: 'PASS',
+      },
+    };
+
+    await mkdir(dirname(pilotReportPath), { recursive: true });
+    await writeFile(pilotReportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+    console.log(`Pilot readiness report: ${pilotReportPath}`);
+  } finally {
+    await reportDatabase.close();
+  }
+}

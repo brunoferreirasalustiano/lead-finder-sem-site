@@ -1,3 +1,5 @@
+-- Keep UNCLASSIFIED only for historical rows created before typed failure codes.
+-- Runtime writes are restricted by the TypeScript SafeOutboxFailureCode union.
 DO $$
 BEGIN
   ALTER TABLE campaign_dead_letters

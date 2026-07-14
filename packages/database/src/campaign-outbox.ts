@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { nextCampaignExecutionInstant, type CampaignChannel } from '@lead-finder/shared';
 import type { Database } from './index.js';
@@ -13,6 +13,7 @@ export interface OutboxClaim {
   generation: number;
   attempt: number;
   expiresAt: Date;
+  deadLetterCycle: number;
 }
 
 export interface CampaignExecutionPolicy {
@@ -35,7 +36,7 @@ export interface ClaimOutboxInput {
 }
 
 export type ExecutionAuthorization =
-  | { decision: 'STARTED'; channel: CampaignChannel; attemptId: string; startedAt: Date }
+  | { decision: 'STARTED'; channel: CampaignChannel; attemptId: string; executionId: string; startedAt: Date }
   | { decision: 'ADMINISTRATIVE' }
   | { decision: 'RESCHEDULED'; channel: CampaignChannel; availableAt: Date; reason: 'DAILY_LIMIT' | 'SPACING' }
   | { decision: 'INELIGIBLE'; channel?: CampaignChannel; reason: string }
@@ -66,18 +67,12 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
   const now = input.now ?? new Date();
   const expiresAt = outboxLeaseExpiration(now, input.leaseMs);
   const token = input.token ?? randomUUID();
+  await finalizeExpiredFinalAttempt(db, input.maxAttempts, now);
   const rows = await db.execute<{
     id: string; event_type: string; payload: unknown; idempotency_key: string; attempts: number;
-    claim_generation: number; claim_expires_at: Date | string;
+    claim_generation: number; claim_expires_at: Date | string; dead_letter_cycle: number;
   }>(sql`
-    WITH exhausted AS (
-      UPDATE campaign_outbox
-      SET status = 'EXHAUSTED',
-          claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
-      WHERE status = 'PENDING' AND attempts >= ${input.maxAttempts}
-        AND (claim_expires_at IS NULL OR claim_expires_at <= ${now.toISOString()}::timestamptz)
-      RETURNING id
-    ), candidate AS (
+    WITH candidate AS (
       SELECT id FROM campaign_outbox
       WHERE status = 'PENDING' AND attempts < ${input.maxAttempts}
         AND available_at <= ${now.toISOString()}::timestamptz
@@ -90,13 +85,13 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
         claim_expires_at = ${expiresAt.toISOString()}::timestamptz, attempts = outbox.attempts + 1
     FROM candidate WHERE outbox.id = candidate.id
     RETURNING outbox.id, outbox.event_type, outbox.payload, outbox.idempotency_key, outbox.attempts,
-              outbox.claim_generation, outbox.claim_expires_at
+              outbox.claim_generation, outbox.claim_expires_at, outbox.dead_letter_cycle
   `);
   const row = rows[0];
   return row ? {
     id: row.id, eventType: row.event_type, payload: row.payload, idempotencyKey: row.idempotency_key,
     workerId, token, generation: row.claim_generation, attempt: row.attempts,
-    expiresAt: new Date(row.claim_expires_at),
+    expiresAt: new Date(row.claim_expires_at), deadLetterCycle: row.dead_letter_cycle,
   } : null;
 }
 
@@ -162,6 +157,18 @@ export async function authorizeCampaignExecution(
       return { decision: 'INELIGIBLE', reason: 'INVALID_CHANNEL' };
     }
     const channel: CampaignChannel = row.channel;
+    const alreadyStarted = await tx.execute<{ id: string; started_at: Date | string; attempt_id: string; channel: CampaignChannel; confirmed: boolean }>(sql`
+      SELECT s.id, s.started_at, s.attempt_id, s.channel,
+        EXISTS (SELECT 1 FROM campaign_simulated_confirmations c WHERE c.execution_id = s.id) AS confirmed
+      FROM campaign_execution_starts s
+      WHERE s.outbox_id = ${claim.id}::uuid AND s.cycle = ${claim.deadLetterCycle}
+    `);
+    if (alreadyStarted[0]?.confirmed) {
+      return {
+        decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
+        executionId: alreadyStarted[0].id, startedAt: new Date(alreadyStarted[0].started_at),
+      };
+    }
     const leadId = row.lead_id;
     const optOutAfterLock = await tx.execute<{ present: boolean }>(sql`
       SELECT EXISTS (SELECT 1 FROM campaign_opt_outs WHERE lead_id = ${leadId}::uuid
@@ -197,25 +204,10 @@ export async function authorizeCampaignExecution(
       await rescheduleClaim(tx as unknown as Database, claim, nextAllowedAt, now);
       return { decision: 'RESCHEDULED', channel, availableAt: nextAllowedAt, reason: 'SPACING' };
     }
-    const alreadyStarted = await tx.execute<{ started_at: Date | string; attempt_id: string; channel: CampaignChannel }>(sql`
-      SELECT started_at, attempt_id, channel FROM campaign_execution_starts WHERE outbox_id = ${claim.id}::uuid
-    `);
     if (alreadyStarted[0]) {
-      const retrySpacingAt = nextCampaignExecutionInstant(
-        now,
-        { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
-        policy.minSpacingMs,
-        now,
-      );
-      await tx.execute(sql`INSERT INTO campaign_channel_runtime
-        (channel, next_available_at, created_at, updated_at)
-        VALUES (${channel}, ${retrySpacingAt.toISOString()}::timestamptz,
-          ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
-        ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
-          updated_at = ${now.toISOString()}::timestamptz`);
       return {
         decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
-        startedAt: new Date(alreadyStarted[0].started_at),
+        executionId: alreadyStarted[0].id, startedAt: new Date(alreadyStarted[0].started_at),
       };
     }
     const quotaDay = now.toISOString().slice(0, 10);
@@ -248,11 +240,12 @@ export async function authorizeCampaignExecution(
         ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
       ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
         updated_at = ${now.toISOString()}::timestamptz`);
-    await tx.execute(sql`INSERT INTO campaign_execution_starts
-      (outbox_id, attempt_id, channel, quota_day, started_at, claim_generation, created_at)
+    const starts = await tx.execute<{ id: string }>(sql`INSERT INTO campaign_execution_starts
+      (outbox_id, attempt_id, channel, quota_day, started_at, claim_generation, cycle, created_at)
       VALUES (${claim.id}::uuid, ${row.attempt_id}::uuid, ${channel}, ${quotaDay}::date,
-        ${now.toISOString()}::timestamptz, ${claim.generation}, ${now.toISOString()}::timestamptz)`);
-    return { decision: 'STARTED', channel, attemptId: row.attempt_id, startedAt: now };
+        ${now.toISOString()}::timestamptz, ${claim.generation}, ${claim.deadLetterCycle}, ${now.toISOString()}::timestamptz)
+      RETURNING id`);
+    return { decision: 'STARTED', channel, attemptId: row.attempt_id, executionId: starts[0]!.id, startedAt: now };
   });
 }
 
@@ -268,14 +261,156 @@ export async function rescheduleCampaignOutbox(db: Database, claim: OutboxClaim,
   return rescheduleClaim(db, claim, availableAt, now);
 }
 
-export async function failCampaignOutbox(db: Database, claim: OutboxClaim, policy: CampaignExecutionPolicy, now = new Date()): Promise<'RETRY' | 'EXHAUSTED' | 'STALE'> {
+export type SafeOutboxFailureCode = 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION' | 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION' | 'SIMULATED_EXECUTION_FAILED' | 'FINAL_LEASE_EXPIRED';
+
+export async function failCampaignOutbox(db: Database, claim: OutboxClaim, policy: CampaignExecutionPolicy, now = new Date(), errorCode: SafeOutboxFailureCode = 'SIMULATED_EXECUTION_FAILED'): Promise<'RETRY' | 'DEAD_LETTERED' | 'STALE'> {
   const exhausted = claim.attempt >= policy.maxAttempts;
   const availableAt = deterministicRetryAt(now, claim.attempt, policy.retryBaseMs, policy.retryMaxMs);
-  const rows = await db.execute<{ id: string }>(sql`UPDATE campaign_outbox SET
-    status = ${exhausted ? 'EXHAUSTED' : 'PENDING'}, available_at = ${availableAt.toISOString()}::timestamptz,
-    claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
-    WHERE ${stalePredicate(claim, now)} RETURNING id`);
-  return rows.length === 0 ? 'STALE' : exhausted ? 'EXHAUSTED' : 'RETRY';
+  return db.transaction(async (tx) => {
+    const locked = await tx.execute<{ id: string; payload: unknown; attempts: number; dead_letter_cycle: number }>(sql`
+      SELECT id, payload, attempts, dead_letter_cycle FROM campaign_outbox
+      WHERE ${stalePredicate(claim, now)} FOR UPDATE`);
+    const row = locked[0];
+    if (!row) return 'STALE';
+    if (exhausted) {
+      await tx.execute(sql`INSERT INTO campaign_dead_letters
+        (outbox_id, cycle, correlation_id, payload, error, error_code, attempts, claim_generation, created_at)
+        VALUES (${claim.id}::uuid, ${row.dead_letter_cycle}, ${`outbox:${claim.id}:cycle:${row.dead_letter_cycle}`},
+          ${JSON.stringify(row.payload)}::jsonb, ${errorCode}, ${errorCode}, ${row.attempts}, ${claim.generation}, ${now.toISOString()}::timestamptz)
+        ON CONFLICT (outbox_id, cycle) DO NOTHING`);
+    }
+    const updated = await tx.execute<{ id: string }>(sql`UPDATE campaign_outbox SET
+      status = ${exhausted ? 'EXHAUSTED' : 'PENDING'}, available_at = ${availableAt.toISOString()}::timestamptz,
+      claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE ${stalePredicate(claim, now)} RETURNING id`);
+    return updated.length === 0 ? 'STALE' : exhausted ? 'DEAD_LETTERED' : 'RETRY';
+  });
+}
+
+async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, now: Date): Promise<void> {
+  await db.transaction(async (tx) => {
+    const rows = await tx.execute<{ id: string; payload: unknown; attempts: number; claim_generation: number; dead_letter_cycle: number }>(sql`
+      SELECT id, payload, attempts, claim_generation, dead_letter_cycle FROM campaign_outbox
+      WHERE status = 'PENDING' AND attempts >= ${maxAttempts} AND claim_expires_at <= ${now.toISOString()}::timestamptz
+      ORDER BY claim_expires_at, id FOR UPDATE SKIP LOCKED LIMIT 1`);
+    const row = rows[0];
+    if (!row) return;
+    await tx.execute(sql`INSERT INTO campaign_dead_letters
+      (outbox_id, cycle, correlation_id, payload, error, error_code, attempts, claim_generation, created_at)
+      VALUES (${row.id}::uuid, ${row.dead_letter_cycle}, ${`outbox:${row.id}:cycle:${row.dead_letter_cycle}`},
+        ${JSON.stringify(row.payload)}::jsonb, 'FINAL_LEASE_EXPIRED', 'FINAL_LEASE_EXPIRED', ${row.attempts}, ${row.claim_generation}, ${now.toISOString()}::timestamptz)
+      ON CONFLICT (outbox_id, cycle) DO NOTHING`);
+    await tx.execute(sql`UPDATE campaign_outbox SET status = 'EXHAUSTED', claim_worker_id = NULL,
+      claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL WHERE id = ${row.id}::uuid
+      AND status = 'PENDING' AND attempts >= ${maxAttempts} AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
+  });
+}
+
+export async function confirmSimulatedCampaignExecution(db: Database, input: {
+  executionId: string; outboxId: string; cycle: number; attemptId?: string; channel: string; confirmedAt?: Date;
+}): Promise<{ executionId: string; replayed: boolean }> {
+  const confirmedAt = input.confirmedAt ?? new Date();
+  const inserted = await db.execute<{ execution_id: string }>(sql`
+    INSERT INTO campaign_simulated_confirmations
+      (execution_id, outbox_id, cycle, attempt_id, channel, confirmed_at, created_at)
+    VALUES (${input.executionId}::uuid, ${input.outboxId}::uuid, ${input.cycle},
+      ${input.attemptId ?? null}::uuid, ${input.channel}, ${confirmedAt.toISOString()}::timestamptz, ${confirmedAt.toISOString()}::timestamptz)
+    ON CONFLICT (outbox_id, cycle) DO NOTHING RETURNING execution_id`);
+  if (inserted[0]) return { executionId: inserted[0].execution_id, replayed: false };
+  const existing = await db.execute<{ execution_id: string; attempt_id: string | null; channel: string }>(sql`
+    SELECT execution_id, attempt_id, channel FROM campaign_simulated_confirmations
+    WHERE outbox_id = ${input.outboxId}::uuid AND cycle = ${input.cycle}`);
+  if (existing[0]?.execution_id !== input.executionId
+    || existing[0].attempt_id !== (input.attemptId ?? null) || existing[0].channel !== input.channel) {
+    throw new Error('SIMULATED_CONFIRMATION_IDENTITY_CONFLICT');
+  }
+  return { executionId: existing[0].execution_id, replayed: true };
+}
+
+export type CampaignDeadLetterRecoveryResult = { recoveryId: string; outboxId: string; fromCycle: number; toCycle: number; replayed: boolean };
+export class CampaignRecoveryError extends Error {
+  constructor(readonly code: 'IDEMPOTENCY_CONFLICT' | 'RECOVERY_REJECTED') { super(code); }
+}
+
+export function campaignRecoveryFingerprint(input: {
+  deadLetterId?: string; outboxId?: string; actor: string; reason: string; availableAt: Date;
+}): string {
+  return createHash('sha256').update(JSON.stringify({
+    deadLetterId: input.deadLetterId ?? null, outboxId: input.outboxId ?? null,
+    actor: input.actor.trim(), reason: input.reason.trim(), availableAt: input.availableAt.toISOString(),
+  })).digest('hex');
+}
+
+export async function recoverCampaignDeadLetter(db: Database, input: {
+  deadLetterId?: string; outboxId?: string; actor: string; reason: string; idempotencyKey: string; now?: Date; availableAt?: Date;
+  observe?: (event: 'campaign_dead_letter_recovery_requested' | 'campaign_dead_letter_recovery_completed' | 'campaign_dead_letter_recovery_rejected', metadata: Record<string, string | number | boolean>) => void;
+}): Promise<CampaignDeadLetterRecoveryResult> {
+  const now = input.now ?? new Date();
+  const availableAt = input.availableAt ?? now;
+  const actor = input.actor.trim(); const reason = input.reason.trim(); const key = input.idempotencyKey.trim();
+  if ((!input.deadLetterId && !input.outboxId) || !actor || actor.length > 200 || !reason || reason.length > 1000 || !key || key.length > 200) {
+    throw new CampaignRecoveryError('RECOVERY_REJECTED');
+  }
+  const identity = input.deadLetterId ? { deadLetterId: input.deadLetterId } : { outboxId: input.outboxId! };
+  input.observe?.('campaign_dead_letter_recovery_requested', { ...identity, requestedAt: now.toISOString() });
+  const fingerprint = campaignRecoveryFingerprint({
+    ...(input.deadLetterId ? { deadLetterId: input.deadLetterId } : {}),
+    ...(input.outboxId ? { outboxId: input.outboxId } : {}), actor, reason, availableAt,
+  });
+  try {
+    const result = await db.transaction(async (tx) => {
+    const replay = await tx.execute<{ id: string; outbox_id: string; from_cycle: number; to_cycle: number; payload_fingerprint: string }>(sql`
+      SELECT id, outbox_id, from_cycle, to_cycle, payload_fingerprint FROM campaign_dead_letter_recoveries
+      WHERE idempotency_key = ${key}`);
+    if (replay[0]) {
+      if (replay[0].payload_fingerprint !== fingerprint) throw new CampaignRecoveryError('IDEMPOTENCY_CONFLICT');
+      return { recoveryId: replay[0].id, outboxId: replay[0].outbox_id, fromCycle: replay[0].from_cycle, toCycle: replay[0].to_cycle, replayed: true };
+    }
+    const resolved = await tx.execute<{ id: string; outbox_id: string; cycle: number }>(sql`
+      SELECT dl.id, dl.outbox_id, dl.cycle FROM campaign_dead_letters dl
+      WHERE (${input.deadLetterId ?? null}::uuid IS NULL OR dl.id = ${input.deadLetterId ?? null}::uuid)
+        AND (${input.outboxId ?? null}::uuid IS NULL OR dl.outbox_id = ${input.outboxId ?? null}::uuid)
+        AND NOT EXISTS (SELECT 1 FROM campaign_dead_letter_recoveries r WHERE r.dead_letter_id = dl.id)
+      ORDER BY dl.cycle DESC LIMIT 1`);
+    if (!resolved[0]) throw new CampaignRecoveryError('RECOVERY_REJECTED');
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`campaign-outbox:${resolved[0].outbox_id}`}))`);
+    const replayAfterLock = await tx.execute<{ id: string; outbox_id: string; from_cycle: number; to_cycle: number; payload_fingerprint: string }>(sql`
+      SELECT id, outbox_id, from_cycle, to_cycle, payload_fingerprint FROM campaign_dead_letter_recoveries
+      WHERE idempotency_key = ${key}`);
+    if (replayAfterLock[0]) {
+      if (replayAfterLock[0].payload_fingerprint !== fingerprint) throw new CampaignRecoveryError('IDEMPOTENCY_CONFLICT');
+      return { recoveryId: replayAfterLock[0].id, outboxId: replayAfterLock[0].outbox_id,
+        fromCycle: replayAfterLock[0].from_cycle, toCycle: replayAfterLock[0].to_cycle, replayed: true };
+    }
+    const locked = await tx.execute<{ status: string; dead_letter_cycle: number; claim_worker_id: string | null }>(sql`
+      SELECT status, dead_letter_cycle, claim_worker_id FROM campaign_outbox
+      WHERE id = ${resolved[0].outbox_id}::uuid FOR UPDATE`);
+    if (!locked[0] || locked[0].status !== 'EXHAUSTED' || locked[0].claim_worker_id !== null || locked[0].dead_letter_cycle !== resolved[0].cycle) {
+      throw new CampaignRecoveryError('RECOVERY_REJECTED');
+    }
+    const toCycle = resolved[0].cycle + 1;
+    const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO campaign_dead_letter_recoveries
+      (dead_letter_id, outbox_id, from_cycle, to_cycle, actor, reason, idempotency_key, payload_fingerprint, available_at, recovered_at, created_at)
+      VALUES (${resolved[0].id}::uuid, ${resolved[0].outbox_id}::uuid, ${resolved[0].cycle}, ${toCycle}, ${actor}, ${reason},
+        ${key}, ${fingerprint}, ${availableAt.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+      RETURNING id`);
+    await tx.execute(sql`UPDATE campaign_outbox SET status = 'PENDING', attempts = 0, available_at = ${availableAt.toISOString()}::timestamptz,
+      dead_letter_cycle = ${toCycle}, published_at = NULL, claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE id = ${resolved[0].outbox_id}::uuid`);
+    return { recoveryId: inserted[0]!.id, outboxId: resolved[0].outbox_id, fromCycle: resolved[0].cycle, toCycle, replayed: false };
+    });
+    input.observe?.('campaign_dead_letter_recovery_completed', {
+      outboxId: result.outboxId, fromCycle: result.fromCycle, toCycle: result.toCycle,
+      replayed: result.replayed, completedAt: now.toISOString(),
+    });
+    return result;
+  } catch (error) {
+    input.observe?.('campaign_dead_letter_recovery_rejected', {
+      ...identity, decision: error instanceof CampaignRecoveryError ? error.code : 'RECOVERY_REJECTED',
+      rejectedAt: now.toISOString(),
+    });
+    throw error;
+  }
 }
 
 export async function completeCampaignOutbox(db: Database, claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>, now = new Date()): Promise<boolean> {

@@ -6,7 +6,7 @@ import {
   type CampaignExecutionPolicy,
   type Database,
 } from '@lead-finder/database';
-import type { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
+import { SimulatedExecutionError, type SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 
 export interface OperationalLogger {
   info(event: string, metadata: Record<string, string | number | boolean>): void;
@@ -46,17 +46,33 @@ export async function processNextOutbox(
 
   const channel = authorization.decision === 'STARTED' ? authorization.channel : 'ADMINISTRATIVE';
   try {
-    const execution = await adapter.execute(claim);
+    const execution = authorization.decision === 'STARTED'
+      ? await adapter.execute({
+        id: claim.id, deadLetterCycle: claim.deadLetterCycle, executionId: authorization.executionId,
+        attemptId: authorization.attemptId, channel,
+      })
+      : { replayed: false, reconciled: false };
+    if (execution.reconciled) logger.info('campaign_outbox_confirmation_reconciled', {
+      outboxId: claim.id, channel, generation: claim.generation, attempt: claim.attempt,
+      decision: 'CONFIRMATION_RECONCILED', reconciledAt: (input.now ?? new Date()).toISOString(),
+    });
     const completed = await completeCampaignOutbox(db, claim, input.now ?? new Date());
     logger.info(completed ? 'campaign_outbox_completed' : 'campaign_outbox_stale_ack', {
       outboxId: claim.id, channel, generation: claim.generation, attempt: claim.attempt,
       decision: completed ? 'COMPLETED' : 'STALE_ACK', replayed: execution.replayed,
       completedAt: (input.now ?? new Date()).toISOString(),
     });
-  } catch {
+  } catch (error) {
     const failedAt = input.now ?? new Date();
-    const decision = await failCampaignOutbox(db, claim, input.policy, failedAt);
-    logger.error('campaign_outbox_processing_failed', {
+    const errorCode = error instanceof SimulatedExecutionError ? error.code : 'SIMULATED_EXECUTION_FAILED';
+    const decision = await failCampaignOutbox(db, claim, input.policy, failedAt, errorCode);
+    const event = errorCode === 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION'
+      ? 'campaign_outbox_timeout_before_confirmation'
+      : errorCode === 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION'
+        ? 'campaign_outbox_timeout_after_confirmation'
+        : decision === 'DEAD_LETTERED' ? 'campaign_outbox_dead_letter_created'
+          : decision === 'STALE' ? 'campaign_outbox_stale_operation' : 'campaign_outbox_retry_scheduled';
+    logger.error(event, {
       outboxId: claim.id, channel, generation: claim.generation, attempt: claim.attempt,
       decision, failedAt: failedAt.toISOString(),
     });

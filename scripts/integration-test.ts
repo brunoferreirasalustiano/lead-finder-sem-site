@@ -49,6 +49,8 @@ const app = buildApp(db, { dailyLeadLimit: 5 });
 try {
   await db.execute(sql`
     truncate table
+      campaign_dead_letter_recoveries,
+      campaign_simulated_confirmations,
       campaign_execution_starts,
       campaign_channel_runtime,
       campaign_daily_channel_counters,

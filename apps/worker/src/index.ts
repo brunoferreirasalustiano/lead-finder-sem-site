@@ -13,7 +13,7 @@ const overpass = new OverpassClient({
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
 });
-const outboxAdapter = new SimulatedOutboxAdapter();
+const outboxAdapter = new SimulatedOutboxAdapter(db);
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
   dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
@@ -38,7 +38,8 @@ const shutdown = (exitCode = 0) => {
   return shutdownPromise;
 };
 const fatal = (kind: string, error: unknown) => {
-  console.error(kind, error);
+  void error;
+  console.error('worker_fatal', { kind, decision: 'SHUTDOWN_REQUESTED' });
   process.exitCode = 1;
   gracefulStop.request();
 };

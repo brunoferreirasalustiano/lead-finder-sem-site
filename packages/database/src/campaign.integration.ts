@@ -2,10 +2,10 @@ import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, sql } from 'drizzle-orm';
 import {
-  campaignAttempts, campaignDeadLetters, campaignOptOuts, campaignOutbox, campaignProviderEvents,
+  campaignAttempts, campaignOptOuts, campaignOutbox, campaignProviderEvents,
   campaignRecipients, campaignTemplates, campaignVersions, createAttemptWithOutbox,
   createCampaignWithVersion, createDatabase, createRecipientWithOutbox, leads, listAvailableOutbox,
-  listEligibleCampaignLeads, moveOutboxToDeadLetter, recordOptOut, recordProviderEvent, updateRecipientState,
+  listEligibleCampaignLeads, recordOptOut, recordProviderEvent, updateRecipientState,
   leadContacts, persistenceFingerprint,
   CampaignPersistenceError,
 } from './index.js';
@@ -279,16 +279,6 @@ try {
     claimedAt,
     claimExpiresAt: new Date(claimedAt.getTime() + 60_000),
   }).where(eq(campaignOutbox.id, attemptOutbox.id));
-  const dead = await moveOutboxToDeadLetter(db, { outboxId: attemptOutbox.id, correlationId: `correlation-${suffix}`, error: 'Permanent failure', attempts: 5 });
-  assert.equal(dead.data.payload && typeof dead.data.payload, 'object'); assert.equal(dead.data.attempts, 5);
-  const failedOutbox = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, attemptOutbox.id)).limit(1))[0]!;
-  assert.equal(failedOutbox.status, 'FAILED');
-  assert.equal(failedOutbox.claimWorkerId, null);
-  assert.equal(failedOutbox.claimToken, null);
-  assert.equal(failedOutbox.claimedAt, null);
-  assert.equal(failedOutbox.claimExpiresAt, null);
-  assert.equal((await moveOutboxToDeadLetter(db, { outboxId: attemptOutbox.id, correlationId: `correlation-${suffix}`, error: 'Permanent failure', attempts: 5 })).replayed, true);
-  assert.equal((await db.select({ value: count() }).from(campaignDeadLetters).where(eq(campaignDeadLetters.outboxId, attemptOutbox.id)))[0]?.value, 1);
   await assert.rejects(db.delete(campaignAttempts).where(eq(campaignAttempts.id, attempt.data.id)), (error) => hasPgCode(error, '55000'));
   await assert.rejects(db.delete(campaignOutbox).where(eq(campaignOutbox.id, attemptOutbox.id)), (error) => hasPgCode(error, '55000'));
 

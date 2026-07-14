@@ -168,7 +168,7 @@ export async function authorizeCampaignExecution(
         AND (channel IS NULL OR channel = ${channel})) AS present
     `);
     const reason = row.campaign_state !== 'ATIVA' ? 'CAMPAIGN_NOT_ACTIVE'
-      : !['ELEGIVEL', 'EM_ANDAMENTO'].includes(row.recipient_state) ? 'RECIPIENT_NOT_EXECUTABLE'
+      : !['PENDENTE', 'ELEGIVEL', 'EM_ANDAMENTO'].includes(row.recipient_state) ? 'RECIPIENT_NOT_EXECUTABLE'
       : !['PENDENTE', 'APROVADA'].includes(row.attempt_state) ? 'ATTEMPT_NOT_EXECUTABLE'
       : row.is_blocked ? 'LEAD_BLOCKED'
       : row.do_not_contact ? 'DO_NOT_CONTACT'
@@ -184,13 +184,6 @@ export async function authorizeCampaignExecution(
     }
 
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('campaign-channel:' || ${channel}))`);
-    const alreadyStarted = await tx.execute<{ started_at: Date | string; attempt_id: string; channel: CampaignChannel }>(sql`
-      SELECT started_at, attempt_id, channel FROM campaign_execution_starts WHERE outbox_id = ${claim.id}::uuid
-    `);
-    if (alreadyStarted[0]) return {
-      decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
-      startedAt: new Date(alreadyStarted[0].started_at),
-    };
     const runtime = await tx.execute<{ next_available_at: Date | string | null }>(sql`
       SELECT next_available_at FROM campaign_channel_runtime WHERE channel = ${channel} FOR UPDATE
     `);
@@ -203,6 +196,27 @@ export async function authorizeCampaignExecution(
     if (nextAllowedAt > now) {
       await rescheduleClaim(tx as unknown as Database, claim, nextAllowedAt, now);
       return { decision: 'RESCHEDULED', channel, availableAt: nextAllowedAt, reason: 'SPACING' };
+    }
+    const alreadyStarted = await tx.execute<{ started_at: Date | string; attempt_id: string; channel: CampaignChannel }>(sql`
+      SELECT started_at, attempt_id, channel FROM campaign_execution_starts WHERE outbox_id = ${claim.id}::uuid
+    `);
+    if (alreadyStarted[0]) {
+      const retrySpacingAt = nextCampaignExecutionInstant(
+        now,
+        { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
+        policy.minSpacingMs,
+        now,
+      );
+      await tx.execute(sql`INSERT INTO campaign_channel_runtime
+        (channel, next_available_at, created_at, updated_at)
+        VALUES (${channel}, ${retrySpacingAt.toISOString()}::timestamptz,
+          ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+        ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
+          updated_at = ${now.toISOString()}::timestamptz`);
+      return {
+        decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
+        startedAt: new Date(alreadyStarted[0].started_at),
+      };
     }
     const quotaDay = now.toISOString().slice(0, 10);
     const limit = channel === 'EMAIL' ? policy.dailyLimitEmail : policy.dailyLimitWhatsapp;

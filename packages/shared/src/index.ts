@@ -3,6 +3,7 @@ export { parseApiConfig, parseWorkerConfig } from './config.js';
 export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
+export * from './campaign-execution.js';
 
 export const leadStatuses = [
   'SEM_SITE_CADASTRADO',

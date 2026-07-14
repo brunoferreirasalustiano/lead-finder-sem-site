@@ -204,25 +204,6 @@ export async function recordOptOut(db: Database, input: { leadId: string; channe
   });
 }
 
-export async function moveOutboxToDeadLetter(db: Database, input: { outboxId: string; correlationId: string; error: string; attempts: number }) {
-  return db.transaction(async (tx) => {
-    const outbox = (await tx.select().from(campaignOutbox).where(eq(campaignOutbox.id, input.outboxId)).for('update').limit(1))[0];
-    if (!outbox) throw new CampaignPersistenceError('Outbox record not found', 'NOT_FOUND');
-    const existing = (await tx.select().from(campaignDeadLetters).where(eq(campaignDeadLetters.outboxId, input.outboxId)).limit(1))[0];
-    if (existing) return { data: existing, replayed: true };
-    await tx.update(campaignOutbox).set({
-      status: 'FAILED',
-      attempts: input.attempts,
-      claimWorkerId: null,
-      claimToken: null,
-      claimedAt: null,
-      claimExpiresAt: null,
-    }).where(eq(campaignOutbox.id, input.outboxId));
-    const row = (await tx.insert(campaignDeadLetters).values({ outboxId: input.outboxId, correlationId: input.correlationId, payload: outbox.payload, error: input.error, attempts: input.attempts }).returning())[0]!;
-    return { data: row, replayed: false };
-  });
-}
-
 export const listAvailableOutbox = (db: Database, now: Date, limit = 100, offset = 0) => db.select().from(campaignOutbox)
   .where(and(eq(campaignOutbox.status, 'PENDING'), lte(campaignOutbox.availableAt, now)))
   .orderBy(asc(campaignOutbox.availableAt), asc(campaignOutbox.id)).limit(Math.min(100, Math.max(1, limit))).offset(Math.max(0, offset));

@@ -4,7 +4,9 @@ import {
   authorizeCampaignExecution,
   claimCampaignOutbox,
   completeCampaignOutbox,
+  confirmSimulatedCampaignExecution,
   failCampaignOutbox,
+  recoverCampaignDeadLetter,
   type CampaignExecutionPolicy,
 } from './campaign-outbox.js';
 import { createDatabase, recordOptOut } from './index.js';
@@ -274,7 +276,7 @@ try {
 
   const windowRetryAt = new Date('2000-01-11T17:59:59.000Z');
   const windowRetryPolicy = {
-    ...racePolicy, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 4_000,
+    ...racePolicy, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 4_000, minSpacingMs: 1_000,
     windowStartUtc: '08:00', windowEndUtc: '18:00',
   };
   const windowRetryId = await insertExecutableAttempt('EMAIL', windowRetryAt);
@@ -310,6 +312,10 @@ try {
     assert.equal((await authorizeCampaignExecution(
       db, resumedWindowRetryClaim, windowRetryPolicy, outsideWindowRetryDecision.availableAt,
     )).decision, 'STARTED');
+    const retrySpacing = await db.execute<{ matches: boolean }>(sql`SELECT
+      (next_available_at = '2000-01-12T08:00:01.000Z'::timestamptz) AS matches
+      FROM campaign_channel_runtime WHERE channel = 'EMAIL'`);
+    assert.equal(retrySpacing[0]?.matches, true, 'a resumed retry must reserve global spacing again');
     assert.equal(await completeCampaignOutbox(
       db, resumedWindowRetryClaim, outsideWindowRetryDecision.availableAt,
     ), true);
@@ -337,8 +343,14 @@ try {
     workerId: 'retry-3', leaseMs: 10_000, maxAttempts: 3, now: retryThirdAt,
   });
   assert.equal(retryThirdClaim?.attempt, 3);
-  assert.equal(await failCampaignOutbox(db, retryThirdClaim, policy, retryThirdAt), 'EXHAUSTED');
-  assert.equal((await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]?.status, 'EXHAUSTED');
+  assert.equal(await failCampaignOutbox(second.db, { ...retryThirdClaim, token: crypto.randomUUID() }, policy, retryThirdAt), 'STALE');
+  assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value FROM campaign_dead_letters
+    WHERE outbox_id = ${retryItem.id}::uuid`))[0]?.value, 0, 'a stale worker must not create a dead-letter');
+  assert.equal(await failCampaignOutbox(db, retryThirdClaim, policy, retryThirdAt), 'DEAD_LETTERED');
+  const exhaustedRow = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!;
+  assert.equal(exhaustedRow.status, 'EXHAUSTED');
+  assert.equal(exhaustedRow.claimWorkerId, null); assert.equal(exhaustedRow.claimToken, null);
+  assert.equal(exhaustedRow.claimedAt, null); assert.equal(exhaustedRow.claimExpiresAt, null);
 
   const crashedAt = new Date('2000-01-13T12:00:00.000Z');
   const crashedItem = await insertItem(crashedAt);
@@ -352,8 +364,135 @@ try {
     workerId: 'exhaustion-sweeper', leaseMs: 10_000, maxAttempts: 3, now: afterCrashLease,
   }), null);
   assert.equal((await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, crashedItem.id)))[0]?.status, 'EXHAUSTED');
+  assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value FROM campaign_dead_letters
+    WHERE outbox_id = ${crashedItem.id}::uuid`))[0]?.value, 1, 'expired final lease must create a dead-letter');
 
-  console.log('Campaign outbox integration evidence: contested=1, parallel=2, future=blocked, activeLease=protected, expiredLease=recovered, staleAck=rejected, restart=preserved, ordering=deterministic');
+  const recoveryAt = new Date('2000-01-14T12:00:00.000Z');
+  const deadLetter = (await db.execute<{ id: string }>(sql`SELECT id FROM campaign_dead_letters
+    WHERE outbox_id = ${retryItem.id}::uuid AND cycle = 0`))[0]!;
+  const recoveryInput = {
+    deadLetterId: deadLetter.id, actor: 'integration-admin', reason: 'verified simulated recovery',
+    idempotencyKey: `recover-${retryItem.id}`, now: recoveryAt, availableAt: recoveryAt,
+  };
+  const recoveredDeadLetter = await recoverCampaignDeadLetter(db, recoveryInput);
+  assert.equal(recoveredDeadLetter.replayed, false);
+  assert.equal((await recoverCampaignDeadLetter(second.db, recoveryInput)).replayed, true);
+  await assert.rejects(() => recoverCampaignDeadLetter(db, { ...recoveryInput, reason: 'divergent' }),
+    (error: unknown) => error instanceof Error && error.message === 'IDEMPOTENCY_CONFLICT');
+  const recoveredRow = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!;
+  assert.equal(recoveredRow.status, 'PENDING');
+  assert.equal(recoveredRow.attempts, 0);
+  assert.equal(recoveredRow.deadLetterCycle, 1);
+  assert.equal(recoveredRow.claimWorkerId, null);
+
+  let recoveredFailureAt = recoveryAt;
+  for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
+    const recoveredClaim = await claimCampaignOutbox(db, {
+      workerId: `recovered-failure-${attempt}`, leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: recoveredFailureAt,
+    });
+    assert.equal(recoveredClaim?.id, retryItem.id);
+    const decision = await failCampaignOutbox(db, recoveredClaim, policy, recoveredFailureAt);
+    assert.equal(decision, attempt === policy.maxAttempts ? 'DEAD_LETTERED' : 'RETRY');
+    if (attempt < policy.maxAttempts) {
+      recoveredFailureAt = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!.availableAt;
+    }
+  }
+  const cycles = await db.execute<{ cycle: number }>(sql`SELECT cycle FROM campaign_dead_letters
+    WHERE outbox_id = ${retryItem.id}::uuid ORDER BY cycle`);
+  assert.deepEqual(cycles.map((row) => row.cycle), [0, 1], 'a new definitive failure must preserve the previous cycle');
+
+  const competingItem = await insertItem(recoveryAt);
+  await db.update(campaignOutbox).set({ status: 'EXHAUSTED' }).where(eq(campaignOutbox.id, competingItem.id));
+  const competingDead = (await db.execute<{ id: string }>(sql`INSERT INTO campaign_dead_letters
+    (outbox_id, cycle, correlation_id, payload, error, error_code, attempts, claim_generation, created_at)
+    VALUES (${competingItem.id}::uuid, 0, 'concurrent-recovery', '{}'::jsonb, 'SIMULATED_EXECUTION_FAILED',
+      'SIMULATED_EXECUTION_FAILED', 3, 1, ${recoveryAt.toISOString()}::timestamptz) RETURNING id`))[0]!;
+  const competing = await Promise.allSettled([
+    recoverCampaignDeadLetter(db, { deadLetterId: competingDead.id, actor: 'admin-a', reason: 'race', idempotencyKey: `race-a-${competingItem.id}`, now: recoveryAt }),
+    recoverCampaignDeadLetter(second.db, { deadLetterId: competingDead.id, actor: 'admin-b', reason: 'race', idempotencyKey: `race-b-${competingItem.id}`, now: recoveryAt }),
+  ]);
+  assert.equal(competing.filter((result) => result.status === 'fulfilled').length, 1, 'only one concurrent recovery wins a cycle');
+  const successfulRecoveredClaim = await claimCampaignOutbox(db, {
+    workerId: 'successful-recovery', leaseMs: 10_000, maxAttempts: 3, now: recoveryAt,
+  });
+  assert.equal(successfulRecoveredClaim?.id, competingItem.id);
+  assert.equal(await completeCampaignOutbox(db, successfulRecoveredClaim, recoveryAt), true,
+    'a recovered item can execute successfully');
+
+  const confirmationAt = new Date('2000-01-15T12:00:00.000Z');
+  const confirmationOutboxId = await insertExecutableAttempt('EMAIL', confirmationAt);
+  const confirmationClaim = await claimCampaignOutbox(db, {
+    workerId: 'confirmation-worker', leaseMs: 10_000, maxAttempts: 3, now: confirmationAt,
+  });
+  assert.equal(confirmationClaim?.id, confirmationOutboxId);
+  const confirmationAuthorization = await authorizeCampaignExecution(db, confirmationClaim, racePolicy, confirmationAt);
+  assert.equal(confirmationAuthorization.decision, 'STARTED');
+  if (confirmationAuthorization.decision === 'STARTED') {
+    const confirmationInput = { executionId: confirmationAuthorization.executionId, outboxId: confirmationClaim.id,
+      cycle: confirmationClaim.deadLetterCycle, attemptId: confirmationAuthorization.attemptId,
+      channel: confirmationAuthorization.channel, workerId: confirmationClaim.workerId,
+      token: confirmationClaim.token, generation: confirmationClaim.generation, confirmedAt: confirmationAt };
+    await assert.rejects(() => confirmSimulatedCampaignExecution(second.db, {
+      ...confirmationInput, token: crypto.randomUUID(),
+    }), (error: unknown) => error instanceof Error && error.message === 'SIMULATED_CONFIRMATION_STALE');
+    assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+      FROM campaign_simulated_confirmations WHERE outbox_id = ${confirmationClaim.id}::uuid`))[0]?.value, 0,
+    'a stale worker must not persist a simulated confirmation');
+    assert.equal((await confirmSimulatedCampaignExecution(db, confirmationInput)).replayed, false);
+    assert.equal((await confirmSimulatedCampaignExecution(second.db, confirmationInput)).replayed, true);
+    assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+      FROM campaign_simulated_confirmations WHERE outbox_id = ${confirmationClaim.id}::uuid AND cycle = 0`))[0]?.value, 1);
+    const restartedAt = new Date(confirmationAt.getTime() + 10_001);
+    const restartedClaim = await claimCampaignOutbox(second.db, {
+      workerId: 'confirmation-restart', leaseMs: 10_000, maxAttempts: 3, now: restartedAt,
+    });
+    assert.equal(restartedClaim?.id, confirmationClaim.id, 'confirmation without ACK is recovered after lease expiry');
+    const restartedAuthorization = await authorizeCampaignExecution(second.db, restartedClaim, racePolicy, restartedAt);
+    assert.equal(restartedAuthorization.decision, 'STARTED');
+    if (restartedAuthorization.decision === 'STARTED') {
+      assert.equal(restartedAuthorization.executionId, confirmationAuthorization.executionId);
+      assert.equal((await confirmSimulatedCampaignExecution(second.db, {
+        ...confirmationInput, workerId: restartedClaim.workerId, token: restartedClaim.token,
+        generation: restartedClaim.generation, confirmedAt: restartedAt,
+      })).replayed, true);
+    }
+    assert.equal(await completeCampaignOutbox(second.db, restartedClaim, restartedAt), true);
+  }
+
+  const finalConfirmationAt = new Date('2000-01-16T12:00:00.000Z');
+  const finalConfirmationId = await insertExecutableAttempt('EMAIL', finalConfirmationAt);
+  await db.update(campaignOutbox).set({ attempts: 2 }).where(eq(campaignOutbox.id, finalConfirmationId));
+  const finalConfirmationClaim = await claimCampaignOutbox(db, {
+    workerId: 'confirmed-final-attempt', leaseMs: 10_000, maxAttempts: 3, now: finalConfirmationAt,
+  });
+  assert.equal(finalConfirmationClaim?.attempt, 3);
+  const finalConfirmationAuthorization = await authorizeCampaignExecution(
+    db, finalConfirmationClaim, racePolicy, finalConfirmationAt,
+  );
+  assert.equal(finalConfirmationAuthorization.decision, 'STARTED');
+  if (finalConfirmationAuthorization.decision === 'STARTED') {
+    assert.equal((await confirmSimulatedCampaignExecution(db, {
+      executionId: finalConfirmationAuthorization.executionId, outboxId: finalConfirmationClaim.id,
+      cycle: finalConfirmationClaim.deadLetterCycle, attemptId: finalConfirmationAuthorization.attemptId,
+      channel: finalConfirmationAuthorization.channel, workerId: finalConfirmationClaim.workerId,
+      token: finalConfirmationClaim.token, generation: finalConfirmationClaim.generation,
+      confirmedAt: finalConfirmationAt,
+    })).replayed, false);
+  }
+  await claimCampaignOutbox(second.db, {
+    workerId: 'confirmed-final-sweeper', leaseMs: 10_000, maxAttempts: 3,
+    now: new Date(finalConfirmationAt.getTime() + 10_001),
+  });
+  const finalConfirmationRow = (
+    await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, finalConfirmationId))
+  )[0]!;
+  assert.equal(finalConfirmationRow.status, 'PUBLISHED',
+    'an expired final lease with a durable confirmation must be reconciled instead of dead-lettered');
+  assert.ok(finalConfirmationRow.publishedAt);
+  assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+    FROM campaign_dead_letters WHERE outbox_id = ${finalConfirmationId}::uuid`))[0]?.value, 0);
+
+  console.log('Campaign outbox integration evidence: contested=1, parallel=2, future=blocked, activeLease=protected, expiredLease=recovered, staleAck=rejected, restart=preserved, ordering=deterministic, staleConfirmation=rejected, confirmedFinalLease=reconciled');
 } finally {
   await second.close();
   await close();

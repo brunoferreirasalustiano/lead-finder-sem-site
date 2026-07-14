@@ -1,21 +1,32 @@
-import { createHash } from 'node:crypto';
+import { confirmSimulatedCampaignExecution, type Database } from '@lead-finder/database';
 
 export interface SimulatedExecution {
   executionId: string;
   replayed: boolean;
+  reconciled: boolean;
+}
+
+export type SimulatedFault = 'NONE' | 'TIMEOUT_BEFORE_CONFIRMATION' | 'TIMEOUT_AFTER_CONFIRMATION';
+export class SimulatedExecutionError extends Error {
+  constructor(readonly code: 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION' | 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION') { super(code); }
 }
 
 export class SimulatedOutboxAdapter {
-  readonly #executions = new Map<string, string>();
+  constructor(private readonly db: Database, private readonly fault: SimulatedFault = 'NONE') {}
 
-  execute(input: { id: string; idempotencyKey: string; eventType: string; payload: unknown }): Promise<SimulatedExecution> {
-    const logicalKey = `${input.id}\0${input.idempotencyKey}\0${input.eventType}`;
-    const existing = this.#executions.get(logicalKey);
-    if (existing) return Promise.resolve({ executionId: existing, replayed: true });
-    const executionId = createHash('sha256')
-      .update(`simulated-outbox-v1\0${logicalKey}`)
-      .digest('hex');
-    this.#executions.set(logicalKey, executionId);
-    return Promise.resolve({ executionId, replayed: false });
+  async execute(input: { id: string; deadLetterCycle: number; executionId: string; attemptId?: string; channel: string; workerId: string; token: string; generation: number; confirmedAt?: Date }): Promise<SimulatedExecution> {
+    if (this.fault === 'TIMEOUT_BEFORE_CONFIRMATION') {
+      throw new SimulatedExecutionError('SIMULATED_TIMEOUT_BEFORE_CONFIRMATION');
+    }
+    const confirmation = await confirmSimulatedCampaignExecution(this.db, {
+      executionId: input.executionId, outboxId: input.id, cycle: input.deadLetterCycle,
+      ...(input.attemptId ? { attemptId: input.attemptId } : {}), channel: input.channel,
+      workerId: input.workerId, token: input.token, generation: input.generation,
+      ...(input.confirmedAt ? { confirmedAt: input.confirmedAt } : {}),
+    });
+    if (this.fault === 'TIMEOUT_AFTER_CONFIRMATION' && !confirmation.replayed) {
+      throw new SimulatedExecutionError('SIMULATED_TIMEOUT_AFTER_CONFIRMATION');
+    }
+    return { ...confirmation, reconciled: confirmation.replayed };
   }
 }

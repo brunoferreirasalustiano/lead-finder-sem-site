@@ -78,10 +78,8 @@ export async function processNextOutbox(
     const decision = await failCampaignOutbox(db, claim, input.policy, failedAt, errorCode);
     const event = errorCode === 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION'
       ? 'campaign_outbox_timeout_before_confirmation'
-      : errorCode === 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION'
-        ? 'campaign_outbox_timeout_after_confirmation'
-        : decision === 'DEAD_LETTERED' ? 'campaign_outbox_dead_letter_created'
-          : decision === 'STALE' ? 'campaign_outbox_stale_operation' : 'campaign_outbox_retry_scheduled';
+      : decision === 'DEAD_LETTERED' ? 'campaign_outbox_dead_letter_created'
+        : decision === 'STALE' ? 'campaign_outbox_stale_operation' : 'campaign_outbox_retry_scheduled';
     logger.error(event, {
       outboxId: claim.id, channel, generation: claim.generation, attempt: claim.attempt,
       decision, failedAt: failedAt.toISOString(),

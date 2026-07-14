@@ -3,7 +3,7 @@ import {
   authorizeCampaignExecution, claimCampaignOutbox, completeCampaignOutbox, failCampaignOutbox, type Database,
 } from '@lead-finder/database';
 import { processNextOutbox } from './process-outbox.js';
-import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
+import { SimulatedExecutionError, SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 
 vi.mock('@lead-finder/database', () => ({
   claimCampaignOutbox: vi.fn().mockResolvedValue(null),
@@ -66,6 +66,29 @@ describe('processNextOutbox', () => {
       outboxId: claimed.id, channel: 'EMAIL', generation: 1, attempt: 1,
       decision: 'RETRY', failedAt: now.toISOString(),
     });
+  });
+
+  it('ACKs a durable confirmation after the deterministic timeout without scheduling failure', async () => {
+    vi.mocked(claimCampaignOutbox).mockResolvedValueOnce(claimed);
+    vi.mocked(authorizeCampaignExecution).mockResolvedValueOnce({
+      decision: 'STARTED', channel: 'EMAIL', attemptId: '00000000-0000-4000-8000-000000000003',
+      executionId: '00000000-0000-4000-8000-000000000004', startedAt: now,
+    });
+    vi.mocked(completeCampaignOutbox).mockResolvedValueOnce(true);
+    const failCalls = vi.mocked(failCampaignOutbox).mock.calls.length;
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    vi.spyOn(adapter, 'execute').mockRejectedValueOnce(
+      new SimulatedExecutionError('SIMULATED_TIMEOUT_AFTER_CONFIRMATION'),
+    );
+    const logger = { info: vi.fn(), error: vi.fn() };
+    await expect(processNextOutbox({} as Database, adapter, input, logger)).resolves.toBe(true);
+    expect(completeCampaignOutbox).toHaveBeenLastCalledWith({} as Database, claimed, now);
+    expect(vi.mocked(failCampaignOutbox).mock.calls).toHaveLength(failCalls);
+    expect(logger.info).toHaveBeenCalledWith('campaign_outbox_confirmation_reconciled', {
+      outboxId: claimed.id, channel: 'EMAIL', generation: 1, attempt: 1,
+      decision: 'CONFIRMATION_RECONCILED', reconciledAt: now.toISOString(),
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
   });
 
   it('records the final failure as a safe dead-letter decision', async () => {

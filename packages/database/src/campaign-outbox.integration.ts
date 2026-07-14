@@ -276,7 +276,7 @@ try {
 
   const windowRetryAt = new Date('2000-01-11T17:59:59.000Z');
   const windowRetryPolicy = {
-    ...racePolicy, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 4_000,
+    ...racePolicy, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 4_000, minSpacingMs: 1_000,
     windowStartUtc: '08:00', windowEndUtc: '18:00',
   };
   const windowRetryId = await insertExecutableAttempt('EMAIL', windowRetryAt);
@@ -312,6 +312,10 @@ try {
     assert.equal((await authorizeCampaignExecution(
       db, resumedWindowRetryClaim, windowRetryPolicy, outsideWindowRetryDecision.availableAt,
     )).decision, 'STARTED');
+    const retrySpacing = await db.execute<{ matches: boolean }>(sql`SELECT
+      (next_available_at = '2000-01-12T08:00:01.000Z'::timestamptz) AS matches
+      FROM campaign_channel_runtime WHERE channel = 'EMAIL'`);
+    assert.equal(retrySpacing[0]?.matches, true, 'a resumed retry must reserve global spacing again');
     assert.equal(await completeCampaignOutbox(
       db, resumedWindowRetryClaim, outsideWindowRetryDecision.availableAt,
     ), true);
@@ -426,7 +430,14 @@ try {
   if (confirmationAuthorization.decision === 'STARTED') {
     const confirmationInput = { executionId: confirmationAuthorization.executionId, outboxId: confirmationClaim.id,
       cycle: confirmationClaim.deadLetterCycle, attemptId: confirmationAuthorization.attemptId,
-      channel: confirmationAuthorization.channel, confirmedAt: confirmationAt };
+      channel: confirmationAuthorization.channel, workerId: confirmationClaim.workerId,
+      token: confirmationClaim.token, generation: confirmationClaim.generation, confirmedAt: confirmationAt };
+    await assert.rejects(() => confirmSimulatedCampaignExecution(second.db, {
+      ...confirmationInput, token: crypto.randomUUID(),
+    }), (error: unknown) => error instanceof Error && error.message === 'SIMULATED_CONFIRMATION_STALE');
+    assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+      FROM campaign_simulated_confirmations WHERE outbox_id = ${confirmationClaim.id}::uuid`))[0]?.value, 0,
+    'a stale worker must not persist a simulated confirmation');
     assert.equal((await confirmSimulatedCampaignExecution(db, confirmationInput)).replayed, false);
     assert.equal((await confirmSimulatedCampaignExecution(second.db, confirmationInput)).replayed, true);
     assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
@@ -441,13 +452,47 @@ try {
     if (restartedAuthorization.decision === 'STARTED') {
       assert.equal(restartedAuthorization.executionId, confirmationAuthorization.executionId);
       assert.equal((await confirmSimulatedCampaignExecution(second.db, {
-        ...confirmationInput, confirmedAt: restartedAt,
+        ...confirmationInput, workerId: restartedClaim.workerId, token: restartedClaim.token,
+        generation: restartedClaim.generation, confirmedAt: restartedAt,
       })).replayed, true);
     }
     assert.equal(await completeCampaignOutbox(second.db, restartedClaim, restartedAt), true);
   }
 
-  console.log('Campaign outbox integration evidence: contested=1, parallel=2, future=blocked, activeLease=protected, expiredLease=recovered, staleAck=rejected, restart=preserved, ordering=deterministic');
+  const finalConfirmationAt = new Date('2000-01-16T12:00:00.000Z');
+  const finalConfirmationId = await insertExecutableAttempt('EMAIL', finalConfirmationAt);
+  await db.update(campaignOutbox).set({ attempts: 2 }).where(eq(campaignOutbox.id, finalConfirmationId));
+  const finalConfirmationClaim = await claimCampaignOutbox(db, {
+    workerId: 'confirmed-final-attempt', leaseMs: 10_000, maxAttempts: 3, now: finalConfirmationAt,
+  });
+  assert.equal(finalConfirmationClaim?.attempt, 3);
+  const finalConfirmationAuthorization = await authorizeCampaignExecution(
+    db, finalConfirmationClaim, racePolicy, finalConfirmationAt,
+  );
+  assert.equal(finalConfirmationAuthorization.decision, 'STARTED');
+  if (finalConfirmationAuthorization.decision === 'STARTED') {
+    assert.equal((await confirmSimulatedCampaignExecution(db, {
+      executionId: finalConfirmationAuthorization.executionId, outboxId: finalConfirmationClaim.id,
+      cycle: finalConfirmationClaim.deadLetterCycle, attemptId: finalConfirmationAuthorization.attemptId,
+      channel: finalConfirmationAuthorization.channel, workerId: finalConfirmationClaim.workerId,
+      token: finalConfirmationClaim.token, generation: finalConfirmationClaim.generation,
+      confirmedAt: finalConfirmationAt,
+    })).replayed, false);
+  }
+  await claimCampaignOutbox(second.db, {
+    workerId: 'confirmed-final-sweeper', leaseMs: 10_000, maxAttempts: 3,
+    now: new Date(finalConfirmationAt.getTime() + 10_001),
+  });
+  const finalConfirmationRow = (
+    await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, finalConfirmationId))
+  )[0]!;
+  assert.equal(finalConfirmationRow.status, 'PUBLISHED',
+    'an expired final lease with a durable confirmation must be reconciled instead of dead-lettered');
+  assert.ok(finalConfirmationRow.publishedAt);
+  assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+    FROM campaign_dead_letters WHERE outbox_id = ${finalConfirmationId}::uuid`))[0]?.value, 0);
+
+  console.log('Campaign outbox integration evidence: contested=1, parallel=2, future=blocked, activeLease=protected, expiredLease=recovered, staleAck=rejected, restart=preserved, ordering=deterministic, staleConfirmation=rejected, confirmedFinalLease=reconciled');
 } finally {
   await second.close();
   await close();

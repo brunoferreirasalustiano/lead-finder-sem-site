@@ -1,3 +1,9 @@
+ALTER TABLE campaign_outbox
+  DROP CONSTRAINT IF EXISTS campaign_outbox_status_check;
+ALTER TABLE campaign_outbox
+  ADD CONSTRAINT campaign_outbox_status_check
+  CHECK (status IN ('PENDING', 'PUBLISHED', 'FAILED', 'BLOCKED', 'EXHAUSTED'));
+
 CREATE TABLE IF NOT EXISTS campaign_daily_channel_counters (
   channel text NOT NULL,
   quota_day date NOT NULL,

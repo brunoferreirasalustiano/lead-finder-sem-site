@@ -70,7 +70,14 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
     id: string; event_type: string; payload: unknown; idempotency_key: string; attempts: number;
     claim_generation: number; claim_expires_at: Date | string;
   }>(sql`
-    WITH candidate AS (
+    WITH exhausted AS (
+      UPDATE campaign_outbox
+      SET status = 'EXHAUSTED',
+          claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE status = 'PENDING' AND attempts >= ${input.maxAttempts}
+        AND (claim_expires_at IS NULL OR claim_expires_at <= ${now.toISOString()}::timestamptz)
+      RETURNING id
+    ), candidate AS (
       SELECT id FROM campaign_outbox
       WHERE status = 'PENDING' AND attempts < ${input.maxAttempts}
         AND available_at <= ${now.toISOString()}::timestamptz
@@ -200,8 +207,8 @@ export async function authorizeCampaignExecution(
     const quotaDay = now.toISOString().slice(0, 10);
     const limit = channel === 'EMAIL' ? policy.dailyLimitEmail : policy.dailyLimitWhatsapp;
     const quota = await tx.execute<{ count: number }>(sql`
-      INSERT INTO campaign_daily_channel_counters (channel, quota_day, count)
-      VALUES (${channel}, ${quotaDay}::date, 0)
+      INSERT INTO campaign_daily_channel_counters (channel, quota_day, count, created_at, updated_at)
+      VALUES (${channel}, ${quotaDay}::date, 0, ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
       ON CONFLICT (channel, quota_day) DO UPDATE SET channel = EXCLUDED.channel
       RETURNING count
     `);
@@ -221,11 +228,16 @@ export async function authorizeCampaignExecution(
       policy.minSpacingMs,
       now,
     );
-    await tx.execute(sql`INSERT INTO campaign_channel_runtime (channel, next_available_at) VALUES (${channel}, ${nextSpacingAt.toISOString()}::timestamptz)
-      ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at, updated_at = ${now.toISOString()}::timestamptz`);
+    await tx.execute(sql`INSERT INTO campaign_channel_runtime
+      (channel, next_available_at, created_at, updated_at)
+      VALUES (${channel}, ${nextSpacingAt.toISOString()}::timestamptz,
+        ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+      ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
+        updated_at = ${now.toISOString()}::timestamptz`);
     await tx.execute(sql`INSERT INTO campaign_execution_starts
-      (outbox_id, attempt_id, channel, quota_day, started_at, claim_generation)
-      VALUES (${claim.id}::uuid, ${row.attempt_id}::uuid, ${channel}, ${quotaDay}::date, ${now.toISOString()}::timestamptz, ${claim.generation})`);
+      (outbox_id, attempt_id, channel, quota_day, started_at, claim_generation, created_at)
+      VALUES (${claim.id}::uuid, ${row.attempt_id}::uuid, ${channel}, ${quotaDay}::date,
+        ${now.toISOString()}::timestamptz, ${claim.generation}, ${now.toISOString()}::timestamptz)`);
     return { decision: 'STARTED', channel, attemptId: row.attempt_id, startedAt: now };
   });
 }

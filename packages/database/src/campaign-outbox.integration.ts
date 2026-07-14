@@ -165,7 +165,17 @@ try {
   assert.equal(outsideClaim?.id, outsideId);
   const outsideDecision = await authorizeCampaignExecution(db, outsideClaim, policy, outsideAt);
   assert.equal(outsideDecision.decision, 'RESCHEDULED', 'the exact window end is excluded');
-  if (outsideDecision.decision === 'RESCHEDULED') assert.equal(outsideDecision.availableAt.toISOString(), '2000-01-04T08:00:00.000Z');
+  if (outsideDecision.decision === 'RESCHEDULED') {
+    assert.equal(outsideDecision.availableAt.toISOString(), '2000-01-04T08:00:00.000Z');
+    const windowResumedClaim = await claimCampaignOutbox(db, {
+      workerId: 'window-resumed', leaseMs: 10_000, maxAttempts: 3, now: outsideDecision.availableAt,
+    });
+    assert.equal(windowResumedClaim?.id, outsideId);
+    assert.equal((await authorizeCampaignExecution(
+      db, windowResumedClaim, policy, outsideDecision.availableAt,
+    )).decision, 'STARTED');
+    assert.equal(await completeCampaignOutbox(db, windowResumedClaim, outsideDecision.availableAt), true);
+  }
 
   const spacingAt = new Date('2000-01-05T12:00:00.000Z');
   const spacingPolicy = { ...policy, dailyLimitEmail: 10, minSpacingMs: 1_000 };

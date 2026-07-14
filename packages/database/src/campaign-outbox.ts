@@ -142,7 +142,7 @@ export async function authorizeCampaignExecution(
              EXISTS (SELECT 1 FROM lead_contacts lc WHERE lc.lead_id = l.id AND lc.is_valid = true
                AND lc.verified_at IS NOT NULL AND (
                  (r.channel = 'EMAIL' AND lc.type = 'EMAIL') OR
-                 (r.channel = 'WHATSAPP' AND (lc.type = 'WHATSAPP' OR (lc.type = 'TELEFONE' AND lc.possible_whatsapp = true)))
+                 (r.channel = 'WHATSAPP' AND lc.type = 'TELEFONE' AND lc.possible_whatsapp = true)
                )) AS has_valid_contact,
              EXISTS (SELECT 1 FROM campaign_opt_outs oo WHERE oo.lead_id = l.id AND (oo.channel IS NULL OR oo.channel = r.channel)) AS has_opt_out,
              (l.crm_stage IN ('RESPONDEU', 'REUNIAO', 'PROPOSTA', 'GANHO', 'PERDIDO')) AS has_response

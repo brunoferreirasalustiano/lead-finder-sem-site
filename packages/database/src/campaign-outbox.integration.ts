@@ -41,7 +41,7 @@ const insertExecutableAttempt = async (channel: 'EMAIL' | 'WHATSAPP', now: Date)
       RETURNING id
     ), inserted_contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence, verified_at, is_valid, possible_whatsapp)
-      SELECT id, ${channel === 'EMAIL' ? 'EMAIL' : 'WHATSAPP'}, 'fixture', ${suffix}, 'integration', 1, ${now.toISOString()}::timestamptz, true, ${channel === 'WHATSAPP'}
+      SELECT id, ${channel === 'EMAIL' ? 'EMAIL' : 'TELEFONE'}, 'fixture', ${suffix}, 'integration', 1, ${now.toISOString()}::timestamptz, true, ${channel === 'WHATSAPP'}
       FROM inserted_lead
     ), inserted_campaign AS (
       INSERT INTO campaigns (name, idempotency_key, payload_fingerprint, state)
@@ -202,13 +202,13 @@ try {
   assert.equal(pauseClaim?.id, pauseId);
   const pauseIdentity = await executionIdentity(pauseId);
   const [pauseDecision] = await Promise.all([
-    authorizeCampaignExecution(db, pauseClaim!, racePolicy, pauseAt),
+    authorizeCampaignExecution(db, pauseClaim, racePolicy, pauseAt),
     second.db.execute(sql`UPDATE campaigns SET state = 'PAUSADA' WHERE id = ${pauseIdentity.campaign_id}::uuid`),
   ]);
   assert.ok(pauseDecision.decision === 'STARTED'
     || (pauseDecision.decision === 'INELIGIBLE' && pauseDecision.reason === 'CAMPAIGN_NOT_ACTIVE'));
   assert.equal(await executionStartCount(pauseId), pauseDecision.decision === 'STARTED' ? 1 : 0);
-  if (pauseDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, pauseClaim!, pauseAt), true);
+  if (pauseDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, pauseClaim, pauseAt), true);
 
   const cancelAt = new Date('2000-01-07T12:00:00.000Z');
   const cancelId = await insertExecutableAttempt('EMAIL', cancelAt);
@@ -216,14 +216,14 @@ try {
   assert.equal(cancelClaim?.id, cancelId);
   const cancelIdentity = await executionIdentity(cancelId);
   const [cancelDecision] = await Promise.all([
-    authorizeCampaignExecution(db, cancelClaim!, racePolicy, cancelAt),
+    authorizeCampaignExecution(db, cancelClaim, racePolicy, cancelAt),
     second.db.execute(sql`UPDATE campaign_recipients SET state = 'CANCELADO'
       WHERE id = ${cancelIdentity.recipient_id}::uuid`),
   ]);
   assert.ok(cancelDecision.decision === 'STARTED'
     || (cancelDecision.decision === 'INELIGIBLE' && cancelDecision.reason === 'RECIPIENT_NOT_EXECUTABLE'));
   assert.equal(await executionStartCount(cancelId), cancelDecision.decision === 'STARTED' ? 1 : 0);
-  if (cancelDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, cancelClaim!, cancelAt), true);
+  if (cancelDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, cancelClaim, cancelAt), true);
 
   const optOutAt = new Date('2000-01-08T12:00:00.000Z');
   const optOutId = await insertExecutableAttempt('WHATSAPP', optOutAt);
@@ -231,7 +231,7 @@ try {
   assert.equal(optOutClaim?.id, optOutId);
   const optOutIdentity = await executionIdentity(optOutId);
   const [optOutDecision] = await Promise.all([
-    authorizeCampaignExecution(db, optOutClaim!, racePolicy, optOutAt),
+    authorizeCampaignExecution(db, optOutClaim, racePolicy, optOutAt),
     recordOptOut(second.db, {
       leadId: optOutIdentity.lead_id, channel: 'WHATSAPP', reason: 'integration race', source: 'test',
     }),
@@ -239,7 +239,7 @@ try {
   assert.ok(optOutDecision.decision === 'STARTED'
     || (optOutDecision.decision === 'INELIGIBLE' && optOutDecision.reason === 'OPT_OUT'));
   assert.equal(await executionStartCount(optOutId), optOutDecision.decision === 'STARTED' ? 1 : 0);
-  if (optOutDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, optOutClaim!, optOutAt), true);
+  if (optOutDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, optOutClaim, optOutAt), true);
 
   const utcPolicy = {
     ...policy, dailyLimitWhatsapp: 1, minSpacingMs: 0, windowStartUtc: '00:00', windowEndUtc: '23:59',
@@ -250,17 +250,17 @@ try {
     workerId: 'utc-before', leaseMs: 10_000, maxAttempts: 3, now: beforeUtcBoundary,
   });
   assert.equal(beforeUtcClaim?.id, beforeUtcId);
-  assert.equal((await authorizeCampaignExecution(db, beforeUtcClaim!, utcPolicy, beforeUtcBoundary)).decision, 'STARTED');
-  assert.equal(await completeCampaignOutbox(db, beforeUtcClaim!, beforeUtcBoundary), true);
+  assert.equal((await authorizeCampaignExecution(db, beforeUtcClaim, utcPolicy, beforeUtcBoundary)).decision, 'STARTED');
+  assert.equal(await completeCampaignOutbox(db, beforeUtcClaim, beforeUtcBoundary), true);
   const afterUtcBoundary = new Date('2000-01-10T00:00:00.000Z');
   const afterUtcId = await insertExecutableAttempt('WHATSAPP', afterUtcBoundary);
   const afterUtcClaim = await claimCampaignOutbox(db, {
     workerId: 'utc-after', leaseMs: 10_000, maxAttempts: 3, now: afterUtcBoundary,
   });
   assert.equal(afterUtcClaim?.id, afterUtcId);
-  assert.equal((await authorizeCampaignExecution(db, afterUtcClaim!, utcPolicy, afterUtcBoundary)).decision, 'STARTED',
+  assert.equal((await authorizeCampaignExecution(db, afterUtcClaim, utcPolicy, afterUtcBoundary)).decision, 'STARTED',
     'a new UTC day must receive an independent quota');
-  assert.equal(await completeCampaignOutbox(db, afterUtcClaim!, afterUtcBoundary), true);
+  assert.equal(await completeCampaignOutbox(db, afterUtcClaim, afterUtcBoundary), true);
 
   const retryAt = new Date('2000-01-12T12:00:00.000Z');
   const retryItem = await insertItem(retryAt);
@@ -268,8 +268,8 @@ try {
     workerId: 'retry-1', leaseMs: 10_000, maxAttempts: 3, now: retryAt,
   });
   assert.equal(retryClaim?.id, retryItem.id);
-  assert.equal(await failCampaignOutbox(db, retryClaim!, policy, retryAt), 'RETRY');
-  assert.equal(await failCampaignOutbox(second.db, retryClaim!, policy, retryAt), 'STALE');
+  assert.equal(await failCampaignOutbox(db, retryClaim, policy, retryAt), 'RETRY');
+  assert.equal(await failCampaignOutbox(second.db, retryClaim, policy, retryAt), 'STALE');
   const retryRow = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!;
   assert.equal(retryRow.availableAt.toISOString(), '2000-01-12T12:00:01.000Z');
   const retrySecondAt = retryRow.availableAt;
@@ -277,13 +277,13 @@ try {
     workerId: 'retry-2', leaseMs: 10_000, maxAttempts: 3, now: retrySecondAt,
   });
   assert.equal(retrySecondClaim?.attempt, 2);
-  assert.equal(await failCampaignOutbox(db, retrySecondClaim!, policy, retrySecondAt), 'RETRY');
+  assert.equal(await failCampaignOutbox(db, retrySecondClaim, policy, retrySecondAt), 'RETRY');
   const retryThirdAt = new Date(retrySecondAt.getTime() + 2_000);
   const retryThirdClaim = await claimCampaignOutbox(db, {
     workerId: 'retry-3', leaseMs: 10_000, maxAttempts: 3, now: retryThirdAt,
   });
   assert.equal(retryThirdClaim?.attempt, 3);
-  assert.equal(await failCampaignOutbox(db, retryThirdClaim!, policy, retryThirdAt), 'EXHAUSTED');
+  assert.equal(await failCampaignOutbox(db, retryThirdClaim, policy, retryThirdAt), 'EXHAUSTED');
   assert.equal((await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]?.status, 'EXHAUSTED');
 
   const crashedAt = new Date('2000-01-13T12:00:00.000Z');

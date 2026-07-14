@@ -14,13 +14,15 @@ export class SimulatedExecutionError extends Error {
 export class SimulatedOutboxAdapter {
   constructor(private readonly db: Database, private readonly fault: SimulatedFault = 'NONE') {}
 
-  async execute(input: { id: string; deadLetterCycle: number; executionId: string; attemptId?: string; channel: string }): Promise<SimulatedExecution> {
+  async execute(input: { id: string; deadLetterCycle: number; executionId: string; attemptId?: string; channel: string; workerId: string; token: string; generation: number; confirmedAt?: Date }): Promise<SimulatedExecution> {
     if (this.fault === 'TIMEOUT_BEFORE_CONFIRMATION') {
       throw new SimulatedExecutionError('SIMULATED_TIMEOUT_BEFORE_CONFIRMATION');
     }
     const confirmation = await confirmSimulatedCampaignExecution(this.db, {
       executionId: input.executionId, outboxId: input.id, cycle: input.deadLetterCycle,
       ...(input.attemptId ? { attemptId: input.attemptId } : {}), channel: input.channel,
+      workerId: input.workerId, token: input.token, generation: input.generation,
+      ...(input.confirmedAt ? { confirmedAt: input.confirmedAt } : {}),
     });
     if (this.fault === 'TIMEOUT_AFTER_CONFIRMATION' && !confirmation.replayed) {
       throw new SimulatedExecutionError('SIMULATED_TIMEOUT_AFTER_CONFIRMATION');

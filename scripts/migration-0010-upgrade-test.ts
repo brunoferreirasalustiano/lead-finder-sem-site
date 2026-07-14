@@ -17,6 +17,8 @@ const migrationName = '0010_campaign_outbox_max_attempts_snapshot.sql';
 const upgradeDatabaseName = `leadfinder_upgrade_0010_${process.pid}`;
 const upgradeDatabaseUrl = new URL(databaseUrl);
 upgradeDatabaseUrl.pathname = `/${upgradeDatabaseName}`;
+const startedAt = new Date('2000-02-01T12:00:00.000Z');
+const expiredAt = new Date(startedAt.getTime() + 10_001);
 
 const policy: CampaignExecutionPolicy = {
   dailyLimitEmail: 10, dailyLimitWhatsapp: 10, minIntervalMsEmail: 0, minIntervalMsWhatsapp: 0,
@@ -31,8 +33,6 @@ try {
     for (const file of (await readdir(migrationDirectory)).filter((name) => name < migrationName).sort())
       await upgrade.unsafe(await readFile(new URL(file, migrationDirectory), 'utf8'));
 
-    const startedAt = new Date('2000-02-01T12:00:00.000Z');
-    const expiredAt = new Date(startedAt.getTime() + 10_001);
     const activeLeaseId = randomUUID();
     const retryId = randomUUID();
     const neverStartedId = randomUUID();

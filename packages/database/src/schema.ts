@@ -1,5 +1,7 @@
 import {
   boolean,
+  check,
+  date,
   foreignKey,
   index,
   integer,
@@ -7,6 +9,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -283,6 +286,44 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   uniqueIndex('campaign_outbox_aggregate_type_aggregate_id_idempotency_key_key').on(table.aggregateType, table.aggregateId, table.idempotencyKey),
   index('campaign_outbox_queue_idx').on(table.status, table.availableAt, table.id).where(sql`${table.status} = 'PENDING'`),
   index('campaign_outbox_claim_queue_idx').on(table.availableAt, table.claimExpiresAt, table.id).where(sql`${table.status} = 'PENDING'`),
+]);
+export const campaignDailyChannelCounters = pgTable('campaign_daily_channel_counters', {
+  channel: text('channel').notNull(),
+  quotaDay: date('quota_day').notNull(),
+  count: integer('count').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ name: 'campaign_daily_channel_counters_pkey', columns: [table.channel, table.quotaDay] }),
+  check('campaign_daily_channel_counters_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
+  check('campaign_daily_channel_counters_count_check', sql`${table.count} >= 0`),
+  check('campaign_daily_channel_counters_timestamps_check', sql`${table.updatedAt} >= ${table.createdAt}`),
+]);
+export const campaignChannelRuntime = pgTable('campaign_channel_runtime', {
+  channel: text('channel').primaryKey(),
+  nextAvailableAt: timestamp('next_available_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check('campaign_channel_runtime_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
+  check('campaign_channel_runtime_timestamps_check', sql`${table.updatedAt} >= ${table.createdAt}`),
+]);
+export const campaignExecutionStarts = pgTable('campaign_execution_starts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  outboxId: uuid('outbox_id').notNull().references(() => campaignOutbox.id, { onDelete: 'restrict' }),
+  attemptId: uuid('attempt_id').notNull().references(() => campaignAttempts.id, { onDelete: 'restrict' }),
+  channel: text('channel').notNull(),
+  quotaDay: date('quota_day').notNull(),
+  claimGeneration: integer('claim_generation').notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_execution_starts_outbox_key').on(table.outboxId),
+  uniqueIndex('campaign_execution_starts_attempt_key').on(table.attemptId),
+  index('campaign_execution_starts_channel_started_idx').on(table.channel, table.startedAt, table.id),
+  check('campaign_execution_starts_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
+  check('campaign_execution_starts_claim_generation_check', sql`${table.claimGeneration} >= 0`),
+  check('campaign_execution_starts_quota_day_check', sql`${table.quotaDay} = (${table.startedAt} at time zone 'UTC')::date`),
 ]);
 export const campaignDeadLetters = pgTable('campaign_dead_letters', {
   id: uuid('id').defaultRandom().primaryKey(),

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
+import { nextCampaignExecutionInstant, type CampaignChannel } from '@lead-finder/shared';
 import type { Database } from './index.js';
 
 export interface OutboxClaim {
@@ -10,21 +11,47 @@ export interface OutboxClaim {
   workerId: string;
   token: string;
   generation: number;
+  attempt: number;
   expiresAt: Date;
+}
+
+export interface CampaignExecutionPolicy {
+  dailyLimitEmail: number;
+  dailyLimitWhatsapp: number;
+  minSpacingMs: number;
+  maxAttempts: number;
+  retryBaseMs: number;
+  retryMaxMs: number;
+  windowStartUtc: string;
+  windowEndUtc: string;
 }
 
 export interface ClaimOutboxInput {
   workerId: string;
   leaseMs: number;
+  maxAttempts: number;
   now?: Date;
   token?: string;
 }
+
+export type ExecutionAuthorization =
+  | { decision: 'STARTED'; channel: CampaignChannel; attemptId: string; startedAt: Date }
+  | { decision: 'ADMINISTRATIVE' }
+  | { decision: 'RESCHEDULED'; channel: CampaignChannel; availableAt: Date; reason: 'DAILY_LIMIT' | 'SPACING' }
+  | { decision: 'INELIGIBLE'; channel?: CampaignChannel; reason: string }
+  | { decision: 'STALE' };
 
 export function outboxLeaseExpiration(now: Date, leaseMs: number): Date {
   if (!Number.isSafeInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 3_600_000) {
     throw new RangeError('leaseMs must be an integer between 1000 and 3600000');
   }
   return new Date(now.getTime() + leaseMs);
+}
+
+export function deterministicRetryAt(now: Date, attempt: number, baseMs: number, maxMs: number): Date {
+  if (!Number.isSafeInteger(attempt) || attempt < 1) throw new RangeError('attempt must be a positive integer');
+  const delay = Math.min(baseMs * (2 ** Math.min(attempt - 1, 52)), maxMs);
+  return new Date(now.getTime() + delay);
 }
 
 const validWorkerId = (workerId: string) => {
@@ -35,61 +62,225 @@ const validWorkerId = (workerId: string) => {
 
 export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput): Promise<OutboxClaim | null> {
   const workerId = validWorkerId(input.workerId);
+  if (!Number.isSafeInteger(input.maxAttempts) || input.maxAttempts < 1) throw new RangeError('maxAttempts must be a positive integer');
   const now = input.now ?? new Date();
   const expiresAt = outboxLeaseExpiration(now, input.leaseMs);
-  const nowIso = now.toISOString();
-  const expiresAtIso = expiresAt.toISOString();
   const token = input.token ?? randomUUID();
   const rows = await db.execute<{
-    id: string; event_type: string; payload: unknown; idempotency_key: string;
+    id: string; event_type: string; payload: unknown; idempotency_key: string; attempts: number;
     claim_generation: number; claim_expires_at: Date | string;
   }>(sql`
-    WITH candidate AS (
-      SELECT id
-      FROM campaign_outbox
-      WHERE status = 'PENDING'
-        AND available_at <= ${nowIso}::timestamptz
-        AND (claim_expires_at IS NULL OR claim_expires_at <= ${nowIso}::timestamptz)
-      ORDER BY available_at ASC, id ASC
-      FOR UPDATE SKIP LOCKED
-      LIMIT 1
+    WITH exhausted AS (
+      UPDATE campaign_outbox
+      SET status = 'EXHAUSTED',
+          claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE status = 'PENDING' AND attempts >= ${input.maxAttempts}
+        AND (claim_expires_at IS NULL OR claim_expires_at <= ${now.toISOString()}::timestamptz)
+      RETURNING id
+    ), candidate AS (
+      SELECT id FROM campaign_outbox
+      WHERE status = 'PENDING' AND attempts < ${input.maxAttempts}
+        AND available_at <= ${now.toISOString()}::timestamptz
+        AND (claim_expires_at IS NULL OR claim_expires_at <= ${now.toISOString()}::timestamptz)
+      ORDER BY available_at ASC, id ASC FOR UPDATE SKIP LOCKED LIMIT 1
     )
     UPDATE campaign_outbox AS outbox
-    SET claim_worker_id = ${workerId},
-        claim_token = ${token}::uuid,
-        claim_generation = outbox.claim_generation + 1,
-        claimed_at = ${nowIso}::timestamptz,
-        claim_expires_at = ${expiresAtIso}::timestamptz,
-        attempts = outbox.attempts + 1
-    FROM candidate
-    WHERE outbox.id = candidate.id
-    RETURNING outbox.id, outbox.event_type, outbox.payload, outbox.idempotency_key,
+    SET claim_worker_id = ${workerId}, claim_token = ${token}::uuid,
+        claim_generation = outbox.claim_generation + 1, claimed_at = ${now.toISOString()}::timestamptz,
+        claim_expires_at = ${expiresAt.toISOString()}::timestamptz, attempts = outbox.attempts + 1
+    FROM candidate WHERE outbox.id = candidate.id
+    RETURNING outbox.id, outbox.event_type, outbox.payload, outbox.idempotency_key, outbox.attempts,
               outbox.claim_generation, outbox.claim_expires_at
   `);
   const row = rows[0];
   return row ? {
     id: row.id, eventType: row.event_type, payload: row.payload, idempotencyKey: row.idempotency_key,
-    workerId, token, generation: row.claim_generation, expiresAt: new Date(row.claim_expires_at),
+    workerId, token, generation: row.claim_generation, attempt: row.attempts,
+    expiresAt: new Date(row.claim_expires_at),
   } : null;
 }
 
-export async function completeCampaignOutbox(
+const stalePredicate = (claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>, now: Date) => sql`
+  id = ${claim.id}::uuid AND status = 'PENDING' AND claim_worker_id = ${claim.workerId}
+  AND claim_token = ${claim.token}::uuid AND claim_generation = ${claim.generation}
+  AND claim_expires_at > ${now.toISOString()}::timestamptz
+`;
+const joinedStalePredicate = (claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>, now: Date) => sql`
+  o.id = ${claim.id}::uuid AND o.status = 'PENDING' AND o.claim_worker_id = ${claim.workerId}
+  AND o.claim_token = ${claim.token}::uuid AND o.claim_generation = ${claim.generation}
+  AND o.claim_expires_at > ${now.toISOString()}::timestamptz
+`;
+
+export async function authorizeCampaignExecution(
   db: Database,
-  claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>,
+  claim: OutboxClaim,
+  policy: CampaignExecutionPolicy,
   now = new Date(),
-): Promise<boolean> {
-  const nowIso = now.toISOString();
-  const rows = await db.execute<{ id: string }>(sql`
-    UPDATE campaign_outbox
-    SET status = 'PUBLISHED', published_at = ${nowIso}::timestamptz,
-        claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
-    WHERE id = ${claim.id}::uuid
-      AND status = 'PENDING'
-      AND claim_worker_id = ${claim.workerId}
-      AND claim_token = ${claim.token}::uuid
-      AND claim_generation = ${claim.generation}
-      AND claim_expires_at > ${nowIso}::timestamptz
-    RETURNING id
-  `);
+): Promise<ExecutionAuthorization> {
+  if (claim.eventType !== 'ATTEMPT_CREATED') {
+    const valid = await db.execute<{ id: string }>(sql`SELECT id FROM campaign_outbox WHERE ${stalePredicate(claim, now)}`);
+    return valid.length === 1 ? { decision: 'ADMINISTRATIVE' } : { decision: 'STALE' };
+  }
+  return db.transaction(async (tx) => {
+    const identity = await tx.execute<{ lead_id: string; channel: CampaignChannel }>(sql`
+      SELECT r.lead_id, r.channel
+      FROM campaign_outbox o
+      JOIN campaign_attempts a ON o.aggregate_type = 'attempt' AND a.id = o.aggregate_id
+      JOIN campaign_recipients r ON r.id = a.recipient_id
+      WHERE ${joinedStalePredicate(claim, now)} AND o.event_type = 'ATTEMPT_CREATED'
+    `);
+    if (!identity[0]) return { decision: 'STALE' };
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity[0].lead_id}:opt-out:${identity[0].channel}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity[0].lead_id}:opt-out:TODOS`}))`);
+    const rows = await tx.execute<{
+      outbox_id: string; attempt_id: string; lead_id: string; channel: string; campaign_state: string; recipient_state: string;
+      attempt_state: string; is_blocked: boolean; do_not_contact: boolean; crm_stage: string | null;
+      has_valid_contact: boolean; has_opt_out: boolean; has_response: boolean;
+    }>(sql`
+      SELECT o.id AS outbox_id, a.id AS attempt_id, l.id AS lead_id, r.channel, c.state AS campaign_state,
+             r.state AS recipient_state, a.state AS attempt_state, l.is_blocked, l.do_not_contact, l.crm_stage,
+             EXISTS (SELECT 1 FROM lead_contacts lc WHERE lc.lead_id = l.id AND lc.is_valid = true
+               AND lc.verified_at IS NOT NULL AND (
+                 (r.channel = 'EMAIL' AND lc.type = 'EMAIL') OR
+                 (r.channel = 'WHATSAPP' AND lc.type = 'TELEFONE' AND lc.possible_whatsapp = true)
+               )) AS has_valid_contact,
+             EXISTS (SELECT 1 FROM campaign_opt_outs oo WHERE oo.lead_id = l.id AND (oo.channel IS NULL OR oo.channel = r.channel)) AS has_opt_out,
+             (l.crm_stage IN ('RESPONDEU', 'REUNIAO', 'PROPOSTA', 'GANHO', 'PERDIDO')) AS has_response
+      FROM campaign_outbox o
+      JOIN campaign_attempts a ON o.aggregate_type = 'attempt' AND a.id = o.aggregate_id
+      JOIN campaign_recipients r ON r.id = a.recipient_id
+      JOIN campaigns c ON c.id = r.campaign_id
+      JOIN leads l ON l.id = r.lead_id
+      WHERE ${joinedStalePredicate(claim, now)} AND o.event_type = 'ATTEMPT_CREATED'
+      FOR UPDATE OF o, a, r, c, l
+    `);
+    const row = rows[0];
+    if (!row) return { decision: 'STALE' };
+    if (row.channel !== 'EMAIL' && row.channel !== 'WHATSAPP') {
+      await tx.execute(sql`UPDATE campaign_outbox SET claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL,
+        claim_expires_at = NULL, status = 'BLOCKED' WHERE ${stalePredicate(claim, now)}`);
+      return { decision: 'INELIGIBLE', reason: 'INVALID_CHANNEL' };
+    }
+    const channel: CampaignChannel = row.channel;
+    const leadId = row.lead_id;
+    const optOutAfterLock = await tx.execute<{ present: boolean }>(sql`
+      SELECT EXISTS (SELECT 1 FROM campaign_opt_outs WHERE lead_id = ${leadId}::uuid
+        AND (channel IS NULL OR channel = ${channel})) AS present
+    `);
+    const reason = row.campaign_state !== 'ATIVA' ? 'CAMPAIGN_NOT_ACTIVE'
+      : !['PENDENTE', 'ELEGIVEL', 'EM_ANDAMENTO'].includes(row.recipient_state) ? 'RECIPIENT_NOT_EXECUTABLE'
+      : !['PENDENTE', 'APROVADA'].includes(row.attempt_state) ? 'ATTEMPT_NOT_EXECUTABLE'
+      : row.is_blocked ? 'LEAD_BLOCKED'
+      : row.do_not_contact ? 'DO_NOT_CONTACT'
+      : row.crm_stage === 'NAO_CONTATAR' ? 'CRM_DO_NOT_CONTACT'
+      : !row.has_valid_contact ? 'CONTACT_NOT_VALIDATED'
+      : row.has_opt_out || optOutAfterLock[0]?.present ? 'OPT_OUT'
+      : row.has_response ? 'ALREADY_RESPONDED'
+      : null;
+    if (reason) {
+      await tx.execute(sql`UPDATE campaign_outbox SET claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL,
+        claim_expires_at = NULL, status = 'BLOCKED' WHERE ${stalePredicate(claim, now)}`);
+      return { decision: 'INELIGIBLE', channel, reason };
+    }
+
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('campaign-channel:' || ${channel}))`);
+    const runtime = await tx.execute<{ next_available_at: Date | string | null }>(sql`
+      SELECT next_available_at FROM campaign_channel_runtime WHERE channel = ${channel} FOR UPDATE
+    `);
+    const nextAllowedAt = nextCampaignExecutionInstant(
+      now,
+      { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
+      0,
+      runtime[0]?.next_available_at ? new Date(runtime[0].next_available_at) : null,
+    );
+    if (nextAllowedAt > now) {
+      await rescheduleClaim(tx as unknown as Database, claim, nextAllowedAt, now);
+      return { decision: 'RESCHEDULED', channel, availableAt: nextAllowedAt, reason: 'SPACING' };
+    }
+    const alreadyStarted = await tx.execute<{ started_at: Date | string; attempt_id: string; channel: CampaignChannel }>(sql`
+      SELECT started_at, attempt_id, channel FROM campaign_execution_starts WHERE outbox_id = ${claim.id}::uuid
+    `);
+    if (alreadyStarted[0]) {
+      const retrySpacingAt = nextCampaignExecutionInstant(
+        now,
+        { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
+        policy.minSpacingMs,
+        now,
+      );
+      await tx.execute(sql`INSERT INTO campaign_channel_runtime
+        (channel, next_available_at, created_at, updated_at)
+        VALUES (${channel}, ${retrySpacingAt.toISOString()}::timestamptz,
+          ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+        ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
+          updated_at = ${now.toISOString()}::timestamptz`);
+      return {
+        decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
+        startedAt: new Date(alreadyStarted[0].started_at),
+      };
+    }
+    const quotaDay = now.toISOString().slice(0, 10);
+    const limit = channel === 'EMAIL' ? policy.dailyLimitEmail : policy.dailyLimitWhatsapp;
+    const quota = await tx.execute<{ count: number }>(sql`
+      INSERT INTO campaign_daily_channel_counters (channel, quota_day, count, created_at, updated_at)
+      VALUES (${channel}, ${quotaDay}::date, 0, ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+      ON CONFLICT (channel, quota_day) DO UPDATE SET channel = EXCLUDED.channel
+      RETURNING count
+    `);
+    if ((quota[0]?.count ?? 0) >= limit) {
+      const nextDay = new Date(`${quotaDay}T00:00:00.000Z`); nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const nextWindow = nextCampaignExecutionInstant(nextDay, {
+        startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc,
+      }, 0, null);
+      await rescheduleClaim(tx as unknown as Database, claim, nextWindow, now);
+      return { decision: 'RESCHEDULED', channel, availableAt: nextWindow, reason: 'DAILY_LIMIT' };
+    }
+    await tx.execute(sql`UPDATE campaign_daily_channel_counters SET count = count + 1, updated_at = ${now.toISOString()}::timestamptz
+      WHERE channel = ${channel} AND quota_day = ${quotaDay}::date`);
+    const nextSpacingAt = nextCampaignExecutionInstant(
+      now,
+      { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
+      policy.minSpacingMs,
+      now,
+    );
+    await tx.execute(sql`INSERT INTO campaign_channel_runtime
+      (channel, next_available_at, created_at, updated_at)
+      VALUES (${channel}, ${nextSpacingAt.toISOString()}::timestamptz,
+        ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+      ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
+        updated_at = ${now.toISOString()}::timestamptz`);
+    await tx.execute(sql`INSERT INTO campaign_execution_starts
+      (outbox_id, attempt_id, channel, quota_day, started_at, claim_generation, created_at)
+      VALUES (${claim.id}::uuid, ${row.attempt_id}::uuid, ${channel}, ${quotaDay}::date,
+        ${now.toISOString()}::timestamptz, ${claim.generation}, ${now.toISOString()}::timestamptz)`);
+    return { decision: 'STARTED', channel, attemptId: row.attempt_id, startedAt: now };
+  });
+}
+
+async function rescheduleClaim(db: Database, claim: OutboxClaim, availableAt: Date, now: Date): Promise<boolean> {
+  const rows = await db.execute<{ id: string }>(sql`UPDATE campaign_outbox SET available_at = ${availableAt.toISOString()}::timestamptz,
+    attempts = greatest(attempts - 1, 0),
+    claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+    WHERE ${stalePredicate(claim, now)} RETURNING id`);
+  return rows.length === 1;
+}
+
+export async function rescheduleCampaignOutbox(db: Database, claim: OutboxClaim, availableAt: Date, now = new Date()): Promise<boolean> {
+  return rescheduleClaim(db, claim, availableAt, now);
+}
+
+export async function failCampaignOutbox(db: Database, claim: OutboxClaim, policy: CampaignExecutionPolicy, now = new Date()): Promise<'RETRY' | 'EXHAUSTED' | 'STALE'> {
+  const exhausted = claim.attempt >= policy.maxAttempts;
+  const availableAt = deterministicRetryAt(now, claim.attempt, policy.retryBaseMs, policy.retryMaxMs);
+  const rows = await db.execute<{ id: string }>(sql`UPDATE campaign_outbox SET
+    status = ${exhausted ? 'EXHAUSTED' : 'PENDING'}, available_at = ${availableAt.toISOString()}::timestamptz,
+    claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+    WHERE ${stalePredicate(claim, now)} RETURNING id`);
+  return rows.length === 0 ? 'STALE' : exhausted ? 'EXHAUSTED' : 'RETRY';
+}
+
+export async function completeCampaignOutbox(db: Database, claim: Pick<OutboxClaim, 'id' | 'workerId' | 'token' | 'generation'>, now = new Date()): Promise<boolean> {
+  const rows = await db.execute<{ id: string }>(sql`UPDATE campaign_outbox SET status = 'PUBLISHED', published_at = ${now.toISOString()}::timestamptz,
+    claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+    WHERE ${stalePredicate(claim, now)} RETURNING id`);
   return rows.length === 1;
 }

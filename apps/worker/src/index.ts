@@ -15,6 +15,16 @@ const overpass = new OverpassClient({
 });
 const outboxAdapter = new SimulatedOutboxAdapter();
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
+const executionPolicy = {
+  dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
+  dailyLimitWhatsapp: config.CAMPAIGN_DAILY_LIMIT_WHATSAPP,
+  windowStartUtc: config.CAMPAIGN_WINDOW_START_UTC,
+  windowEndUtc: config.CAMPAIGN_WINDOW_END_UTC,
+  minSpacingMs: config.CAMPAIGN_MIN_SPACING_MS,
+  maxAttempts: config.OUTBOX_RETRY_MAX_ATTEMPTS,
+  retryBaseMs: config.OUTBOX_RETRY_BASE_MS,
+  retryMaxMs: config.OUTBOX_RETRY_MAX_MS,
+};
 const operationalLogger = {
   info: (event: string, metadata: Record<string, string | number | boolean>) => console.info(event, metadata),
   error: (event: string, metadata: Record<string, string | number | boolean>) => console.error(event, metadata),
@@ -42,7 +52,9 @@ process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
   const collected = await processNextJob(db, overpass);
   const consumedOutbox = gracefulStop.running
-    ? await processNextOutbox(db, outboxAdapter, { workerId, leaseMs: config.OUTBOX_LEASE_MS }, operationalLogger)
+    ? await processNextOutbox(db, outboxAdapter, {
+      workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy,
+    }, operationalLogger)
     : false;
   if (!collected && !consumedOutbox && gracefulStop.running) {
     await gracefulStop.wait(config.WORKER_POLL_INTERVAL_MS);

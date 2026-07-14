@@ -19,6 +19,8 @@ const upgradeDatabaseUrl = new URL(databaseUrl);
 upgradeDatabaseUrl.pathname = `/${upgradeDatabaseName}`;
 const startedAt = new Date('2000-02-01T12:00:00.000Z');
 const expiredAt = new Date(startedAt.getTime() + 10_001);
+const retryAt = new Date(expiredAt.getTime() + 10_000);
+const firstClaimAt = new Date(retryAt.getTime() + 10_000);
 
 const policy: CampaignExecutionPolicy = {
   dailyLimitEmail: 10, dailyLimitWhatsapp: 10, minIntervalMsEmail: 0, minIntervalMsWhatsapp: 0,
@@ -36,22 +38,22 @@ try {
     const activeLeaseId = randomUUID();
     const retryId = randomUUID();
     const neverStartedId = randomUUID();
-    const insertLegacyOutbox = async (id: string, attempts: number, activeLease: boolean) => {
+    const insertLegacyOutbox = async (id: string, attempts: number, activeLease: boolean, availableAt: Date) => {
       await upgrade`
         INSERT INTO campaign_outbox (
           id, aggregate_type, aggregate_id, event_type, payload, idempotency_key, payload_fingerprint,
           status, attempts, available_at, claim_worker_id, claim_token, claim_generation, claimed_at, claim_expires_at
         ) VALUES (
           ${id}::uuid, 'CAMPAIGN_ATTEMPT', ${randomUUID()}::uuid, 'CAMPAIGN_ATTEMPT_READY', '{}'::jsonb,
-          ${`legacy-${id}`}, ${'0'.repeat(64)}, 'PENDING', ${attempts}, ${startedAt.toISOString()}::timestamptz,
+          ${`legacy-${id}`}, ${'0'.repeat(64)}, 'PENDING', ${attempts}, ${availableAt.toISOString()}::timestamptz,
           ${activeLease ? 'legacy-worker' : null}, ${activeLease ? randomUUID() : null}::uuid,
           ${activeLease ? 1 : 0}, ${activeLease ? startedAt.toISOString() : null}::timestamptz,
           ${activeLease ? new Date(startedAt.getTime() + 10_000).toISOString() : null}::timestamptz
         )`;
     };
-    await insertLegacyOutbox(activeLeaseId, 2, true);
-    await insertLegacyOutbox(retryId, 1, false);
-    await insertLegacyOutbox(neverStartedId, 0, false);
+    await insertLegacyOutbox(activeLeaseId, 2, true, startedAt);
+    await insertLegacyOutbox(retryId, 1, false, retryAt);
+    await insertLegacyOutbox(neverStartedId, 0, false, firstClaimAt);
 
     const migration = await readFile(new URL(migrationName, migrationDirectory), 'utf8');
     await upgrade.unsafe(migration);
@@ -80,14 +82,14 @@ try {
     assert.deepEqual(finalized[0], { status: 'EXHAUSTED', dead_letters: 1 });
 
     const retryClaim = await claimCampaignOutbox(db, {
-      workerId: 'changed-config-retry', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: startedAt,
+      workerId: 'changed-config-retry', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: retryAt,
     });
     assert.equal(retryClaim?.id, retryId);
     assert.equal(retryClaim.maxAttempts, 2, 'a changed worker setting must not alter the legacy cycle limit');
-    assert.equal(await failCampaignOutbox(db, retryClaim, policy, startedAt), 'DEAD_LETTERED');
+    assert.equal(await failCampaignOutbox(db, retryClaim, policy, retryAt), 'DEAD_LETTERED');
 
     const firstClaim = await claimCampaignOutbox(db, {
-      workerId: 'first-claim', leaseMs: 10_000, maxAttempts: 7, now: startedAt,
+      workerId: 'first-claim', leaseMs: 10_000, maxAttempts: 7, now: firstClaimAt,
     });
     assert.equal(firstClaim?.id, neverStartedId);
     assert.equal(firstClaim.maxAttempts, 7, 'a never-started row may snapshot its first worker configuration');

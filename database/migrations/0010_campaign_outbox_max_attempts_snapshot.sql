@@ -1,6 +1,26 @@
 ALTER TABLE campaign_outbox
   ADD COLUMN IF NOT EXISTS max_attempts_snapshot integer;
 
+-- 0010 is the first release to persist the per-cycle retry limit.  Older
+-- rows have no recoverable record of the worker configuration that claimed
+-- them, so never read a future worker configuration for a started cycle.
+--
+-- A legacy active lease has already consumed its current attempt; snapshot
+-- its attempt count so expiration reaches a deterministic terminal decision.
+-- A legacy started row without an active lease gets exactly one bounded final
+-- attempt.  This preserves a retry opportunity without allowing a later
+-- worker configuration change to extend the cycle indefinitely.  Rows that
+-- have never started deliberately remain NULL and take their snapshot on the
+-- first claim.  The NULL predicate makes this backfill safe to re-run.
+UPDATE campaign_outbox
+SET max_attempts_snapshot = CASE
+  WHEN claim_expires_at IS NOT NULL THEN GREATEST(attempts, 1)
+  ELSE GREATEST(attempts + 1, 1)
+END
+WHERE max_attempts_snapshot IS NULL
+  AND status = 'PENDING'
+  AND (attempts > 0 OR claim_expires_at IS NOT NULL);
+
 DO $$
 BEGIN
   IF NOT EXISTS (

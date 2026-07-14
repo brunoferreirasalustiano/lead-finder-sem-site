@@ -275,6 +275,7 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   aggregateId: uuid('aggregate_id').notNull(), eventType: text('event_type').notNull(), payload: jsonb('payload').notNull(),
   idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
   status: text('status').notNull().default('PENDING'), attempts: integer('attempts').notNull().default(0),
+  maxAttemptsSnapshot: integer('max_attempts_snapshot'),
   availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
   claimWorkerId: text('claim_worker_id'), claimToken: uuid('claim_token'),
   claimGeneration: integer('claim_generation').notNull().default(0),
@@ -288,6 +289,7 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   index('campaign_outbox_queue_idx').on(table.status, table.availableAt, table.id).where(sql`${table.status} = 'PENDING'`),
   index('campaign_outbox_claim_queue_idx').on(table.availableAt, table.claimExpiresAt, table.id).where(sql`${table.status} = 'PENDING'`),
   check('campaign_outbox_dead_letter_cycle_check', sql`${table.deadLetterCycle} >= 0`),
+  check('campaign_outbox_max_attempts_snapshot_check', sql`${table.maxAttemptsSnapshot} is null or ${table.maxAttemptsSnapshot} > 0`),
 ]);
 export const campaignDailyChannelCounters = pgTable('campaign_daily_channel_counters', {
   channel: text('channel').notNull(),

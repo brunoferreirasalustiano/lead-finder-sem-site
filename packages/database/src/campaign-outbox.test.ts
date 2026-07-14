@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { campaignRecoveryFingerprint, CampaignRecoveryError, outboxLeaseExpiration, recoverCampaignDeadLetter } from './campaign-outbox.js';
+import {
+  campaignRecoveryFingerprint, CampaignRecoveryError, outboxLeaseExpiration, recoverCampaignDeadLetter,
+  resolveOutboxMaxAttemptsSnapshot,
+} from './campaign-outbox.js';
 import type { Database } from './index.js';
 
 describe('outbox lease validation', () => {
@@ -11,6 +14,21 @@ describe('outbox lease validation', () => {
   it.each([0, 999, 3_600_001, 1.5])('rejects an unsafe lease duration: %s', (leaseMs) => {
     expect(() => outboxLeaseExpiration(new Date(), leaseMs)).toThrow(RangeError);
   });
+});
+
+describe('outbox max attempts snapshot', () => {
+  it('uses the configured value only when the cycle has no snapshot', () => {
+    expect(resolveOutboxMaxAttemptsSnapshot(null, 3)).toBe(3);
+  });
+
+  it('preserves the persisted value across configuration changes', () => {
+    expect(resolveOutboxMaxAttemptsSnapshot(3, 8)).toBe(3);
+  });
+
+  it.each([[null, 0], [null, 1.5], [0, 3], [1.5, 3]] as const)(
+    'rejects an invalid snapshot/configuration pair: %s, %s',
+    (current, configured) => expect(() => resolveOutboxMaxAttemptsSnapshot(current, configured)).toThrow(RangeError),
+  );
 });
 
 describe('dead-letter recovery idempotency', () => {

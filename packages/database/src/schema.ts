@@ -278,6 +278,7 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
   claimWorkerId: text('claim_worker_id'), claimToken: uuid('claim_token'),
   claimGeneration: integer('claim_generation').notNull().default(0),
+  deadLetterCycle: integer('dead_letter_cycle').notNull().default(0),
   claimedAt: timestamp('claimed_at', { withTimezone: true }),
   claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
   publishedAt: timestamp('published_at', { withTimezone: true }),
@@ -286,6 +287,7 @@ export const campaignOutbox = pgTable('campaign_outbox', {
   uniqueIndex('campaign_outbox_aggregate_type_aggregate_id_idempotency_key_key').on(table.aggregateType, table.aggregateId, table.idempotencyKey),
   index('campaign_outbox_queue_idx').on(table.status, table.availableAt, table.id).where(sql`${table.status} = 'PENDING'`),
   index('campaign_outbox_claim_queue_idx').on(table.availableAt, table.claimExpiresAt, table.id).where(sql`${table.status} = 'PENDING'`),
+  check('campaign_outbox_dead_letter_cycle_check', sql`${table.deadLetterCycle} >= 0`),
 ]);
 export const campaignDailyChannelCounters = pgTable('campaign_daily_channel_counters', {
   channel: text('channel').notNull(),
@@ -315,19 +317,72 @@ export const campaignExecutionStarts = pgTable('campaign_execution_starts', {
   channel: text('channel').notNull(),
   quotaDay: date('quota_day').notNull(),
   claimGeneration: integer('claim_generation').notNull(),
+  cycle: integer('cycle').notNull().default(0),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
-  uniqueIndex('campaign_execution_starts_outbox_key').on(table.outboxId),
-  uniqueIndex('campaign_execution_starts_attempt_key').on(table.attemptId),
+  uniqueIndex('campaign_execution_starts_outbox_cycle_key').on(table.outboxId, table.cycle),
+  uniqueIndex('campaign_execution_starts_attempt_cycle_key').on(table.attemptId, table.cycle),
+  uniqueIndex('campaign_execution_starts_identity_key').on(table.id, table.outboxId, table.cycle),
   index('campaign_execution_starts_channel_started_idx').on(table.channel, table.startedAt, table.id),
   check('campaign_execution_starts_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
   check('campaign_execution_starts_claim_generation_check', sql`${table.claimGeneration} >= 0`),
+  check('campaign_execution_starts_cycle_check', sql`${table.cycle} >= 0`),
   check('campaign_execution_starts_quota_day_check', sql`${table.quotaDay} = (${table.startedAt} at time zone 'UTC')::date`),
 ]);
 export const campaignDeadLetters = pgTable('campaign_dead_letters', {
   id: uuid('id').defaultRandom().primaryKey(),
-  outboxId: uuid('outbox_id').notNull().unique().references(() => campaignOutbox.id, { onDelete: 'restrict' }),
+  outboxId: uuid('outbox_id').notNull().references(() => campaignOutbox.id, { onDelete: 'restrict' }),
+  cycle: integer('cycle').notNull().default(0),
   correlationId: text('correlation_id').notNull(), payload: jsonb('payload').notNull(), error: text('error').notNull(),
-  attempts: integer('attempts').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [index('campaign_dead_letters_created_idx').on(table.createdAt, table.id)]);
+  errorCode: text('error_code').notNull().default('UNCLASSIFIED'),
+  attempts: integer('attempts').notNull(), claimGeneration: integer('claim_generation').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('campaign_dead_letters_outbox_cycle_key').on(table.outboxId, table.cycle),
+  uniqueIndex('campaign_dead_letters_identity_key').on(table.id, table.outboxId, table.cycle),
+  index('campaign_dead_letters_created_idx').on(table.createdAt, table.id),
+  check('campaign_dead_letters_cycle_check', sql`${table.cycle} >= 0`),
+  check('campaign_dead_letters_claim_generation_check', sql`${table.claimGeneration} >= 0`),
+]);
+export const campaignSimulatedConfirmations = pgTable('campaign_simulated_confirmations', {
+  executionId: uuid('execution_id').primaryKey(),
+  outboxId: uuid('outbox_id').notNull(),
+  cycle: integer('cycle').notNull(),
+  attemptId: uuid('attempt_id').references(() => campaignAttempts.id, { onDelete: 'restrict' }),
+  channel: text('channel').notNull(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  foreignKey({
+    name: 'campaign_simulated_confirmations_execution_fkey',
+    columns: [table.executionId, table.outboxId, table.cycle],
+    foreignColumns: [campaignExecutionStarts.id, campaignExecutionStarts.outboxId, campaignExecutionStarts.cycle],
+  }).onDelete('restrict'),
+  uniqueIndex('campaign_simulated_confirmations_outbox_cycle_key').on(table.outboxId, table.cycle),
+  index('campaign_simulated_confirmations_confirmed_idx').on(table.confirmedAt, table.executionId),
+  check('campaign_simulated_confirmations_cycle_check', sql`${table.cycle} >= 0`),
+  check('campaign_simulated_confirmations_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
+  check('campaign_simulated_confirmations_timestamps_check', sql`${table.createdAt} >= ${table.confirmedAt}`),
+]);
+export const campaignDeadLetterRecoveries = pgTable('campaign_dead_letter_recoveries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  deadLetterId: uuid('dead_letter_id').notNull().unique(),
+  outboxId: uuid('outbox_id').notNull().references(() => campaignOutbox.id, { onDelete: 'restrict' }),
+  fromCycle: integer('from_cycle').notNull(), toCycle: integer('to_cycle').notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(),
+  idempotencyKey: text('idempotency_key').notNull().unique(), payloadFingerprint: text('payload_fingerprint').notNull(),
+  availableAt: timestamp('available_at', { withTimezone: true }).notNull(),
+  recoveredAt: timestamp('recovered_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  foreignKey({
+    name: 'campaign_dead_letter_recoveries_dead_letter_fkey',
+    columns: [table.deadLetterId, table.outboxId, table.fromCycle],
+    foreignColumns: [campaignDeadLetters.id, campaignDeadLetters.outboxId, campaignDeadLetters.cycle],
+  }).onDelete('restrict'),
+  index('campaign_dead_letter_recoveries_outbox_idx').on(table.outboxId, table.recoveredAt, table.id),
+  check('campaign_dead_letter_recoveries_from_cycle_check', sql`${table.fromCycle} >= 0`),
+  check('campaign_dead_letter_recoveries_cycle_transition_check', sql`${table.toCycle} = ${table.fromCycle} + 1`),
+  check('campaign_dead_letter_recoveries_timestamps_check', sql`${table.createdAt} >= ${table.recoveredAt}`),
+]);

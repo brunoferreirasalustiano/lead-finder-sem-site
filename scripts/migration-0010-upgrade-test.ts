@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import {
   claimCampaignOutbox,
@@ -75,10 +76,10 @@ try {
       workerId: 'changed-config-finalizer', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: expiredAt,
     });
     assert.equal(finalization, null, 'an expired legacy final lease must not be revived by a changed worker setting');
-    const finalized = await db.execute<{ status: string; dead_letters: number }>`
+    const finalized = await db.execute<{ status: string; dead_letters: number }>(sql`
       SELECT o.status, count(d.id)::int AS dead_letters FROM campaign_outbox o
       LEFT JOIN campaign_dead_letters d ON d.outbox_id = o.id
-      WHERE o.id = ${activeLeaseId}::uuid GROUP BY o.status`;
+      WHERE o.id = ${activeLeaseId}::uuid GROUP BY o.status`);
     assert.deepEqual(finalized[0], { status: 'EXHAUSTED', dead_letters: 1 });
 
     const retryClaim = await claimCampaignOutbox(db, {

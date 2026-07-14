@@ -32,8 +32,7 @@ CREATE TABLE IF NOT EXISTS campaign_execution_starts (
   CONSTRAINT campaign_execution_starts_attempt_key UNIQUE (attempt_id),
   CONSTRAINT campaign_execution_starts_channel_check CHECK (channel IN ('EMAIL', 'WHATSAPP')),
   CONSTRAINT campaign_execution_starts_claim_generation_check CHECK (claim_generation >= 0),
-  CONSTRAINT campaign_execution_starts_quota_day_check CHECK (quota_day = (started_at AT TIME ZONE 'UTC')::date),
-  CONSTRAINT campaign_execution_starts_timestamps_check CHECK (created_at >= started_at)
+  CONSTRAINT campaign_execution_starts_quota_day_check CHECK (quota_day = (started_at AT TIME ZONE 'UTC')::date)
 );
 
 CREATE INDEX IF NOT EXISTS campaign_execution_starts_channel_started_idx

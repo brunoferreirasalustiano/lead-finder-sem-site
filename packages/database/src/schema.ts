@@ -324,7 +324,6 @@ export const campaignExecutionStarts = pgTable('campaign_execution_starts', {
   check('campaign_execution_starts_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
   check('campaign_execution_starts_claim_generation_check', sql`${table.claimGeneration} >= 0`),
   check('campaign_execution_starts_quota_day_check', sql`${table.quotaDay} = (${table.startedAt} at time zone 'UTC')::date`),
-  check('campaign_execution_starts_timestamps_check', sql`${table.createdAt} >= ${table.startedAt}`),
 ]);
 export const campaignDeadLetters = pgTable('campaign_dead_letters', {
   id: uuid('id').defaultRandom().primaryKey(),

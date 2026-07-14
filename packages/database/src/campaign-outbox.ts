@@ -38,7 +38,7 @@ export type ExecutionAuthorization =
   | { decision: 'STARTED'; channel: CampaignChannel; attemptId: string; startedAt: Date }
   | { decision: 'ADMINISTRATIVE' }
   | { decision: 'RESCHEDULED'; channel: CampaignChannel; availableAt: Date; reason: 'DAILY_LIMIT' | 'SPACING' }
-  | { decision: 'INELIGIBLE'; channel: CampaignChannel; reason: string }
+  | { decision: 'INELIGIBLE'; channel?: CampaignChannel; reason: string }
   | { decision: 'STALE' };
 
 export function outboxLeaseExpiration(now: Date, leaseMs: number): Date {
@@ -149,7 +149,12 @@ export async function authorizeCampaignExecution(
     `);
     const row = rows[0];
     if (!row) return { decision: 'STALE' };
-    const channel = row.channel as CampaignChannel;
+    if (row.channel !== 'EMAIL' && row.channel !== 'WHATSAPP') {
+      await tx.execute(sql`UPDATE campaign_outbox SET claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL,
+        claim_expires_at = NULL, status = 'BLOCKED' WHERE ${stalePredicate(claim, now)}`);
+      return { decision: 'INELIGIBLE', reason: 'INVALID_CHANNEL' };
+    }
+    const channel: CampaignChannel = row.channel;
     const leadId = row.lead_id;
     const optOutAfterLock = await tx.execute<{ present: boolean }>(sql`
       SELECT EXISTS (SELECT 1 FROM campaign_opt_outs WHERE lead_id = ${leadId}::uuid
@@ -227,6 +232,7 @@ export async function authorizeCampaignExecution(
 
 async function rescheduleClaim(db: Database, claim: OutboxClaim, availableAt: Date, now: Date): Promise<boolean> {
   const rows = await db.execute<{ id: string }>(sql`UPDATE campaign_outbox SET available_at = ${availableAt.toISOString()}::timestamptz,
+    attempts = greatest(attempts - 1, 0),
     claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
     WHERE ${stalePredicate(claim, now)} RETURNING id`);
   return rows.length === 1;

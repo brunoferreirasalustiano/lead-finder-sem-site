@@ -18,7 +18,7 @@ const insertItem = async (availableAt = base, id?: string) => {
   }).returning())[0]!;
 };
 const claim = (workerId: string, now = base, token = crypto.randomUUID()) =>
-  claimCampaignOutbox(db, { workerId, leaseMs: 10_000, now, token });
+  claimCampaignOutbox(db, { workerId, leaseMs: 10_000, maxAttempts: 5, now, token });
 
 try {
   const contested = await insertItem();

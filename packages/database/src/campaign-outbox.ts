@@ -205,6 +205,18 @@ export async function authorizeCampaignExecution(
       return { decision: 'RESCHEDULED', channel, availableAt: nextAllowedAt, reason: 'SPACING' };
     }
     if (alreadyStarted[0]) {
+      const retrySpacingAt = nextCampaignExecutionInstant(
+        now,
+        { startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc },
+        policy.minSpacingMs,
+        now,
+      );
+      await tx.execute(sql`INSERT INTO campaign_channel_runtime
+        (channel, next_available_at, created_at, updated_at)
+        VALUES (${channel}, ${retrySpacingAt.toISOString()}::timestamptz,
+          ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
+        ON CONFLICT (channel) DO UPDATE SET next_available_at = EXCLUDED.next_available_at,
+          updated_at = ${now.toISOString()}::timestamptz`);
       return {
         decision: 'STARTED', channel: alreadyStarted[0].channel, attemptId: alreadyStarted[0].attempt_id,
         executionId: alreadyStarted[0].id, startedAt: new Date(alreadyStarted[0].started_at),
@@ -289,44 +301,76 @@ export async function failCampaignOutbox(db: Database, claim: OutboxClaim, polic
 
 async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, now: Date): Promise<void> {
   await db.transaction(async (tx) => {
-    const rows = await tx.execute<{ id: string; payload: unknown; attempts: number; claim_generation: number; dead_letter_cycle: number }>(sql`
-      SELECT id, payload, attempts, claim_generation, dead_letter_cycle FROM campaign_outbox
-      WHERE status = 'PENDING' AND attempts >= ${maxAttempts} AND claim_expires_at <= ${now.toISOString()}::timestamptz
-      ORDER BY claim_expires_at, id FOR UPDATE SKIP LOCKED LIMIT 1`);
+    const rows = await tx.execute<{
+      id: string; payload: unknown; attempts: number; claim_generation: number;
+      dead_letter_cycle: number; confirmed: boolean;
+    }>(sql`
+      SELECT o.id, o.payload, o.attempts, o.claim_generation, o.dead_letter_cycle,
+        EXISTS (SELECT 1 FROM campaign_simulated_confirmations c
+          WHERE c.outbox_id = o.id AND c.cycle = o.dead_letter_cycle) AS confirmed
+      FROM campaign_outbox o
+      WHERE o.status = 'PENDING' AND o.attempts >= ${maxAttempts}
+        AND o.claim_expires_at <= ${now.toISOString()}::timestamptz
+      ORDER BY o.claim_expires_at, o.id FOR UPDATE OF o SKIP LOCKED LIMIT 1`);
     const row = rows[0];
     if (!row) return;
+    if (row.confirmed) {
+      await tx.execute(sql`UPDATE campaign_outbox SET status = 'PUBLISHED',
+        published_at = ${now.toISOString()}::timestamptz, claim_worker_id = NULL,
+        claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+        WHERE id = ${row.id}::uuid AND status = 'PENDING' AND attempts >= ${maxAttempts}
+          AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
+      return;
+    }
     await tx.execute(sql`INSERT INTO campaign_dead_letters
       (outbox_id, cycle, correlation_id, payload, error, error_code, attempts, claim_generation, created_at)
       VALUES (${row.id}::uuid, ${row.dead_letter_cycle}, ${`outbox:${row.id}:cycle:${row.dead_letter_cycle}`},
-        ${JSON.stringify(row.payload)}::jsonb, 'FINAL_LEASE_EXPIRED', 'FINAL_LEASE_EXPIRED', ${row.attempts}, ${row.claim_generation}, ${now.toISOString()}::timestamptz)
+        ${JSON.stringify(row.payload)}::jsonb, 'FINAL_LEASE_EXPIRED', 'FINAL_LEASE_EXPIRED',
+        ${row.attempts}, ${row.claim_generation}, ${now.toISOString()}::timestamptz)
       ON CONFLICT (outbox_id, cycle) DO NOTHING`);
     await tx.execute(sql`UPDATE campaign_outbox SET status = 'EXHAUSTED', claim_worker_id = NULL,
       claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL WHERE id = ${row.id}::uuid
-      AND status = 'PENDING' AND attempts >= ${maxAttempts} AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
+      AND status = 'PENDING' AND attempts >= ${maxAttempts}
+        AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
   });
 }
 
-export async function confirmSimulatedCampaignExecution(db: Database, input: {
-  executionId: string; outboxId: string; cycle: number; attemptId?: string; channel: string; confirmedAt?: Date;
-}): Promise<{ executionId: string; replayed: boolean }> {
-  const confirmedAt = input.confirmedAt ?? new Date();
-  const inserted = await db.execute<{ execution_id: string }>(sql`
-    INSERT INTO campaign_simulated_confirmations
-      (execution_id, outbox_id, cycle, attempt_id, channel, confirmed_at, created_at)
-    VALUES (${input.executionId}::uuid, ${input.outboxId}::uuid, ${input.cycle},
-      ${input.attemptId ?? null}::uuid, ${input.channel}, ${confirmedAt.toISOString()}::timestamptz, ${confirmedAt.toISOString()}::timestamptz)
-    ON CONFLICT (outbox_id, cycle) DO NOTHING RETURNING execution_id`);
-  if (inserted[0]) return { executionId: inserted[0].execution_id, replayed: false };
-  const existing = await db.execute<{ execution_id: string; attempt_id: string | null; channel: string }>(sql`
-    SELECT execution_id, attempt_id, channel FROM campaign_simulated_confirmations
-    WHERE outbox_id = ${input.outboxId}::uuid AND cycle = ${input.cycle}`);
-  if (existing[0]?.execution_id !== input.executionId
-    || existing[0].attempt_id !== (input.attemptId ?? null) || existing[0].channel !== input.channel) {
-    throw new Error('SIMULATED_CONFIRMATION_IDENTITY_CONFLICT');
-  }
-  return { executionId: existing[0].execution_id, replayed: true };
+export class SimulatedConfirmationError extends Error {
+  constructor(readonly code: 'STALE' | 'IDENTITY_CONFLICT') { super(`SIMULATED_CONFIRMATION_${code}`); }
 }
 
+export async function confirmSimulatedCampaignExecution(db: Database, input: {
+  executionId: string; outboxId: string; cycle: number; attemptId?: string; channel: string;
+  workerId: string; token: string; generation: number; confirmedAt?: Date;
+}): Promise<{ executionId: string; replayed: boolean }> {
+  const confirmedAt = input.confirmedAt ?? new Date();
+  return db.transaction(async (tx) => {
+    const active = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM campaign_outbox
+      WHERE id = ${input.outboxId}::uuid AND status = 'PENDING'
+        AND claim_worker_id = ${input.workerId} AND claim_token = ${input.token}::uuid
+        AND claim_generation = ${input.generation} AND dead_letter_cycle = ${input.cycle}
+        AND claim_expires_at > ${confirmedAt.toISOString()}::timestamptz
+      FOR UPDATE`);
+    if (!active[0]) throw new SimulatedConfirmationError('STALE');
+    const inserted = await tx.execute<{ execution_id: string }>(sql`
+      INSERT INTO campaign_simulated_confirmations
+        (execution_id, outbox_id, cycle, attempt_id, channel, confirmed_at, created_at)
+      VALUES (${input.executionId}::uuid, ${input.outboxId}::uuid, ${input.cycle},
+        ${input.attemptId ?? null}::uuid, ${input.channel},
+        ${confirmedAt.toISOString()}::timestamptz, ${confirmedAt.toISOString()}::timestamptz)
+      ON CONFLICT (outbox_id, cycle) DO NOTHING RETURNING execution_id`);
+    if (inserted[0]) return { executionId: inserted[0].execution_id, replayed: false };
+    const existing = await tx.execute<{ execution_id: string; attempt_id: string | null; channel: string }>(sql`
+      SELECT execution_id, attempt_id, channel FROM campaign_simulated_confirmations
+      WHERE outbox_id = ${input.outboxId}::uuid AND cycle = ${input.cycle}`);
+    if (existing[0]?.execution_id !== input.executionId
+      || existing[0].attempt_id !== (input.attemptId ?? null) || existing[0].channel !== input.channel) {
+      throw new SimulatedConfirmationError('IDENTITY_CONFLICT');
+    }
+    return { executionId: existing[0].execution_id, replayed: true };
+  });
+}
 export type CampaignDeadLetterRecoveryResult = { recoveryId: string; outboxId: string; fromCycle: number; toCycle: number; replayed: boolean };
 export class CampaignRecoveryError extends Error {
   constructor(readonly code: 'IDEMPOTENCY_CONFLICT' | 'RECOVERY_REJECTED') { super(code); }

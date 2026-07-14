@@ -52,7 +52,7 @@ const insertExecutableAttempt = async (channel: 'EMAIL' | 'WHATSAPP', now: Date)
     ), inserted_recipient AS (
       INSERT INTO campaign_recipients
         (campaign_id, campaign_version_id, lead_id, channel, state, recipient_snapshot, idempotency_key, payload_fingerprint, available_at)
-      SELECT v.campaign_id, v.id, l.id, ${channel}, 'ELEGIVEL', '{}'::jsonb, ${`recipient-${suffix}`}, ${'b'.repeat(64)}, ${now.toISOString()}::timestamptz
+      SELECT v.campaign_id, v.id, l.id, ${channel}, 'PENDENTE', '{}'::jsonb, ${`recipient-${suffix}`}, ${'b'.repeat(64)}, ${now.toISOString()}::timestamptz
       FROM inserted_version v CROSS JOIN inserted_lead l RETURNING id
     ), inserted_attempt AS (
       INSERT INTO campaign_attempts
@@ -271,6 +271,50 @@ try {
   assert.equal((await authorizeCampaignExecution(db, afterUtcClaim, utcPolicy, afterUtcBoundary)).decision, 'STARTED',
     'a new UTC day must receive an independent quota');
   assert.equal(await completeCampaignOutbox(db, afterUtcClaim, afterUtcBoundary), true);
+
+  const windowRetryAt = new Date('2000-01-11T17:59:59.000Z');
+  const windowRetryPolicy = {
+    ...racePolicy, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 4_000,
+    windowStartUtc: '08:00', windowEndUtc: '18:00',
+  };
+  const windowRetryId = await insertExecutableAttempt('EMAIL', windowRetryAt);
+  const windowRetryClaim = await claimCampaignOutbox(db, {
+    workerId: 'window-retry-1', leaseMs: 10_000, maxAttempts: 3, now: windowRetryAt,
+  });
+  assert.equal(windowRetryClaim?.id, windowRetryId);
+  assert.equal((await authorizeCampaignExecution(
+    db, windowRetryClaim, windowRetryPolicy, windowRetryAt,
+  )).decision, 'STARTED');
+  assert.equal(await failCampaignOutbox(db, windowRetryClaim, windowRetryPolicy, windowRetryAt), 'RETRY');
+  const rawWindowRetryAt = new Date('2000-01-11T18:00:01.000Z');
+  const outsideWindowRetryClaim = await claimCampaignOutbox(db, {
+    workerId: 'window-retry-2', leaseMs: 10_000, maxAttempts: 3, now: rawWindowRetryAt,
+  });
+  assert.equal(outsideWindowRetryClaim?.id, windowRetryId);
+  const outsideWindowRetryDecision = await authorizeCampaignExecution(
+    db, outsideWindowRetryClaim, windowRetryPolicy, rawWindowRetryAt,
+  );
+  assert.equal(outsideWindowRetryDecision.decision, 'RESCHEDULED');
+  if (outsideWindowRetryDecision.decision === 'RESCHEDULED') {
+    assert.equal(outsideWindowRetryDecision.availableAt.toISOString(), '2000-01-12T08:00:00.000Z');
+    const afterWindowReschedule = (
+      await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, windowRetryId))
+    )[0];
+    assert.equal(afterWindowReschedule?.attempts, 1, 'window rescheduling must not consume an attempt');
+    const resumedWindowRetryClaim = await claimCampaignOutbox(db, {
+      workerId: 'window-retry-3', leaseMs: 10_000, maxAttempts: 3,
+      now: outsideWindowRetryDecision.availableAt,
+    });
+    assert.equal(resumedWindowRetryClaim?.id, windowRetryId);
+    assert.equal(resumedWindowRetryClaim?.attempt, 2);
+    assert.equal((await authorizeCampaignExecution(
+      db, resumedWindowRetryClaim, windowRetryPolicy, outsideWindowRetryDecision.availableAt,
+    )).decision, 'STARTED');
+    assert.equal(await completeCampaignOutbox(
+      db, resumedWindowRetryClaim, outsideWindowRetryDecision.availableAt,
+    ), true);
+  }
+  assert.equal(await executionStartCount(windowRetryId), 1, 'a retry must not reserve quota twice');
 
   const retryAt = new Date('2000-01-12T12:00:00.000Z');
   const retryItem = await insertItem(retryAt);

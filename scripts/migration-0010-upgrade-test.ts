@@ -21,6 +21,9 @@ const startedAt = new Date('2000-02-01T12:00:00.000Z');
 const expiredAt = new Date(startedAt.getTime() + 10_001);
 const retryAt = new Date(expiredAt.getTime() + 10_000);
 const firstClaimAt = new Date(retryAt.getTime() + 10_000);
+const activeLeaseId = randomUUID();
+const retryId = randomUUID();
+const neverStartedId = randomUUID();
 
 const policy: CampaignExecutionPolicy = {
   dailyLimitEmail: 10, dailyLimitWhatsapp: 10, minIntervalMsEmail: 0, minIntervalMsWhatsapp: 0,
@@ -35,9 +38,6 @@ try {
     for (const file of (await readdir(migrationDirectory)).filter((name) => name < migrationName).sort())
       await upgrade.unsafe(await readFile(new URL(file, migrationDirectory), 'utf8'));
 
-    const activeLeaseId = randomUUID();
-    const retryId = randomUUID();
-    const neverStartedId = randomUUID();
     const insertLegacyOutbox = async (id: string, attempts: number, activeLease: boolean, availableAt: Date) => {
       await upgrade`
         INSERT INTO campaign_outbox (

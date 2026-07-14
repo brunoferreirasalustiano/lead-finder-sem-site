@@ -49,7 +49,9 @@ export async function processNextOutbox(
     const execution = authorization.decision === 'STARTED'
       ? await adapter.execute({
         id: claim.id, deadLetterCycle: claim.deadLetterCycle, executionId: authorization.executionId,
-        attemptId: authorization.attemptId, channel,
+        attemptId: authorization.attemptId, channel, workerId: claim.workerId,
+        token: claim.token, generation: claim.generation,
+        ...(input.now ? { confirmedAt: input.now } : {}),
       })
       : { replayed: false, reconciled: false };
     if (execution.reconciled) logger.info('campaign_outbox_confirmation_reconciled', {
@@ -65,6 +67,14 @@ export async function processNextOutbox(
   } catch (error) {
     const failedAt = input.now ?? new Date();
     const errorCode = error instanceof SimulatedExecutionError ? error.code : 'SIMULATED_EXECUTION_FAILED';
+    if (errorCode === 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION') {
+      const completed = await completeCampaignOutbox(db, claim, failedAt);
+      logger.info(completed ? 'campaign_outbox_confirmation_reconciled' : 'campaign_outbox_stale_operation', {
+        outboxId: claim.id, channel, generation: claim.generation, attempt: claim.attempt,
+        decision: completed ? 'CONFIRMATION_RECONCILED' : 'STALE', reconciledAt: failedAt.toISOString(),
+      });
+      return true;
+    }
     const decision = await failCampaignOutbox(db, claim, input.policy, failedAt, errorCode);
     const event = errorCode === 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION'
       ? 'campaign_outbox_timeout_before_confirmation'

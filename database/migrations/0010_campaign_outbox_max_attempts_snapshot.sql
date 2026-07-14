@@ -5,8 +5,9 @@ ALTER TABLE campaign_outbox
 -- rows have no recoverable record of the worker configuration that claimed
 -- them, so never read a future worker configuration for a started cycle.
 --
--- A legacy active lease has already consumed its current attempt; snapshot
--- its attempt count so expiration reaches a deterministic terminal decision.
+-- A legacy active lease may still be completed by an old worker after this
+-- migration.  Reserve exactly one bounded final attempt so a legacy failure
+-- that clears the lease remains claimable by the new worker.
 -- A legacy started row without an active lease gets exactly one bounded final
 -- attempt.  This preserves a retry opportunity without allowing a later
 -- worker configuration change to extend the cycle indefinitely.  Rows that
@@ -14,7 +15,7 @@ ALTER TABLE campaign_outbox
 -- first claim.  The NULL predicate makes this backfill safe to re-run.
 UPDATE campaign_outbox
 SET max_attempts_snapshot = CASE
-  WHEN claim_expires_at IS NOT NULL THEN GREATEST(attempts, 1)
+  WHEN claim_expires_at IS NOT NULL THEN GREATEST(attempts + 1, 1)
   ELSE GREATEST(attempts + 1, 1)
 END
 WHERE max_attempts_snapshot IS NULL

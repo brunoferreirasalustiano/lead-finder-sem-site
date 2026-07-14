@@ -63,24 +63,49 @@ try {
     const snapshots = await upgrade<{ id: string; max_attempts_snapshot: number | null }[]>`
       SELECT id, max_attempts_snapshot FROM campaign_outbox WHERE id IN (${activeLeaseId}::uuid, ${retryId}::uuid, ${neverStartedId}::uuid)`;
     const snapshotFor = (id: string) => snapshots.find((row) => row.id === id)?.max_attempts_snapshot;
-    assert.equal(snapshotFor(activeLeaseId), 2, 'an active legacy lease must finalize at its consumed attempt');
+    assert.equal(snapshotFor(activeLeaseId), 3, 'an active legacy lease must retain one bounded final attempt');
     assert.equal(snapshotFor(retryId), 2, 'a started legacy row must receive exactly one bounded final attempt');
     assert.equal(snapshotFor(neverStartedId), null, 'a never-started row must snapshot on its first claim');
   } finally {
     await upgrade.end();
   }
 
+  const legacyFailure = postgres(upgradeDatabaseUrl.toString(), { max: 1 });
+  try {
+    await legacyFailure`
+      UPDATE campaign_outbox SET available_at = ${retryAt.toISOString()}::timestamptz,
+        claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE id = ${activeLeaseId}::uuid AND status = 'PENDING'`;
+    const orphaned = await legacyFailure<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM campaign_outbox
+      WHERE status = 'PENDING' AND claim_expires_at IS NULL
+        AND attempts >= max_attempts_snapshot`;
+    assert.equal(orphaned[0]?.count, 0, 'a legacy failure must not create an unclaimable pending row');
+  } finally {
+    await legacyFailure.end();
+  }
+
+  // Opening a fresh pool models the new worker starting after the old worker
+  // and migration connections have stopped.
   const { db, close } = createDatabase(upgradeDatabaseUrl.toString());
   try {
-    const finalization = await claimCampaignOutbox(db, {
-      workerId: 'changed-config-finalizer', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: expiredAt,
+    const mixedVersionClaim = await claimCampaignOutbox(db, {
+      workerId: 'new-worker-after-legacy-failure', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: retryAt,
     });
-    assert.equal(finalization, null, 'an expired legacy final lease must not be revived by a changed worker setting');
+    assert.equal(mixedVersionClaim?.id, activeLeaseId, 'the new worker must reclaim the legacy failure');
+    assert.equal(mixedVersionClaim.maxAttempts, 3, 'the mixed-version cycle must retain its bounded snapshot');
+    assert.equal(await failCampaignOutbox(db, mixedVersionClaim, policy, retryAt), 'DEAD_LETTERED');
     const finalized = await db.execute<{ status: string; dead_letters: number }>(sql`
       SELECT o.status, count(d.id)::int AS dead_letters FROM campaign_outbox o
       LEFT JOIN campaign_dead_letters d ON d.outbox_id = o.id
       WHERE o.id = ${activeLeaseId}::uuid GROUP BY o.status`);
     assert.deepEqual(finalized[0], { status: 'EXHAUSTED', dead_letters: 1 });
+
+    const orphanedAfterRestart = await db.execute<{ count: number }>(sql`
+      SELECT count(*)::int AS count FROM campaign_outbox
+      WHERE status = 'PENDING' AND claim_expires_at IS NULL
+        AND attempts >= max_attempts_snapshot`);
+    assert.equal(orphanedAfterRestart[0]?.count, 0, 'restart must not leave an unclaimable pending row');
 
     const retryClaim = await claimCampaignOutbox(db, {
       workerId: 'changed-config-retry', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: retryAt,
@@ -97,7 +122,7 @@ try {
   } finally {
     await close();
   }
-  console.log('Migration 0010 upgrade evidence: legacy leases finalized and legacy retries remained configuration-independent');
+  console.log('Migration 0010 upgrade evidence: mixed-version failures remained bounded and claimable after restart');
 } finally {
   await admin.unsafe(`DROP DATABASE IF EXISTS "${upgradeDatabaseName}"`);
   await admin.end();

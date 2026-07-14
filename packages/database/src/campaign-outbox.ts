@@ -115,15 +115,30 @@ export async function authorizeCampaignExecution(
     return valid.length === 1 ? { decision: 'ADMINISTRATIVE' } : { decision: 'STALE' };
   }
   return db.transaction(async (tx) => {
+    const identity = await tx.execute<{ lead_id: string; channel: CampaignChannel }>(sql`
+      SELECT r.lead_id, r.channel
+      FROM campaign_outbox o
+      JOIN campaign_attempts a ON o.aggregate_type = 'attempt' AND a.id = o.aggregate_id
+      JOIN campaign_recipients r ON r.id = a.recipient_id
+      WHERE ${joinedStalePredicate(claim, now)} AND o.event_type = 'ATTEMPT_CREATED'
+    `);
+    if (!identity[0]) return { decision: 'STALE' };
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity[0].lead_id}:opt-out:${identity[0].channel}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity[0].lead_id}:opt-out:TODOS`}))`);
     const rows = await tx.execute<{
-      outbox_id: string; attempt_id: string; channel: string; campaign_state: string; recipient_state: string;
+      outbox_id: string; attempt_id: string; lead_id: string; channel: string; campaign_state: string; recipient_state: string;
       attempt_state: string; is_blocked: boolean; do_not_contact: boolean; crm_stage: string | null;
-      has_opt_out: boolean; has_response: boolean;
+      has_valid_contact: boolean; has_opt_out: boolean; has_response: boolean;
     }>(sql`
-      SELECT o.id AS outbox_id, a.id AS attempt_id, r.channel, c.state AS campaign_state,
+      SELECT o.id AS outbox_id, a.id AS attempt_id, l.id AS lead_id, r.channel, c.state AS campaign_state,
              r.state AS recipient_state, a.state AS attempt_state, l.is_blocked, l.do_not_contact, l.crm_stage,
+             EXISTS (SELECT 1 FROM lead_contacts lc WHERE lc.lead_id = l.id AND lc.is_valid = true
+               AND lc.verified_at IS NOT NULL AND (
+                 (r.channel = 'EMAIL' AND lc.type = 'EMAIL') OR
+                 (r.channel = 'WHATSAPP' AND (lc.type = 'WHATSAPP' OR (lc.type = 'TELEFONE' AND lc.possible_whatsapp = true)))
+               )) AS has_valid_contact,
              EXISTS (SELECT 1 FROM campaign_opt_outs oo WHERE oo.lead_id = l.id AND (oo.channel IS NULL OR oo.channel = r.channel)) AS has_opt_out,
-             (l.crm_stage IN ('RESPONDEU', 'REUNIAO', 'PROPOSTA', 'GANHO')) AS has_response
+             (l.crm_stage IN ('RESPONDEU', 'REUNIAO', 'PROPOSTA', 'GANHO', 'PERDIDO')) AS has_response
       FROM campaign_outbox o
       JOIN campaign_attempts a ON o.aggregate_type = 'attempt' AND a.id = o.aggregate_id
       JOIN campaign_recipients r ON r.id = a.recipient_id
@@ -135,13 +150,19 @@ export async function authorizeCampaignExecution(
     const row = rows[0];
     if (!row) return { decision: 'STALE' };
     const channel = row.channel as CampaignChannel;
+    const leadId = row.lead_id;
+    const optOutAfterLock = await tx.execute<{ present: boolean }>(sql`
+      SELECT EXISTS (SELECT 1 FROM campaign_opt_outs WHERE lead_id = ${leadId}::uuid
+        AND (channel IS NULL OR channel = ${channel})) AS present
+    `);
     const reason = row.campaign_state !== 'ATIVA' ? 'CAMPAIGN_NOT_ACTIVE'
       : !['ELEGIVEL', 'EM_ANDAMENTO'].includes(row.recipient_state) ? 'RECIPIENT_NOT_EXECUTABLE'
       : !['PENDENTE', 'APROVADA'].includes(row.attempt_state) ? 'ATTEMPT_NOT_EXECUTABLE'
       : row.is_blocked ? 'LEAD_BLOCKED'
       : row.do_not_contact ? 'DO_NOT_CONTACT'
       : row.crm_stage === 'NAO_CONTATAR' ? 'CRM_DO_NOT_CONTACT'
-      : row.has_opt_out ? 'OPT_OUT'
+      : !row.has_valid_contact ? 'CONTACT_NOT_VALIDATED'
+      : row.has_opt_out || optOutAfterLock[0]?.present ? 'OPT_OUT'
       : row.has_response ? 'ALREADY_RESPONDED'
       : null;
     if (reason) {
@@ -181,8 +202,11 @@ export async function authorizeCampaignExecution(
     `);
     if ((quota[0]?.count ?? 0) >= limit) {
       const nextDay = new Date(`${quotaDay}T00:00:00.000Z`); nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      await rescheduleClaim(tx as unknown as Database, claim, nextDay, now);
-      return { decision: 'RESCHEDULED', channel, availableAt: nextDay, reason: 'DAILY_LIMIT' };
+      const nextWindow = nextCampaignExecutionInstant(nextDay, {
+        startUtc: policy.windowStartUtc, endUtc: policy.windowEndUtc,
+      }, 0, null);
+      await rescheduleClaim(tx as unknown as Database, claim, nextWindow, now);
+      return { decision: 'RESCHEDULED', channel, availableAt: nextWindow, reason: 'DAILY_LIMIT' };
     }
     await tx.execute(sql`UPDATE campaign_daily_channel_counters SET count = count + 1, updated_at = ${now.toISOString()}::timestamptz
       WHERE channel = ${channel} AND quota_day = ${quotaDay}::date`);

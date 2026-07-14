@@ -318,7 +318,8 @@ export const campaignExecutionStarts = pgTable('campaign_execution_starts', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
-  uniqueIndex('campaign_execution_starts_outbox_attempt_key').on(table.outboxId, table.attemptId),
+  uniqueIndex('campaign_execution_starts_outbox_key').on(table.outboxId),
+  uniqueIndex('campaign_execution_starts_attempt_key').on(table.attemptId),
   index('campaign_execution_starts_channel_started_idx').on(table.channel, table.startedAt, table.id),
   check('campaign_execution_starts_channel_check', sql`${table.channel} in ('EMAIL', 'WHATSAPP')`),
   check('campaign_execution_starts_claim_generation_check', sql`${table.claimGeneration} >= 0`),

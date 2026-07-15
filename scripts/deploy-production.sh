@@ -79,6 +79,9 @@ trap rollback ERR
 git checkout --detach "$target_sha"
 compose build api worker
 compose up -d postgres
+log 'Parando worker antes das migrations para evitar execucao em versoes mistas.'
+compose stop worker
+log 'Aplicando migrations sem worker ativo.'
 compose run --rm migrate
 if [[ "${DEPLOY_TEST_FORCE_FAILURE:-false}" == true ]]; then
   log 'Falha controlada para validar rollback.'

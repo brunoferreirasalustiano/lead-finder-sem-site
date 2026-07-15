@@ -14,6 +14,7 @@ const countKeys = [
   'totalCollected', 'totalQualified', 'totalRejected', 'totalDuplicates', 'totalBlocked', 'totalOptOut',
   'totalWithoutWebsite', 'totalInadequatePresence', 'totalValidContacts', 'totalProbableWhatsapp',
   'totalConfirmedWhatsapp', 'totalHighScore', 'totalMediumScore', 'totalLowScore',
+  'falsePositiveSampleCount', 'humanReviewSampleCount',
 ] as const satisfies readonly (keyof ShadowCounts)[];
 const countKeySet = new Set<string>(countKeys);
 const zero = (): ShadowCounts => ({ totalCollected: 0, totalQualified: 0, totalRejected: 0, totalDuplicates: 0, totalBlocked: 0, totalOptOut: 0, totalWithoutWebsite: 0, totalInadequatePresence: 0, totalValidContacts: 0, totalProbableWhatsapp: 0, totalConfirmedWhatsapp: 0, totalHighScore: 0, totalMediumScore: 0, totalLowScore: 0, falsePositiveSampleCount: null, humanReviewSampleCount: null });
@@ -50,13 +51,13 @@ export class ShadowRunStore {
       if (!countKeySet.has(key) || !Number.isSafeInteger(value) || (value as number) < 0)
         throw new Error('INVALID_SHADOW_COUNTS');
       const countKey = key as (typeof countKeys)[number];
-      const next = run[countKey] + (value as number);
+      const next = (run[countKey] ?? 0) + (value as number);
       if (!Number.isSafeInteger(next)) throw new Error('INVALID_SHADOW_COUNTS');
     }
     run.evidenceIds.push(safeEvidenceId);
     for (const [key, value] of Object.entries(counts)) {
       const countKey = key as (typeof countKeys)[number];
-      run[countKey] += value as number;
+      run[countKey] = (run[countKey] ?? 0) + (value as number);
     }
     return run;
   }

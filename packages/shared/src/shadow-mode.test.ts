@@ -53,4 +53,29 @@ describe('shadow mode runtime', () => {
     store.addEvidence(run.runId, 'evidence-valid', { totalCollected: Number.MAX_SAFE_INTEGER });
     expect(() => store.addEvidence(run.runId, 'evidence-overflow', { totalCollected: 1 })).toThrow('INVALID_SHADOW_COUNTS');
   });
+  it('preserves aggregate sample counts in evidence and reports, including zero', () => {
+    const store = new ShadowRunStore();
+    const run = store.start({ runId: 'run-samples', segment: 'segment', region: 'SP', source: 'osm', now });
+    store.addEvidence(run.runId, 'sample-zero', { falsePositiveSampleCount: 0, humanReviewSampleCount: 0 });
+    const aggregateCounts = { totalCollected: 20, totalQualified: 12, totalRejected: 8, totalDuplicates: 1, totalBlocked: 2, totalOptOut: 3, totalWithoutWebsite: 4, totalInadequatePresence: 5, totalValidContacts: 6, totalProbableWhatsapp: 7, totalConfirmedWhatsapp: 8, totalHighScore: 9, totalMediumScore: 10, totalLowScore: 11, falsePositiveSampleCount: 2, humanReviewSampleCount: 10 };
+    store.addEvidence(run.runId, 'sample-positive', aggregateCounts);
+    expect(run).toEqual(expect.objectContaining(aggregateCounts));
+    const decision = evaluateShadowGoNoGo(run, { guardBlocked: 1, criticalIncident: false, readiness: true, backup: true, rollback: true, reportGenerated: true, qualificationPrecision: .9, falsePositiveRate: .1 });
+    expect(createShadowReport(run, decision, { backlog: 0, deadLetters: 0, retries: 0, guardBlocked: 1, now }).volume)
+      .toEqual(expect.objectContaining(aggregateCounts));
+  });
+  it.each([
+    { falsePositiveSampleCount: -1 }, { humanReviewSampleCount: -1 },
+    { falsePositiveSampleCount: 1.5 }, { humanReviewSampleCount: 1.5 },
+    { falsePositiveSampleCount: Number.NaN }, { humanReviewSampleCount: Number.NaN },
+    { falsePositiveSampleCount: Number.POSITIVE_INFINITY }, { humanReviewSampleCount: Number.POSITIVE_INFINITY },
+    { falsePositiveSampleCount: undefined }, { humanReviewSampleCount: undefined },
+    { falsePositiveSampleCount: '1' }, { humanReviewSampleCount: [] },
+    { falsePositiveSampleCount: {} }, { personalEmail: 'person@example.test' },
+  ])('rejects invalid or personal sample-count evidence: $falsePositiveSampleCount$humanReviewSampleCount$personalEmail', (counts) => {
+    const store = new ShadowRunStore();
+    const run = store.start({ runId: 'run-invalid-samples', segment: 'segment', region: 'SP', source: 'osm', now });
+    expect(() => store.addEvidence(run.runId, 'invalid-sample', counts as never)).toThrow('INVALID_SHADOW_COUNTS');
+    expect(run.evidenceIds).toEqual([]);
+  });
 });

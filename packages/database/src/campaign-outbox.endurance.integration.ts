@@ -51,6 +51,10 @@ const counts = async (aggregateType: string) => {
   return new Map(rows.map((row) => [row.status, row.value]));
 };
 
+const pendingItems = async () => (await db.execute<{ value: number }>(sql`
+  SELECT count(*)::int AS value FROM campaign_outbox WHERE status = 'PENDING'
+`))[0]?.value ?? 0;
+
 const assertTerminalQueue = async (aggregateType: string, expected: number, status = 'PUBLISHED') => {
   const result = await counts(aggregateType);
   assert.equal(result.get(status), expected, `${aggregateType}: every item must reach ${status}`);
@@ -65,14 +69,17 @@ try {
   await withinBudget('10000 sequential items', async () => {
     const aggregateType = marker('sequential');
     const now = at(0);
+    const pendingBefore = await pendingItems();
     await insertItems(aggregateType, 10_000, now);
-    for (let index = 0; index < 10_000; index += 1) {
+    let ownItemsCompleted = 0;
+    for (let index = 0; ownItemsCompleted < 10_000; index += 1) {
+      assert.ok(index < pendingBefore + 10_000, 'only pre-existing work may precede the endurance fixture');
       const current = await claim(`sequential-${index % 16}`, now);
       assert.ok(current, `sequential claim ${index} must find work`);
       assert.equal(current.maxAttempts, 3);
       assert.equal(await completeCampaignOutbox(db, current, now), true);
+      if (current.idempotencyKey.startsWith(aggregateType)) ownItemsCompleted += 1;
     }
-    assert.equal(await claim('sequential-drained', now), null);
     await assertTerminalQueue(aggregateType, 10_000);
   });
 

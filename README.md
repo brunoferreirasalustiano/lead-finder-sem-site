@@ -320,6 +320,10 @@ Responsável:
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
+## Shadow mode
+
+O [runtime de shadow mode](docs/shadow-mode-runtime.md) bloqueia a execução de campanha antes do adapter quando habilitado; use o [checklist](docs/pilot-shadow-mode-checklist.md), [matriz](docs/commercial-readiness-matrix.md) e [observabilidade](docs/operational-observability.md). Não habilita contato externo.
+
 ## Requisitos locais
 
 - Node.js 22 ou superior;

@@ -4,6 +4,7 @@ export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
 export * from './campaign-execution.js';
+export * from './shadow-mode.js';
 
 export const leadStatuses = [
   'SEM_SITE_CADASTRADO',

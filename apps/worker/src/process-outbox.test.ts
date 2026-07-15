@@ -4,6 +4,7 @@ import {
 } from '@lead-finder/database';
 import { processNextOutbox } from './process-outbox.js';
 import { SimulatedExecutionError, SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
+import { ShadowModeGuard } from '@lead-finder/shared';
 
 vi.mock('@lead-finder/database', () => ({
   claimCampaignOutbox: vi.fn().mockResolvedValue(null),
@@ -28,6 +29,15 @@ const claimed = {
 };
 
 describe('processNextOutbox', () => {
+  it('blocks before claim, authorization, or adapter execution in shadow mode', async () => {
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const guard = new ShadowModeGuard(true, logger);
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    const execute = vi.spyOn(adapter, 'execute');
+    await expect(processNextOutbox({} as Database, adapter, { ...input, shadowGuard: guard, shadowRunId: 'run-safe' }, logger)).resolves.toBe(false);
+    expect(claimCampaignOutbox).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(guard.blockedCount).toBe(1);
+    expect(JSON.stringify(logger.info.mock.calls)).toContain('SHADOW_MODE_BLOCKED'); expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
+  });
   it('does not invoke the adapter when no item is available', async () => {
     const adapter = new SimulatedOutboxAdapter({} as Database);
     const execute = vi.spyOn(adapter, 'execute');

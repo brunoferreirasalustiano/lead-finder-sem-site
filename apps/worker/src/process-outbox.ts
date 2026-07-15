@@ -7,6 +7,7 @@ import {
   type Database,
 } from '@lead-finder/database';
 import { SimulatedExecutionError, type SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
+import type { ShadowModeGuard } from '@lead-finder/shared';
 
 export interface OperationalLogger {
   info(event: string, metadata: Record<string, string | number | boolean>): void;
@@ -16,9 +17,10 @@ export interface OperationalLogger {
 export async function processNextOutbox(
   db: Database,
   adapter: SimulatedOutboxAdapter,
-  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date },
+  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard?: ShadowModeGuard; shadowRunId?: string },
   logger: OperationalLogger,
 ): Promise<boolean> {
+  if (input.shadowGuard?.block(input.shadowRunId)) return false;
   const now = input.now ?? new Date();
   const claim = await claimCampaignOutbox(db, {
     workerId: input.workerId,

@@ -1,6 +1,6 @@
 import { createDatabase } from '@lead-finder/database';
 import { OverpassClient } from '@lead-finder/overpass-client';
-import { parseWorkerConfig } from '@lead-finder/shared';
+import { parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
 import { processNextJob } from './process-job.js';
 import { processNextOutbox } from './process-outbox.js';
 import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
@@ -29,6 +29,7 @@ const operationalLogger = {
   info: (event: string, metadata: Record<string, string | number | boolean>) => console.info(event, metadata),
   error: (event: string, metadata: Record<string, string | number | boolean>) => console.error(event, metadata),
 };
+const shadowGuard = new ShadowModeGuard(config.SHADOW_MODE_ENABLED, operationalLogger);
 const gracefulStop = createGracefulStop();
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
@@ -55,6 +56,7 @@ while (gracefulStop.running) {
   const consumedOutbox = gracefulStop.running
     ? await processNextOutbox(db, outboxAdapter, {
       workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy,
+      shadowGuard,
     }, operationalLogger)
     : false;
   if (!collected && !consumedOutbox && gracefulStop.running) {

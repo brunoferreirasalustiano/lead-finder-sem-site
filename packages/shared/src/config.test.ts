@@ -20,6 +20,7 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_MAX_ATTEMPTS: 5,
       OUTBOX_RETRY_BASE_MS: 1000,
       OUTBOX_RETRY_MAX_MS: 60000,
+      SHADOW_MODE_ENABLED: false,
     });
   });
 
@@ -59,6 +60,12 @@ describe('environment configuration', () => {
         CAMPAIGN_WINDOW_END_UTC: end,
       })).toThrow('overnight windows are not supported');
     }
+  });
+
+  it('fails closed and rejects invalid shadow mode values', () => {
+    expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(false);
+    expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' }).SHADOW_MODE_ENABLED).toBe(true);
+    expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
   });
 
   it('rejects retry base greater than retry maximum', () => {

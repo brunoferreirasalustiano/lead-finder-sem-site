@@ -448,6 +448,7 @@ try {
 await import('../packages/database/src/campaign.integration.js');
 await import('../packages/database/src/campaign-outbox.integration.js');
 await import('../packages/database/src/campaign-outbox.extreme.integration.js');
+await import('../packages/database/src/campaign-outbox.endurance.integration.js');
 
 const pilotReportPath = process.env['PILOT_REPORT_PATH'];
 if (pilotReportPath) {

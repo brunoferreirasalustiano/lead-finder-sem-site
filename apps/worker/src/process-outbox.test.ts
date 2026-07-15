@@ -22,6 +22,7 @@ const claimed = {
   id: '00000000-0000-4000-8000-000000000001', eventType: 'ATTEMPT_CREATED',
   payload: { contact: 'private@example.test' }, idempotencyKey: 'key-1', workerId: 'worker-a',
   token: '00000000-0000-4000-8000-000000000002', generation: 1, attempt: 1,
+  maxAttempts: policy.maxAttempts,
   expiresAt: new Date('2030-01-01T12:00:10Z'),
   deadLetterCycle: 0,
 };

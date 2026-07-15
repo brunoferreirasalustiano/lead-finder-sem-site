@@ -328,21 +328,24 @@ try {
     workerId: 'retry-1', leaseMs: 10_000, maxAttempts: 3, now: retryAt,
   });
   assert.equal(retryClaim?.id, retryItem.id);
+  assert.equal(retryClaim.maxAttempts, 3);
   assert.equal(await failCampaignOutbox(db, retryClaim, policy, retryAt), 'RETRY');
   assert.equal(await failCampaignOutbox(second.db, retryClaim, policy, retryAt), 'STALE');
   const retryRow = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!;
   assert.equal(retryRow.availableAt.toISOString(), '2000-01-12T12:00:01.000Z');
   const retrySecondAt = retryRow.availableAt;
   const retrySecondClaim = await claimCampaignOutbox(db, {
-    workerId: 'retry-2', leaseMs: 10_000, maxAttempts: 3, now: retrySecondAt,
+    workerId: 'retry-2', leaseMs: 10_000, maxAttempts: 1, now: retrySecondAt,
   });
   assert.equal(retrySecondClaim?.attempt, 2);
-  assert.equal(await failCampaignOutbox(db, retrySecondClaim, policy, retrySecondAt), 'RETRY');
+  assert.equal(retrySecondClaim.maxAttempts, 3, 'a logical restart must preserve the cycle snapshot');
+  assert.equal(await failCampaignOutbox(db, retrySecondClaim, { ...policy, maxAttempts: 1 }, retrySecondAt), 'RETRY');
   const retryThirdAt = new Date(retrySecondAt.getTime() + 2_000);
   const retryThirdClaim = await claimCampaignOutbox(db, {
-    workerId: 'retry-3', leaseMs: 10_000, maxAttempts: 3, now: retryThirdAt,
+    workerId: 'retry-3', leaseMs: 10_000, maxAttempts: 8, now: retryThirdAt,
   });
   assert.equal(retryThirdClaim?.attempt, 3);
+  assert.equal(retryThirdClaim.maxAttempts, 3);
   assert.equal(await failCampaignOutbox(second.db, { ...retryThirdClaim, token: crypto.randomUUID() }, policy, retryThirdAt), 'STALE');
   assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value FROM campaign_dead_letters
     WHERE outbox_id = ${retryItem.id}::uuid`))[0]?.value, 0, 'a stale worker must not create a dead-letter');
@@ -351,6 +354,26 @@ try {
   assert.equal(exhaustedRow.status, 'EXHAUSTED');
   assert.equal(exhaustedRow.claimWorkerId, null); assert.equal(exhaustedRow.claimToken, null);
   assert.equal(exhaustedRow.claimedAt, null); assert.equal(exhaustedRow.claimExpiresAt, null);
+
+  const concurrentSnapshotAt = new Date('2000-01-12T13:00:00.000Z');
+  const concurrentSnapshotItem = await insertItem(concurrentSnapshotAt);
+  const concurrentSnapshotClaims = await Promise.all([
+    claimCampaignOutbox(db, {
+      workerId: 'snapshot-concurrency-a', leaseMs: 10_000, maxAttempts: 2, now: concurrentSnapshotAt,
+    }),
+    claimCampaignOutbox(second.db, {
+      workerId: 'snapshot-concurrency-b', leaseMs: 10_000, maxAttempts: 7, now: concurrentSnapshotAt,
+    }),
+  ]);
+  const winningSnapshotClaim = concurrentSnapshotClaims.find((claim) => claim?.id === concurrentSnapshotItem.id);
+  assert.ok(winningSnapshotClaim, 'one concurrent worker must claim and snapshot the item');
+  assert.equal(concurrentSnapshotClaims.filter((claim) => claim?.id === concurrentSnapshotItem.id).length, 1);
+  const concurrentSnapshotRow = (
+    await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, concurrentSnapshotItem.id))
+  )[0]!;
+  assert.equal(concurrentSnapshotRow.maxAttemptsSnapshot, winningSnapshotClaim.maxAttempts,
+    'the atomic claim must persist the winning worker configuration exactly once');
+  assert.equal(await completeCampaignOutbox(db, winningSnapshotClaim, concurrentSnapshotAt), true);
 
   const crashedAt = new Date('2000-01-13T12:00:00.000Z');
   const crashedItem = await insertItem(crashedAt);
@@ -383,20 +406,32 @@ try {
   assert.equal(recoveredRow.status, 'PENDING');
   assert.equal(recoveredRow.attempts, 0);
   assert.equal(recoveredRow.deadLetterCycle, 1);
+  assert.equal(recoveredRow.maxAttemptsSnapshot, null);
   assert.equal(recoveredRow.claimWorkerId, null);
 
   let recoveredFailureAt = recoveryAt;
   for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
     const recoveredClaim = await claimCampaignOutbox(db, {
-      workerId: `recovered-failure-${attempt}`, leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: recoveredFailureAt,
+      workerId: `recovered-failure-${attempt}`, leaseMs: 10_000, maxAttempts: policy.maxAttempts + 1, now: recoveredFailureAt,
     });
     assert.equal(recoveredClaim?.id, retryItem.id);
+    assert.equal(recoveredClaim.maxAttempts, policy.maxAttempts + 1, 'a recovered cycle must take a new snapshot');
     const decision = await failCampaignOutbox(db, recoveredClaim, policy, recoveredFailureAt);
-    assert.equal(decision, attempt === policy.maxAttempts ? 'DEAD_LETTERED' : 'RETRY');
+    assert.equal(decision, 'RETRY');
     if (attempt < policy.maxAttempts) {
       recoveredFailureAt = (await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id)))[0]!.availableAt;
     }
   }
+  const recoveredFinalAt = (
+    await db.select().from(campaignOutbox).where(eq(campaignOutbox.id, retryItem.id))
+  )[0]!.availableAt;
+  const recoveredFinalClaim = await claimCampaignOutbox(db, {
+    workerId: 'recovered-failure-final', leaseMs: 10_000, maxAttempts: 2,
+    now: recoveredFinalAt,
+  });
+  assert.equal(recoveredFinalClaim?.attempt, 4);
+  assert.equal(recoveredFinalClaim.maxAttempts, 4);
+  assert.equal(await failCampaignOutbox(db, recoveredFinalClaim, policy, recoveredFinalAt), 'DEAD_LETTERED');
   const cycles = await db.execute<{ cycle: number }>(sql`SELECT cycle FROM campaign_dead_letters
     WHERE outbox_id = ${retryItem.id}::uuid ORDER BY cycle`);
   assert.deepEqual(cycles.map((row) => row.cycle), [0, 1], 'a new definitive failure must preserve the previous cycle');

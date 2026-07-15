@@ -53,6 +53,9 @@ first_log_file=/tmp/first-deploy.log
 DEPLOY_REF="$update_sha" scripts/deploy-production.sh | tee "$first_log_file"
 first_log="$(cat "$first_log_file")"
 grep -q 'backup pre-deploy ignorado' <<<"$first_log"
+worker_stop_line="$(grep -n 'Parando worker antes das migrations' "$first_log_file" | head -n1 | cut -d: -f1)"
+migration_line="$(grep -n 'Aplicando migrations sem worker ativo' "$first_log_file" | head -n1 | cut -d: -f1)"
+[[ -n "$worker_stop_line" && -n "$migration_line" && "$worker_stop_line" -lt "$migration_line" ]]
 echo '::endgroup::'
 
 echo '::group::Tunnel readiness'

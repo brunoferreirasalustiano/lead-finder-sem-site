@@ -12,6 +12,7 @@ export interface OutboxClaim {
   token: string;
   generation: number;
   attempt: number;
+  maxAttempts: number;
   expiresAt: Date;
   deadLetterCycle: number;
 }
@@ -55,6 +56,14 @@ export function deterministicRetryAt(now: Date, attempt: number, baseMs: number,
   return new Date(now.getTime() + delay);
 }
 
+export function resolveOutboxMaxAttemptsSnapshot(current: number | null, configured: number): number {
+  if (!Number.isSafeInteger(configured) || configured < 1) throw new RangeError('maxAttempts must be a positive integer');
+  if (current !== null && (!Number.isSafeInteger(current) || current < 1)) {
+    throw new RangeError('maxAttempts snapshot must be a positive integer');
+  }
+  return current ?? configured;
+}
+
 const validWorkerId = (workerId: string) => {
   const normalized = workerId.trim();
   if (!normalized || normalized.length > 200) throw new RangeError('workerId must contain 1 to 200 characters');
@@ -63,18 +72,18 @@ const validWorkerId = (workerId: string) => {
 
 export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput): Promise<OutboxClaim | null> {
   const workerId = validWorkerId(input.workerId);
-  if (!Number.isSafeInteger(input.maxAttempts) || input.maxAttempts < 1) throw new RangeError('maxAttempts must be a positive integer');
+  const configuredMaxAttempts = resolveOutboxMaxAttemptsSnapshot(null, input.maxAttempts);
   const now = input.now ?? new Date();
   const expiresAt = outboxLeaseExpiration(now, input.leaseMs);
   const token = input.token ?? randomUUID();
-  await finalizeExpiredFinalAttempt(db, input.maxAttempts, now);
+  await finalizeExpiredFinalAttempt(db, configuredMaxAttempts, now);
   const rows = await db.execute<{
     id: string; event_type: string; payload: unknown; idempotency_key: string; attempts: number;
-    claim_generation: number; claim_expires_at: Date | string; dead_letter_cycle: number;
+    claim_generation: number; claim_expires_at: Date | string; dead_letter_cycle: number; max_attempts_snapshot: number;
   }>(sql`
     WITH candidate AS (
       SELECT id FROM campaign_outbox
-      WHERE status = 'PENDING' AND attempts < ${input.maxAttempts}
+      WHERE status = 'PENDING' AND attempts < COALESCE(max_attempts_snapshot, ${configuredMaxAttempts})
         AND available_at <= ${now.toISOString()}::timestamptz
         AND (claim_expires_at IS NULL OR claim_expires_at <= ${now.toISOString()}::timestamptz)
       ORDER BY available_at ASC, id ASC FOR UPDATE SKIP LOCKED LIMIT 1
@@ -82,15 +91,18 @@ export async function claimCampaignOutbox(db: Database, input: ClaimOutboxInput)
     UPDATE campaign_outbox AS outbox
     SET claim_worker_id = ${workerId}, claim_token = ${token}::uuid,
         claim_generation = outbox.claim_generation + 1, claimed_at = ${now.toISOString()}::timestamptz,
-        claim_expires_at = ${expiresAt.toISOString()}::timestamptz, attempts = outbox.attempts + 1
+        claim_expires_at = ${expiresAt.toISOString()}::timestamptz, attempts = outbox.attempts + 1,
+        max_attempts_snapshot = COALESCE(outbox.max_attempts_snapshot, ${configuredMaxAttempts})
     FROM candidate WHERE outbox.id = candidate.id
     RETURNING outbox.id, outbox.event_type, outbox.payload, outbox.idempotency_key, outbox.attempts,
-              outbox.claim_generation, outbox.claim_expires_at, outbox.dead_letter_cycle
+              outbox.claim_generation, outbox.claim_expires_at, outbox.dead_letter_cycle,
+              outbox.max_attempts_snapshot
   `);
   const row = rows[0];
   return row ? {
     id: row.id, eventType: row.event_type, payload: row.payload, idempotencyKey: row.idempotency_key,
     workerId, token, generation: row.claim_generation, attempt: row.attempts,
+    maxAttempts: row.max_attempts_snapshot,
     expiresAt: new Date(row.claim_expires_at), deadLetterCycle: row.dead_letter_cycle,
   } : null;
 }
@@ -276,7 +288,7 @@ export async function rescheduleCampaignOutbox(db: Database, claim: OutboxClaim,
 export type SafeOutboxFailureCode = 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION' | 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION' | 'SIMULATED_EXECUTION_FAILED' | 'FINAL_LEASE_EXPIRED';
 
 export async function failCampaignOutbox(db: Database, claim: OutboxClaim, policy: CampaignExecutionPolicy, now = new Date(), errorCode: SafeOutboxFailureCode = 'SIMULATED_EXECUTION_FAILED'): Promise<'RETRY' | 'DEAD_LETTERED' | 'STALE'> {
-  const exhausted = claim.attempt >= policy.maxAttempts;
+  const exhausted = claim.attempt >= resolveOutboxMaxAttemptsSnapshot(claim.maxAttempts, policy.maxAttempts);
   const availableAt = deterministicRetryAt(now, claim.attempt, policy.retryBaseMs, policy.retryMaxMs);
   return db.transaction(async (tx) => {
     const locked = await tx.execute<{ id: string; payload: unknown; attempts: number; dead_letter_cycle: number }>(sql`
@@ -303,22 +315,24 @@ async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, no
   await db.transaction(async (tx) => {
     const rows = await tx.execute<{
       id: string; payload: unknown; attempts: number; claim_generation: number;
-      dead_letter_cycle: number; confirmed: boolean;
+      dead_letter_cycle: number; confirmed: boolean; max_attempts: number;
     }>(sql`
       SELECT o.id, o.payload, o.attempts, o.claim_generation, o.dead_letter_cycle,
+        COALESCE(o.max_attempts_snapshot, ${maxAttempts}) AS max_attempts,
         EXISTS (SELECT 1 FROM campaign_simulated_confirmations c
           WHERE c.outbox_id = o.id AND c.cycle = o.dead_letter_cycle) AS confirmed
       FROM campaign_outbox o
-      WHERE o.status = 'PENDING' AND o.attempts >= ${maxAttempts}
+      WHERE o.status = 'PENDING' AND o.attempts >= COALESCE(o.max_attempts_snapshot, ${maxAttempts})
         AND o.claim_expires_at <= ${now.toISOString()}::timestamptz
       ORDER BY o.claim_expires_at, o.id FOR UPDATE OF o SKIP LOCKED LIMIT 1`);
     const row = rows[0];
     if (!row) return;
     if (row.confirmed) {
       await tx.execute(sql`UPDATE campaign_outbox SET status = 'PUBLISHED',
+        max_attempts_snapshot = COALESCE(max_attempts_snapshot, ${row.max_attempts}),
         published_at = ${now.toISOString()}::timestamptz, claim_worker_id = NULL,
         claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
-        WHERE id = ${row.id}::uuid AND status = 'PENDING' AND attempts >= ${maxAttempts}
+        WHERE id = ${row.id}::uuid AND status = 'PENDING' AND attempts >= ${row.max_attempts}
           AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
       return;
     }
@@ -328,9 +342,10 @@ async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, no
         ${JSON.stringify(row.payload)}::jsonb, 'FINAL_LEASE_EXPIRED', 'FINAL_LEASE_EXPIRED',
         ${row.attempts}, ${row.claim_generation}, ${now.toISOString()}::timestamptz)
       ON CONFLICT (outbox_id, cycle) DO NOTHING`);
-    await tx.execute(sql`UPDATE campaign_outbox SET status = 'EXHAUSTED', claim_worker_id = NULL,
+    await tx.execute(sql`UPDATE campaign_outbox SET status = 'EXHAUSTED',
+      max_attempts_snapshot = COALESCE(max_attempts_snapshot, ${row.max_attempts}), claim_worker_id = NULL,
       claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL WHERE id = ${row.id}::uuid
-      AND status = 'PENDING' AND attempts >= ${maxAttempts}
+      AND status = 'PENDING' AND attempts >= ${row.max_attempts}
         AND claim_expires_at <= ${now.toISOString()}::timestamptz`);
   });
 }
@@ -439,7 +454,8 @@ export async function recoverCampaignDeadLetter(db: Database, input: {
         ${key}, ${fingerprint}, ${availableAt.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz)
       RETURNING id`);
     await tx.execute(sql`UPDATE campaign_outbox SET status = 'PENDING', attempts = 0, available_at = ${availableAt.toISOString()}::timestamptz,
-      dead_letter_cycle = ${toCycle}, published_at = NULL, claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+      dead_letter_cycle = ${toCycle}, max_attempts_snapshot = NULL, published_at = NULL,
+      claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
       WHERE id = ${resolved[0].outbox_id}::uuid`);
     return { recoveryId: inserted[0]!.id, outboxId: resolved[0].outbox_id, fromCycle: resolved[0].cycle, toCycle, replayed: false };
     });

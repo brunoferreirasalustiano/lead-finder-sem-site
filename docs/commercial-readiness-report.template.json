@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1.0", "containsPii": false,
+  "period": { "startUtc": "<ISO-8601>", "endUtc": "<ISO-8601>" },
+  "scope": { "segment": "<segment>", "region": "<region>", "offer": "<offer>", "cohort": "<cohort>" },
+  "evidence": { "commitSha": "<full-sha>", "environment": "<environment>", "responsible": "<role-or-pseudonym>" },
+  "readiness": { "phase": "SHADOW_MODE", "applicableCriteria": 0, "passedCriteria": 0, "criticalBlocker": false, "percentage": 0, "decision": "NO-GO" },
+  "volume": {}, "leadQuality": {}, "commercialFunnel": {}, "failures": [], "incidents": [], "risks": [], "decisions": [],
+  "recommendation": { "goNoGo": "NO-GO", "rationale": "<evidence-based>", "nextExperiments": [] }
+}

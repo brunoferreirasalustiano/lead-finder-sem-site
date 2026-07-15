@@ -320,6 +320,10 @@ Responsável:
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
+## Prontidão comercial
+
+O projeto continua sem envio externo. A operação deve usar a [matriz](docs/commercial-readiness-matrix.md), [métricas de qualidade](docs/lead-quality-metrics.md), [métricas do funil](docs/commercial-funnel-metrics.md), [checklists de shadow mode](docs/pilot-shadow-mode-checklist.md) e [piloto manual](docs/pilot-manual-checklist.md), [política de recuperação](docs/lead-recovery-policy.md) e [template de relatório](docs/commercial-readiness-report.template.json). Não há aprovação de piloto nem resultados reais neste material.
+
 ## Requisitos locais
 
 - Node.js 22 ou superior;

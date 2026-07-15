@@ -1,5 +1,7 @@
 # Lead Finder CRM — Prospecção de empresas sem site
 
+Segurança operacional: [auditoria de segurança e privacidade](docs/security-privacy-audit.md), [threat model](docs/operational-threat-model.md), [retenção e exclusão](docs/data-retention-and-deletion.md), [runtime shadow](docs/shadow-mode-runtime.md), [checklist do piloto](docs/pilot-shadow-mode-checklist.md) e [matriz de prontidão](docs/commercial-readiness-matrix.md).
+
 > Documento oficial de visão, arquitetura, execução, roadmap, critérios de aceite e evidências de teste.
 >
 > Ambiente oficial: **VPS Oracle Cloud**, com Ubuntu, Docker Compose, PostgreSQL, API, worker, Caddy e n8n opcional.

@@ -27,4 +27,4 @@ Todos os itens aplicáveis devem ser `PASS`, sem bloqueador e com aprovação hu
 | Automação → um operador | período de estabilidade definido; incidentes críticos abertos = 0; restore, rollback e auditoria PASS | segurança ou pausa falha |
 | Um operador → múltiplos | fora desta PR, requer projeto de isolamento | isolamento não testado |
 
-Registrar sempre precisão, falso positivo, duplicidade, contatos, bloqueados, opt-out, backlog, dead-letter, incidentes, pausa, backup/restore, rollback, rastreabilidade e aprovação humana, com denominadores.
+Registrar sempre precisão, falso positivo, duplicidade, contatos, bloqueados, opt-out, backlog, dead-letter, incidentes, pausa, backup/restore, rollback, rastreabilidade e aprovação humana, com denominadores. No shadow runtime, contatos válidos são `totalValidContacts / totalCollected`, com mínimo padrão configurável de 70% inclusivo; zero coletados é `NOT_RUN` e portanto `NO_GO`.

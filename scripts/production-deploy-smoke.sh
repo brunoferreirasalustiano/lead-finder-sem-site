@@ -149,6 +149,8 @@ echo '::endgroup::'
 
 echo '::group::Public mode through local Caddy'
 export COMPOSE_PROJECT_NAME="${project}public" API_DOMAIN=localhost ACME_EMAIL=test@example.invalid CADDYFILE_PATH=./deploy/Caddyfile.test
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml up -d postgres
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml run --rm migrate
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml up -d --build postgres api worker caddy
 public_ready=false
 for _attempt in $(seq 1 30); do

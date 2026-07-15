@@ -8,14 +8,16 @@ import {
 } from '@lead-finder/database';
 import { SimulatedExecutionError, type SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 import { correlationForOutbox, type OperationalLogger, type OperationalMetrics, type SafeOperationalReason } from './operational-observability.js';
+import type { ShadowModeGuard } from '@lead-finder/shared';
 
 export async function processNextOutbox(
   db: Database,
   adapter: SimulatedOutboxAdapter,
-  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date },
+  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard?: ShadowModeGuard; shadowRunId?: string },
   logger: OperationalLogger,
   metrics?: OperationalMetrics,
 ): Promise<boolean> {
+  if (input.shadowGuard?.block(input.shadowRunId)) return false;
   const now = input.now ?? new Date();
   const claim = await claimCampaignOutbox(db, {
     workerId: input.workerId,

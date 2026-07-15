@@ -1,0 +1,3 @@
+# Política de recuperação de leads
+
+Lista quinzenal: somente elegíveis, com coorte/motivo. Imagem personalizada é manual e não autoriza contato. Terceira lista menos promissora exige aprovação reforçada. Após encerramento negativo, excluir da seleção por seis meses com data/motivo; o retorno exige nova qualificação, dedupe, bloqueio/opt-out e justificativa — nunca automático. Opt-out e `NAO_CONTATAR` prevalecem permanentemente até reativação explícita/auditada; bloqueados nunca entram. Cada reentrada registra lista anterior, coorte, responsável, data, decisão e evidência; relatórios só usam agregados.

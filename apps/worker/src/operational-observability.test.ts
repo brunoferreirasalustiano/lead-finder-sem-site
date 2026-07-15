@@ -3,11 +3,13 @@ import { OperationalMetrics, correlationForOutbox, createConsoleOperationalLogge
 
 describe('operational observability', () => {
   it('emits deterministic JSON without payload, contact data, tokens, or arbitrary labels', () => {
-    const lines: string[] = []; const logger = createConsoleOperationalLogger((line) => lines.push(line));
+    const lines: string[] = []; const errors: string[] = []; const logger = createConsoleOperationalLogger((line) => lines.push(line), (line) => errors.push(line));
     logger.info({ correlationId: correlationForOutbox('outbox-id', 2), event: 'campaign_outbox_completed', outcome: 'PUBLISHED', outboxId: 'outbox-id', workerId: 'worker-a', generation: 3, deadLetterCycle: 2, durationMs: 1.2 } as never);
     const entry = JSON.parse(lines[0]!) as Record<string, unknown>;
     expect(entry).toMatchObject({ event: 'campaign_outbox_completed', outcome: 'PUBLISHED', generation: 3, durationMs: 1 });
     expect(JSON.stringify(entry)).not.toMatch(/payload|email|phone|token|secret|message/i);
+    logger.error({ correlationId: 'safe', event: 'failure', outcome: 'RETRY', reason: 'SIMULATED_EXECUTION_FAILED' });
+    expect(lines).toHaveLength(1); expect(errors).toHaveLength(1); expect(JSON.parse(errors[0]!) as Record<string, unknown>).toMatchObject({ correlationId: 'safe', outcome: 'RETRY' });
   });
   it('uses only bounded reason keys and has deterministic reset semantics', () => {
     const metrics = new OperationalMetrics();

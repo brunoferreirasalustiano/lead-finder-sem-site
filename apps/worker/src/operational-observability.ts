@@ -39,9 +39,11 @@ export interface OperationalLogger {
   error(fields: OperationalLogFields): void;
 }
 
-export function createConsoleOperationalLogger(write: (line: string) => void = console.info): OperationalLogger {
-  const emit = (fields: OperationalLogFields) => write(JSON.stringify(sanitizeOperationalLog(fields)));
-  return { info: emit, error: emit };
+export function createConsoleOperationalLogger(
+  infoWrite: (line: string) => void = console.info,
+  errorWrite: (line: string) => void = console.error,
+): OperationalLogger {
+  return { info: (fields) => infoWrite(JSON.stringify(sanitizeOperationalLog(fields))), error: (fields) => errorWrite(JSON.stringify(sanitizeOperationalLog(fields))) };
 }
 
 export interface OperationalMetricsSnapshot {

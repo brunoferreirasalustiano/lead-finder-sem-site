@@ -21,7 +21,8 @@ upgradeDatabaseUrl.pathname = `/${upgradeDatabaseName}`;
 const startedAt = new Date('2000-02-01T12:00:00.000Z');
 const expiredAt = new Date(startedAt.getTime() + 10_001);
 const retryAt = new Date(expiredAt.getTime() + 10_000);
-const firstClaimAt = new Date(retryAt.getTime() + 10_000);
+const retryClaimAt = new Date(retryAt.getTime() + 10_000);
+const firstClaimAt = new Date(retryClaimAt.getTime() + 10_000);
 const activeLeaseId = randomUUID();
 const retryId = randomUUID();
 const neverStartedId = randomUUID();
@@ -53,7 +54,7 @@ try {
         )`;
     };
     await insertLegacyOutbox(activeLeaseId, 2, true, startedAt);
-    await insertLegacyOutbox(retryId, 1, false, retryAt);
+    await insertLegacyOutbox(retryId, 1, false, retryClaimAt);
     await insertLegacyOutbox(neverStartedId, 0, false, firstClaimAt);
 
     const migration = await readFile(new URL(migrationName, migrationDirectory), 'utf8');
@@ -108,11 +109,11 @@ try {
     assert.equal(orphanedAfterRestart[0]?.count, 0, 'restart must not leave an unclaimable pending row');
 
     const retryClaim = await claimCampaignOutbox(db, {
-      workerId: 'changed-config-retry', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: retryAt,
+      workerId: 'changed-config-retry', leaseMs: 10_000, maxAttempts: policy.maxAttempts, now: retryClaimAt,
     });
     assert.equal(retryClaim?.id, retryId);
     assert.equal(retryClaim.maxAttempts, 2, 'a changed worker setting must not alter the legacy cycle limit');
-    assert.equal(await failCampaignOutbox(db, retryClaim, policy, retryAt), 'DEAD_LETTERED');
+    assert.equal(await failCampaignOutbox(db, retryClaim, policy, retryClaimAt), 'DEAD_LETTERED');
 
     const firstClaim = await claimCampaignOutbox(db, {
       workerId: 'first-claim', leaseMs: 10_000, maxAttempts: 7, now: firstClaimAt,

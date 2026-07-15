@@ -63,10 +63,10 @@ describe('processNextOutbox', () => {
     expect(completeCampaignOutbox).not.toHaveBeenCalled();
     expect(failCampaignOutbox).toHaveBeenCalledWith({} as Database, claimed, policy, now, 'SIMULATED_EXECUTION_FAILED');
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private@example.test');
-    expect(logger.error).toHaveBeenCalledWith('campaign_outbox_retry_scheduled', {
-      outboxId: claimed.id, channel: 'EMAIL', generation: 1, attempt: 1,
-      decision: 'RETRY', failedAt: now.toISOString(),
-    });
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'campaign_outbox_retry_scheduled', outcome: 'RETRY', reason: 'SIMULATED_EXECUTION_FAILED',
+      correlationId: `outbox:${claimed.id}:cycle:0`, outboxId: claimed.id, workerId: 'worker-a', generation: 1,
+    }));
   });
 
   it('ACKs a durable confirmation after the deterministic timeout without scheduling failure', async () => {
@@ -85,10 +85,10 @@ describe('processNextOutbox', () => {
     await expect(processNextOutbox({} as Database, adapter, input, logger)).resolves.toBe(true);
     expect(completeCampaignOutbox).toHaveBeenLastCalledWith({} as Database, claimed, now);
     expect(vi.mocked(failCampaignOutbox).mock.calls).toHaveLength(failCalls);
-    expect(logger.info).toHaveBeenCalledWith('campaign_outbox_confirmation_reconciled', {
-      outboxId: claimed.id, channel: 'EMAIL', generation: 1, attempt: 1,
-      decision: 'CONFIRMATION_RECONCILED', reconciledAt: now.toISOString(),
-    });
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'campaign_outbox_confirmation_reconciled', outcome: 'PUBLISHED',
+      correlationId: `outbox:${claimed.id}:cycle:0`, outboxId: claimed.id, workerId: 'worker-a', generation: 1,
+    }));
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
   });
 
@@ -104,10 +104,10 @@ describe('processNextOutbox', () => {
     vi.spyOn(adapter, 'execute').mockRejectedValueOnce(new Error('contact private@example.test payload secret'));
     const logger = { info: vi.fn(), error: vi.fn() };
     await expect(processNextOutbox({} as Database, adapter, input, logger)).resolves.toBe(true);
-    expect(logger.error).toHaveBeenCalledWith('campaign_outbox_dead_letter_created', {
-      outboxId: claimed.id, channel: 'EMAIL', generation: 1, attempt: policy.maxAttempts,
-      decision: 'DEAD_LETTERED', failedAt: now.toISOString(),
-    });
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'campaign_outbox_dead_letter_created', outcome: 'DEAD_LETTERED', reason: 'SIMULATED_EXECUTION_FAILED',
+      correlationId: `outbox:${claimed.id}:cycle:0`, outboxId: claimed.id, workerId: 'worker-a', generation: 1,
+    }));
     expect(JSON.stringify(logger.error.mock.calls)).not.toMatch(/private@example\.test|payload secret/);
   });
 });

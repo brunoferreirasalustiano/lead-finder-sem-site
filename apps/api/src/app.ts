@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import {
-  checkDatabase,
+  getOperationalSnapshot,
+  getReadiness,
   enqueueCollection,
   getLead,
   listLeads,
@@ -91,7 +92,7 @@ export const csvCell = (value: string | number | boolean | Date | null | undefin
   return `"${safe.replaceAll('"', '""')}"`;
 };
 export const creationStatus = (replayed: boolean) => replayed ? 200 : 201;
-export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}) {
+export function buildApp(db: Database, options: { dailyLeadLimit?: number; operationalBacklogDegradedCount?: number; operationalOldestPendingDegradedMs?: number } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const app = Fastify({ logger: true, bodyLimit: 16_384, requestTimeout: 15_000 });
   app.get('/health/live', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -100,14 +101,22 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number } = {}
     reply: { status: (code: number) => { send: (body: object) => unknown } },
   ) => {
     try {
-      await checkDatabase(db);
-      return { status: 'ready', timestamp: new Date().toISOString() };
+      const readiness = await getReadiness(db, {
+        backlogCount: options.operationalBacklogDegradedCount ?? 100,
+        oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
+      });
+      if (readiness.status === 'unhealthy') return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
+      return { status: readiness.status, timestamp: new Date().toISOString(), snapshot: readiness.snapshot };
     } catch {
       return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
     }
   };
   app.get('/health', ready);
   app.get('/health/ready', ready);
+  app.get('/internal/operational-snapshot', async (_request, reply) => {
+    try { return await getOperationalSnapshot(db); }
+    catch { return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' }); }
+  });
   app.get('/leads', async (request, reply) => {
     const parsed = listLeadsSchema.safeParse(request.query);
     if (!parsed.success)

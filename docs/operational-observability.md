@@ -1,0 +1,9 @@
+# Observabilidade operacional
+
+O sistema expõe `GET /health/live`, `GET /health/ready` e `GET /internal/operational-snapshot`. Liveness confirma que o processo HTTP está ativo. Readiness confirma banco, compatibilidade mínima de migrations e calcula o snapshot. Ela devolve `ready` quando a fila está normal, `degraded` (HTTP 200) quando `pendingCount` ou `oldestPendingAgeMs` ultrapassa os limites, e `unhealthy` (HTTP 503) quando banco ou migrations são incompatíveis.
+
+Os limites seguros são `OPERATIONAL_BACKLOG_DEGRADED_COUNT=100` e `OPERATIONAL_OLDEST_PENDING_DEGRADED_MS=300000`. O snapshot contém pendências, idade da pendência mais antiga, claims ativos, publicados, esgotados, retries acumulados, leases expiradas, recuperações, dead-letters, throughput publicado na última hora e agregados sem labels dinâmicos. `staleAckCount`, duração e motivos de erro são contadores locais do worker desde o início do processo; o snapshot de banco os apresenta como zero porque não há migration/journal nesta etapa.
+
+Exemplo: `{ "pendingCount": 4, "oldestPendingAgeMs": 301000, "expiredLeaseCount": 1, "deadLetterCount": 2, "throughputRecent": 5 }` indica fila degradada por idade e requer inspeção do worker. Logs do worker são JSON estruturado: `{ "correlationId":"outbox:<uuid>:cycle:0", "event":"campaign_outbox_retry_scheduled", "outcome":"RETRY", "reason":"SIMULATED_EXECUTION_FAILED", "durationMs":12 }`.
+
+Nunca registre payload bruto, telefone, e-mail, mensagem, token, segredo, credencial, exceção bruta ou labels baseados em IDs. IDs somente aparecem no evento para correlação; eles não são métricas nem labels. Esta etapa não envia alertas nem integra serviços externos; no piloto controlado, consulte readiness e snapshot antes/depois de uma janela de execução e preserve apenas logs sanitizados. A limitação residual é que contadores transitórios reiniciam junto com o worker; backlog e estados de entrega continuam derivados do PostgreSQL.

@@ -3,7 +3,9 @@ import { parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 const config = parseApiConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
-const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT });
+const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
+  operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
+  operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS });
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
   process.exitCode = exitCode;

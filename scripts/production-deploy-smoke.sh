@@ -77,18 +77,72 @@ backup="$(find "$app_dir/backups" -type f -name 'leadfinder-*.dump' -size +0c -p
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.tunnel.yml exec -T postgres psql -U leadfinder -d leadfinder -Atc "select count(*) from schema_migrations where version='smoke-data'" | grep -qx 1
 echo '::endgroup::'
 
-echo '::group::Forced rollback'
-sleep 1
-rollback_log_file=/tmp/deploy-rollback.log
-set +e
-DEPLOY_TEST_FORCE_FAILURE=true DEPLOY_REF="$failure_sha" scripts/deploy-production.sh 2>&1 | tee "$rollback_log_file"
-rollback_status=${PIPESTATUS[0]}
-set -e
-actual_rollback_sha="$(git rev-parse HEAD)"
-printf '[smoke] rollback status=%s expected_sha=%s actual_sha=%s\n' "$rollback_status" "$update_sha" "$actual_rollback_sha"
-[[ "$rollback_status" -ne 0 ]]
-[[ "$actual_rollback_sha" == "$update_sha" ]]
-grep -q 'Rollback de codigo executado' /tmp/deploy-rollback.log
+compose_tunnel() {
+  docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.tunnel.yml "$@"
+}
+schema_probe() {
+  compose_tunnel exec -T postgres psql -U leadfinder -d leadfinder -Atc "select string_agg(version, ',' order by version) from schema_migrations"
+}
+worker_is_running() {
+  local worker_id
+  worker_id="$(compose_tunnel ps -q worker)"
+  [[ -n "$worker_id" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "$worker_id")" == true ]]
+}
+assert_expired_lease_reclaimable() {
+  compose_tunnel exec -T api node --input-type=module -e '
+    import { campaignOutbox, claimCampaignOutbox, completeCampaignOutbox, createDatabase } from "@lead-finder/database";
+    const { db, close } = createDatabase(process.env.DATABASE_URL);
+    const now = new Date("2100-01-01T00:00:00.000Z");
+    try {
+      const item = (await db.insert(campaignOutbox).values({
+        aggregateType: "deploy-smoke", aggregateId: crypto.randomUUID(), eventType: "SIMULATED",
+        payload: { deployRollback: true }, idempotencyKey: crypto.randomUUID(),
+        payloadFingerprint: "f".repeat(64), availableAt: now,
+      }).returning())[0];
+      if (!item) throw new Error("deploy lease fixture was not created");
+      const original = await claimCampaignOutbox(db, { workerId: "pre-rollback-worker", leaseMs: 1_000, maxAttempts: 3, now });
+      const recovered = await claimCampaignOutbox(db, { workerId: "post-rollback-worker", leaseMs: 1_000, maxAttempts: 3, now: new Date(now.getTime() + 1_000) });
+      if (!original || !recovered || original.id !== item.id || recovered.id !== item.id || recovered.generation !== original.generation + 1) {
+        throw new Error("expired lease was not reclaimed after rollback");
+      }
+      if (await completeCampaignOutbox(db, original, new Date(now.getTime() + 1_000))) throw new Error("stale lease ACK was accepted");
+      if (!(await completeCampaignOutbox(db, recovered, new Date(now.getTime() + 1_000)))) throw new Error("reclaimed lease was not completable");
+    } finally { await close(); }
+  '
+}
+
+echo '::group::Pre-migration interruption is idempotent'
+before_schema="$(schema_probe)"
+for run in $(seq 1 3); do
+  set +e
+  DEPLOY_REF='refs/heads/does-not-exist' scripts/deploy-production.sh >"/tmp/deploy-before-migration-${run}.log" 2>&1
+  interruption_status=$?
+  set -e
+  [[ "$interruption_status" -ne 0 ]]
+  [[ "$(git rev-parse HEAD)" == "$update_sha" ]]
+  [[ "$(schema_probe)" == "$before_schema" ]]
+  worker_is_running
+done
+echo '::endgroup::'
+
+echo '::group::Post-migration rollback is repeatable'
+for run in $(seq 1 3); do
+  rollback_log_file="/tmp/deploy-rollback-${run}.log"
+  set +e
+  DEPLOY_TEST_FORCE_FAILURE=true DEPLOY_REF="$failure_sha" scripts/deploy-production.sh 2>&1 | tee "$rollback_log_file"
+  rollback_status=${PIPESTATUS[0]}
+  set -e
+  actual_rollback_sha="$(git rev-parse HEAD)"
+  printf '[smoke] rollback run=%s status=%s expected_sha=%s actual_sha=%s\n' "$run" "$rollback_status" "$update_sha" "$actual_rollback_sha"
+  [[ "$rollback_status" -ne 0 ]]
+  [[ "$actual_rollback_sha" == "$update_sha" ]]
+  grep -q 'Parando worker antes das migrations' "$rollback_log_file"
+  grep -q 'Aplicando migrations sem worker ativo' "$rollback_log_file"
+  grep -q 'Rollback de codigo executado' "$rollback_log_file"
+  [[ "$(schema_probe)" == "$before_schema" ]]
+  worker_is_running
+  assert_expired_lease_reclaimable
+done
 echo '::endgroup::'
 
 echo '::group::Public mode through local Caddy'

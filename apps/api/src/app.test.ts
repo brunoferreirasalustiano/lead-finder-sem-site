@@ -1,6 +1,75 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Database } from '@lead-finder/database';
-import { buildApp, creationStatus, csvCell } from './app.js';
+import {
+  buildApp,
+  creationStatus,
+  csvCell,
+  safeCampaignAuditItem,
+  safeCampaignFailureItem,
+} from './app.js';
+
+const sensitivePattern = /private@example\.test|\+5511999999999|tok_secret|postgresql:\/\/|select \* from|lead_contacts|stack-canary/i;
+
+describe('security-safe API output', () => {
+  it('returns and logs a sanitized unexpected error', async () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const sensitive = 'private@example.test +5511999999999 tok_secret postgresql://u:p@db/x select * from lead_contacts stack-canary';
+    const db = new Proxy({} as Database, { get: () => { throw new Error(sensitive); } });
+    const app = buildApp(db);
+    let closed = false;
+    try {
+      const response = await app.inject({ method: 'GET', url: '/leads?page=1&pageSize=20' });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+      await app.close();
+      closed = true;
+      const logs = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(logs).not.toMatch(sensitivePattern);
+      expect(logs).toContain('request_failed');
+    } finally {
+      if (!closed) await app.close();
+      stdout.mockRestore();
+    }
+  });
+
+  it('preserves a safe client-error status for malformed JSON', async () => {
+    const app = buildApp({} as Database);
+    const response = await app.inject({
+      method: 'POST', url: '/collect', headers: { 'content-type': 'application/json' }, payload: '{',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'Invalid request', code: 'INVALID_REQUEST' });
+    await app.close();
+  });
+
+  it('projects campaign audit rows without payload, idempotency, claim or lease internals', () => {
+    const result = safeCampaignAuditItem({
+      id: 'audit-id', aggregateType: 'CAMPAIGN', aggregateId: 'campaign-id', eventType: 'CREATED',
+      status: 'PENDING', attempts: 1, maxAttemptsSnapshot: 5, availableAt: new Date('2030-01-01T00:00:00Z'),
+      deadLetterCycle: 0, publishedAt: null, createdAt: new Date('2030-01-01T00:00:00Z'),
+      payload: { email: 'private@example.test', message: 'stack-canary' }, idempotencyKey: 'tok_secret',
+      payloadFingerprint: 'f'.repeat(64), claimWorkerId: 'worker', claimToken: 'token', claimGeneration: 3,
+      claimedAt: new Date(), claimExpiresAt: new Date(),
+    });
+    expect(JSON.stringify(result)).not.toMatch(sensitivePattern);
+    expect(result).toEqual(expect.objectContaining({ id: 'audit-id', aggregateId: 'campaign-id', eventType: 'CREATED' }));
+    expect(result).not.toHaveProperty('payload');
+    expect(result).not.toHaveProperty('claimToken');
+  });
+
+  it('projects campaign failures without raw payload, legacy error or claim metadata', () => {
+    const result = safeCampaignFailureItem({
+      id: 'failure-id', outboxId: 'outbox-id', cycle: 2, errorCode: 'SIMULATED_EXECUTION_FAILED',
+      attempts: 5, createdAt: new Date('2030-01-01T00:00:00Z'), correlationId: 'secret-correlation',
+      payload: { phone: '+5511999999999', email: 'private@example.test' },
+      error: 'select * from lead_contacts stack-canary', claimGeneration: 7, claimToken: 'tok_secret',
+    });
+    expect(JSON.stringify(result)).not.toMatch(sensitivePattern);
+    expect(result).toEqual(expect.objectContaining({ id: 'failure-id', outboxId: 'outbox-id', cycle: 2 }));
+    expect(result).not.toHaveProperty('payload');
+    expect(result).not.toHaveProperty('error');
+  });
+});
 
 describe('csvCell', () => {
   it.each(['=SUM(1,1)', '+cmd', '-2+3', '@formula'])('neutralizes CSV formula %s', (value) =>

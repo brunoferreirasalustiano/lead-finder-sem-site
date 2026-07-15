@@ -16,7 +16,8 @@ const shutdown = (exitCode = 0) => {
   return shutdownPromise;
 };
 const fatal = (kind: string, error: unknown) => {
-  app.log.fatal({ err: error }, kind);
+  void error;
+  app.log.fatal({ event: 'api_fatal', kind, decision: 'SHUTDOWN_REQUESTED' }, 'api_fatal');
   void shutdown(1);
 };
 process.on('SIGTERM', () => void shutdown());

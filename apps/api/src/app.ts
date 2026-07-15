@@ -92,9 +92,49 @@ export const csvCell = (value: string | number | boolean | Date | null | undefin
   return `"${safe.replaceAll('"', '""')}"`;
 };
 export const creationStatus = (replayed: boolean) => replayed ? 200 : 201;
+const row = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+const safeCode = (value: unknown) =>
+  typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(value) ? value : 'UNKNOWN';
+export const safeCampaignAuditItem = (value: unknown) => {
+  const item = row(value);
+  return {
+    id: item['id'],
+    aggregateType: item['aggregateType'],
+    aggregateId: item['aggregateId'],
+    eventType: safeCode(item['eventType']),
+    status: safeCode(item['status']),
+    attempts: item['attempts'],
+    maxAttemptsSnapshot: item['maxAttemptsSnapshot'],
+    availableAt: item['availableAt'],
+    deadLetterCycle: item['deadLetterCycle'],
+    publishedAt: item['publishedAt'],
+    createdAt: item['createdAt'],
+  };
+};
+export const safeCampaignFailureItem = (value: unknown) => {
+  const item = row(value);
+  return {
+    id: item['id'],
+    outboxId: item['outboxId'],
+    cycle: item['cycle'],
+    errorCode: safeCode(item['errorCode']),
+    attempts: item['attempts'],
+    createdAt: item['createdAt'],
+  };
+};
 export function buildApp(db: Database, options: { dailyLeadLimit?: number; operationalBacklogDegradedCount?: number; operationalOldestPendingDegradedMs?: number } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const app = Fastify({ logger: true, bodyLimit: 16_384, requestTimeout: 15_000 });
+  app.setErrorHandler((error, request, reply) => {
+    const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
+      && typeof error.statusCode === 'number' ? error.statusCode : undefined;
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      return reply.status(statusCode).send({ error: 'Invalid request', code: 'INVALID_REQUEST' });
+    }
+    request.log.error({ event: 'request_failed', code: 'INTERNAL_ERROR', requestId: request.id }, 'request_failed');
+    return reply.status(500).send({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  });
   app.get('/health/live', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
   const ready = async (
     _request: unknown,
@@ -398,20 +438,22 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number; opera
       return { mode: 'SIMULATION', dispatched: false, items, pagination: { page: body.data.page, pageSize: body.data.pageSize, hasMore: eligible.length === body.data.pageSize } };
     });
   });
-  const campaignLists: Array<[string, (id: string, limit: number, offset: number) => Promise<unknown[]>]> = [
+  const campaignLists: Array<[string, (id: string, limit: number, offset: number) => Promise<unknown[]>, ((item: unknown) => unknown)?]> = [
     ['/campaigns/:id/recipients', (id: string, limit: number, offset: number) => listCampaignRecipients(db, id, limit, offset)],
     ['/recipients/:id/attempts', (id: string, limit: number, offset: number) => listRecipientAttempts(db, id, limit, offset)],
-    ['/campaigns/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset)],
-    ['/campaign-versions/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset)],
+    ['/campaigns/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset), safeCampaignAuditItem],
+    ['/campaign-versions/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset), safeCampaignAuditItem],
   ];
-  for (const [url, list] of campaignLists) app.get(url, async (request, reply) => {
+  for (const [url, list, project] of campaignLists) app.get(url, async (request, reply) => {
     const id = parseId(request.params); const query = campaignListSchema.safeParse(request.query);
     if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid campaign query', code: 'INVALID_REQUEST' });
-    const items = await list(id.data, query.data.pageSize, (query.data.page - 1) * query.data.pageSize); return page(items, query.data);
+    const rows = await list(id.data, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
+    return page(project ? rows.map(project) : rows, query.data);
   });
   app.get('/campaigns/failures', async (request, reply) => {
     const query = campaignListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid failure query', code: 'INVALID_REQUEST' });
-    return page(await listCampaignFailures(db, query.data.pageSize, (query.data.page - 1) * query.data.pageSize), query.data);
+    const failures = await listCampaignFailures(db, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
+    return page(failures.map(safeCampaignFailureItem), query.data);
   });
   app.post('/collect', async (request, reply) => {
     const parsed = collectSchema.safeParse(request.body);

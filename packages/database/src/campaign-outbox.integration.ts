@@ -253,6 +253,36 @@ try {
   assert.equal(await executionStartCount(optOutId), optOutDecision.decision === 'STARTED' ? 1 : 0);
   if (optOutDecision.decision === 'STARTED') assert.equal(await completeCampaignOutbox(db, optOutClaim, optOutAt), true);
 
+  const postAuthorizationOptOutAt = new Date('2000-01-08T13:00:00.000Z');
+  const postAuthorizationOptOutId = await insertExecutableAttempt('EMAIL', postAuthorizationOptOutAt);
+  const postAuthorizationOptOutClaim = await claimCampaignOutbox(db, {
+    workerId: 'post-authorization-opt-out', leaseMs: 10_000, maxAttempts: 3, now: postAuthorizationOptOutAt,
+  });
+  assert.equal(postAuthorizationOptOutClaim?.id, postAuthorizationOptOutId);
+  if (!postAuthorizationOptOutClaim) throw new Error('post-authorization opt-out claim was not created');
+  const postAuthorizationDecision = await authorizeCampaignExecution(
+    db, postAuthorizationOptOutClaim, racePolicy, postAuthorizationOptOutAt,
+  );
+  assert.equal(postAuthorizationDecision.decision, 'STARTED');
+  if (postAuthorizationDecision.decision === 'STARTED') {
+    const postAuthorizationIdentity = await executionIdentity(postAuthorizationOptOutId);
+    await recordOptOut(second.db, {
+      leadId: postAuthorizationIdentity.lead_id, channel: 'EMAIL',
+      reason: 'committed after authorization', source: 'integration-test',
+    });
+    await assert.rejects(() => confirmSimulatedCampaignExecution(db, {
+      executionId: postAuthorizationDecision.executionId, outboxId: postAuthorizationOptOutClaim.id,
+      cycle: postAuthorizationOptOutClaim.deadLetterCycle, attemptId: postAuthorizationDecision.attemptId,
+      channel: postAuthorizationDecision.channel, workerId: postAuthorizationOptOutClaim.workerId,
+      token: postAuthorizationOptOutClaim.token, generation: postAuthorizationOptOutClaim.generation,
+      confirmedAt: postAuthorizationOptOutAt,
+    }), (error: unknown) => error instanceof Error && error.message === 'SIMULATED_CONFIRMATION_INELIGIBLE');
+    assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
+      FROM campaign_simulated_confirmations WHERE outbox_id = ${postAuthorizationOptOutId}::uuid`))[0]?.value, 0);
+    assert.equal((await db.execute<{ status: string }>(sql`SELECT status FROM campaign_outbox
+      WHERE id = ${postAuthorizationOptOutId}::uuid`))[0]?.status, 'BLOCKED');
+  }
+
   const utcPolicy = {
     ...policy, dailyLimitWhatsapp: 1, minSpacingMs: 0, windowStartUtc: '00:00', windowEndUtc: '23:59',
   };

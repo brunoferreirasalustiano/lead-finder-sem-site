@@ -351,7 +351,7 @@ async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, no
 }
 
 export class SimulatedConfirmationError extends Error {
-  constructor(readonly code: 'STALE' | 'IDENTITY_CONFLICT') { super(`SIMULATED_CONFIRMATION_${code}`); }
+  constructor(readonly code: 'STALE' | 'IDENTITY_CONFLICT' | 'INELIGIBLE') { super(`SIMULATED_CONFIRMATION_${code}`); }
 }
 
 export async function confirmSimulatedCampaignExecution(db: Database, input: {
@@ -359,7 +359,25 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
   workerId: string; token: string; generation: number; confirmedAt?: Date;
 }): Promise<{ executionId: string; replayed: boolean }> {
   const confirmedAt = input.confirmedAt ?? new Date();
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
+    const identities = await tx.execute<{
+      lead_id: string; channel: string; attempt_id: string; confirmed: boolean;
+    }>(sql`
+      SELECT r.lead_id, s.channel, s.attempt_id,
+        EXISTS (SELECT 1 FROM campaign_simulated_confirmations c WHERE c.execution_id = s.id) AS confirmed
+      FROM campaign_execution_starts s
+      JOIN campaign_attempts a ON a.id = s.attempt_id
+      JOIN campaign_recipients r ON r.id = a.recipient_id
+      WHERE s.id = ${input.executionId}::uuid AND s.outbox_id = ${input.outboxId}::uuid
+        AND s.cycle = ${input.cycle}
+    `);
+    const identity = identities[0];
+    if (!identity || identity.channel !== input.channel
+      || identity.attempt_id !== (input.attemptId ?? identity.attempt_id)) {
+      throw new SimulatedConfirmationError('IDENTITY_CONFLICT');
+    }
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity.lead_id}:opt-out:${identity.channel}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`lead:${identity.lead_id}:opt-out:TODOS`}))`);
     const active = await tx.execute<{ id: string }>(sql`
       SELECT id FROM campaign_outbox
       WHERE id = ${input.outboxId}::uuid AND status = 'PENDING'
@@ -368,6 +386,26 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
         AND claim_expires_at > ${confirmedAt.toISOString()}::timestamptz
       FOR UPDATE`);
     if (!active[0]) throw new SimulatedConfirmationError('STALE');
+    if (!identity.confirmed) {
+      const eligibility = await tx.execute<{
+        is_blocked: boolean; do_not_contact: boolean; crm_stage: string | null; has_opt_out: boolean;
+      }>(sql`
+        SELECT l.is_blocked, l.do_not_contact, l.crm_stage,
+          EXISTS (SELECT 1 FROM campaign_opt_outs oo WHERE oo.lead_id = l.id
+            AND (oo.channel IS NULL OR oo.channel = ${identity.channel})) AS has_opt_out
+        FROM leads l WHERE l.id = ${identity.lead_id}::uuid FOR UPDATE
+      `);
+      const lead = eligibility[0];
+      if (!lead || lead.is_blocked || lead.do_not_contact
+        || lead.crm_stage === 'NAO_CONTATAR' || lead.has_opt_out) {
+        await tx.execute(sql`UPDATE campaign_outbox SET status = 'BLOCKED',
+          claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+          WHERE id = ${input.outboxId}::uuid AND status = 'PENDING'
+            AND claim_worker_id = ${input.workerId} AND claim_token = ${input.token}::uuid
+            AND claim_generation = ${input.generation} AND dead_letter_cycle = ${input.cycle}`);
+        return { blocked: true as const };
+      }
+    }
     const inserted = await tx.execute<{ execution_id: string }>(sql`
       INSERT INTO campaign_simulated_confirmations
         (execution_id, outbox_id, cycle, attempt_id, channel, confirmed_at, created_at)
@@ -375,7 +413,7 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
         ${input.attemptId ?? null}::uuid, ${input.channel},
         ${confirmedAt.toISOString()}::timestamptz, ${confirmedAt.toISOString()}::timestamptz)
       ON CONFLICT (outbox_id, cycle) DO NOTHING RETURNING execution_id`);
-    if (inserted[0]) return { executionId: inserted[0].execution_id, replayed: false };
+    if (inserted[0]) return { blocked: false as const, executionId: inserted[0].execution_id, replayed: false };
     const existing = await tx.execute<{ execution_id: string; attempt_id: string | null; channel: string }>(sql`
       SELECT execution_id, attempt_id, channel FROM campaign_simulated_confirmations
       WHERE outbox_id = ${input.outboxId}::uuid AND cycle = ${input.cycle}`);
@@ -383,8 +421,10 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
       || existing[0].attempt_id !== (input.attemptId ?? null) || existing[0].channel !== input.channel) {
       throw new SimulatedConfirmationError('IDENTITY_CONFLICT');
     }
-    return { executionId: existing[0].execution_id, replayed: true };
+    return { blocked: false as const, executionId: existing[0].execution_id, replayed: true };
   });
+  if (result.blocked) throw new SimulatedConfirmationError('INELIGIBLE');
+  return { executionId: result.executionId, replayed: result.replayed };
 }
 export type CampaignDeadLetterRecoveryResult = { recoveryId: string; outboxId: string; fromCycle: number; toCycle: number; replayed: boolean };
 export class CampaignRecoveryError extends Error {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   canTransitionQualification,
+  attemptsToClearNonContact,
   isEligibleForOutreach,
   normalizeBrazilianPhone,
   normalizeEmail,
@@ -213,6 +214,8 @@ export async function updateQualification(
       await tx.select().from(leads).where(eq(leads.id, leadId)).for('update').limit(1)
     )[0];
     if (!current) throw new QualificationError('Lead not found', 'NOT_FOUND');
+    if (attemptsToClearNonContact(current, input))
+      throw new QualificationError('Generic qualification updates cannot clear non-contact flags', 'INVALID_TRANSITION');
     if (
       current.qualificationStatus !== input.status &&
       !canTransitionQualification(current.qualificationStatus, input.status)

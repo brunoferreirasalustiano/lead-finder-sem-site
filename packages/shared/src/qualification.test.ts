@@ -6,6 +6,7 @@ import {
   normalizeBrazilianPhone,
   normalizeBusinessName,
   normalizeEmail,
+  attemptsToClearNonContact,
 } from './qualification.js';
 
 describe('qualification domain', () => {
@@ -33,5 +34,11 @@ describe('qualification domain', () => {
     expect(isEligibleForOutreach({ ...base, qualificationStatus: 'VALIDANDO' })).toBe(false);
     expect(isEligibleForOutreach({ ...base, contacts: [] })).toBe(false);
     expect(isEligibleForOutreach({ ...base, doNotContact: true })).toBe(false);
+    expect(isEligibleForOutreach({ ...base, isBlocked: true })).toBe(false);
+  });
+  it('distinguishes preservation from an attempted generic non-contact clear', () => {
+    expect(attemptsToClearNonContact({ isBlocked: true, doNotContact: false }, { isBlocked: false })).toBe(true);
+    expect(attemptsToClearNonContact({ isBlocked: false, doNotContact: true }, { doNotContact: false })).toBe(true);
+    expect(attemptsToClearNonContact({ isBlocked: true, doNotContact: true }, { isBlocked: true })).toBe(false);
   });
 });

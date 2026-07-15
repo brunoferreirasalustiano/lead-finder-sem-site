@@ -20,7 +20,7 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_MAX_ATTEMPTS: 5,
       OUTBOX_RETRY_BASE_MS: 1000,
       OUTBOX_RETRY_MAX_MS: 60000,
-      SHADOW_MODE_ENABLED: false,
+      SHADOW_MODE_ENABLED: true,
     });
   });
 
@@ -63,8 +63,9 @@ describe('environment configuration', () => {
   });
 
   it('fails closed and rejects invalid shadow mode values', () => {
-    expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(false);
+    expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(true);
     expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' }).SHADOW_MODE_ENABLED).toBe(true);
+    expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'false' }).SHADOW_MODE_ENABLED).toBe(false);
     expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
   });
 

@@ -10,6 +10,9 @@ describe('shadow mode runtime', () => {
     const result = evaluateShadowGoNoGo(run, { guardBlocked: 1, criticalIncident: true, readiness: true, backup: true, rollback: true, reportGenerated: true, qualificationPrecision: .9, falsePositiveRate: .1 });
     expect(result.status).toBe('NO_GO'); const report = createShadowReport(store.abort('run-1', 'SAFETY_ABORT', now), result, { backlog: 0, deadLetters: 0, retries: 0, guardBlocked: 1, now });
     expect(store.abort('run-1', 'SAFETY_ABORT', now).status).toBe('ABORTED'); expect(report.commercialFunnel.contacted).toBe('NOT_RUN'); expect(JSON.stringify(report)).not.toMatch(/@|phone|message|secret/i); expect(run.totalCollected).toBe(10);
+    expect(report.volume).toEqual(expect.objectContaining({ totalCollected: 10, totalDuplicates: 1 }));
+    expect(report.volume).not.toHaveProperty('runId'); expect(report.volume).not.toHaveProperty('incidents');
+    expect(createShadowReport(run, result, { backlog: 0, deadLetters: 0, retries: 0, guardBlocked: 1, now })).toEqual(report);
   });
   it('covers disabled guard, completion, missing runs and a fully evidenced go decision', () => {
     const logger = { info: vi.fn() }; expect(new ShadowModeGuard(false, logger).block()).toBe(false);
@@ -31,5 +34,23 @@ describe('shadow mode runtime', () => {
     expect(evaluateShadowGoNoGo(run, base).status).toBe('NO_GO'); store.addEvidence('empty', 'e', { totalCollected: 100, totalValidContacts: 79 });
     expect(evaluateShadowGoNoGo(run, { ...base, minValidContactRate: .8 }).criteria.validContacts).toBe('FAIL'); store.addEvidence('empty', 'next', { totalValidContacts: 1 });
     expect(evaluateShadowGoNoGo(run, { ...base, minValidContactRate: .8 }).criteria.validContacts).toBe('PASS');
+  });
+  it.each([
+    ['run id', { runId: '../escape', segment: 'segment', region: 'SP', source: 'osm' }],
+    ['segment', { runId: 'run-safe', segment: 'private@example.test', region: 'SP', source: 'osm' }],
+    ['region', { runId: 'run-safe', segment: 'segment', region: 'token:secret', source: 'osm' }],
+    ['source', { runId: 'run-safe', segment: 'segment', region: 'SP', source: 'message text' }],
+  ])('rejects unsafe %s metadata before persistence or reporting', (_field, input) => {
+    expect(() => new ShadowRunStore().start({ ...input, now })).toThrow('INVALID_');
+  });
+  it('rejects unknown, negative, non-finite, fractional and overflowing evidence counts', () => {
+    const store = new ShadowRunStore();
+    const run = store.start({ runId: 'run-counts', segment: 'segment', region: 'SP', source: 'osm', now });
+    for (const counts of [
+      { constructor: 1 }, { totalCollected: -1 }, { totalCollected: Number.NaN },
+      { totalCollected: Number.POSITIVE_INFINITY }, { totalCollected: 1.5 },
+    ]) expect(() => store.addEvidence(run.runId, 'evidence-safe', counts as never)).toThrow('INVALID_SHADOW_COUNTS');
+    store.addEvidence(run.runId, 'evidence-valid', { totalCollected: Number.MAX_SAFE_INTEGER });
+    expect(() => store.addEvidence(run.runId, 'evidence-overflow', { totalCollected: 1 })).toThrow('INVALID_SHADOW_COUNTS');
   });
 });

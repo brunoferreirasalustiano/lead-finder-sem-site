@@ -8,8 +8,12 @@ describe('operational observability', () => {
     const entry = JSON.parse(lines[0]!) as Record<string, unknown>;
     expect(entry).toMatchObject({ event: 'campaign_outbox_completed', outcome: 'PUBLISHED', generation: 3, durationMs: 1 });
     expect(JSON.stringify(entry)).not.toMatch(/payload|email|phone|token|secret|message/i);
-    logger.error({ correlationId: 'safe', event: 'failure', outcome: 'RETRY', reason: 'SIMULATED_EXECUTION_FAILED' });
-    expect(lines).toHaveLength(1); expect(errors).toHaveLength(1); expect(JSON.parse(errors[0]!) as Record<string, unknown>).toMatchObject({ correlationId: 'safe', outcome: 'RETRY' });
+    logger.error({ correlationId: 'lead@example.test', workerId: '+55 11 99999-1234', event: 'failure', outcome: 'RETRY', reason: 'SIMULATED_EXECUTION_FAILED' });
+    expect(lines).toHaveLength(1); expect(errors).toHaveLength(1);
+    const errorEntry = JSON.parse(errors[0]!) as Record<string, unknown>;
+    expect(errorEntry).toMatchObject({ outcome: 'RETRY' });
+    expect(errorEntry['correlationId']).toMatch(/^[a-f0-9]{16}$/);
+    expect(JSON.stringify(errorEntry)).not.toMatch(/lead@example|99999-1234/);
   });
   it('uses only bounded reason keys and has deterministic reset semantics', () => {
     const metrics = new OperationalMetrics();

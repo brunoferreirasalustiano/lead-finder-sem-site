@@ -18,7 +18,10 @@ const policy = {
   dailyLimitEmail: 10, dailyLimitWhatsapp: 10, windowStartUtc: '08:00', windowEndUtc: '18:00',
   minSpacingMs: 1_000, maxAttempts: 3, retryBaseMs: 2_000, retryMaxMs: 8_000,
 };
-const input = { workerId: 'worker-a', leaseMs: 1_000, policy, now };
+const input = {
+  workerId: 'worker-a', leaseMs: 1_000, policy, now,
+  shadowGuard: new ShadowModeGuard(false, { info: vi.fn() }),
+};
 const claimed = {
   id: '00000000-0000-4000-8000-000000000001', eventType: 'ATTEMPT_CREATED',
   payload: { contact: 'private@example.test' }, idempotencyKey: 'key-1', workerId: 'worker-a',
@@ -37,6 +40,15 @@ describe('processNextOutbox', () => {
     await expect(processNextOutbox({} as Database, adapter, { ...input, shadowGuard: guard, shadowRunId: 'run-safe' }, logger)).resolves.toBe(false);
     expect(claimCampaignOutbox).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(guard.blockedCount).toBe(1);
     expect(JSON.stringify(logger.info.mock.calls)).toContain('SHADOW_MODE_BLOCKED'); expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
+  });
+  it('fails closed before claim when an untyped caller omits the mandatory guard', async () => {
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    const execute = vi.spyOn(adapter, 'execute');
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const missingGuard = { ...input, shadowGuard: undefined } as unknown as Parameters<typeof processNextOutbox>[2];
+    await expect(processNextOutbox({} as Database, adapter, missingGuard, logger)).resolves.toBe(false);
+    expect(claimCampaignOutbox).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
   it('does not invoke the adapter when no item is available', async () => {
     const adapter = new SimulatedOutboxAdapter({} as Database);

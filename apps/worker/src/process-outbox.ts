@@ -13,11 +13,11 @@ import type { ShadowModeGuard } from '@lead-finder/shared';
 export async function processNextOutbox(
   db: Database,
   adapter: SimulatedOutboxAdapter,
-  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard?: ShadowModeGuard; shadowRunId?: string },
+  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard: ShadowModeGuard; shadowRunId?: string },
   logger: OperationalLogger,
   metrics?: OperationalMetrics,
 ): Promise<boolean> {
-  if (input.shadowGuard?.block(input.shadowRunId)) return false;
+  if (!input.shadowGuard || input.shadowGuard.block(input.shadowRunId)) return false;
   const now = input.now ?? new Date();
   const claim = await claimCampaignOutbox(db, {
     workerId: input.workerId,

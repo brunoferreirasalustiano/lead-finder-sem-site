@@ -29,6 +29,7 @@ jobs:
             echo "POSTGRES_DB=leadfinder"
             echo "POSTGRES_USER=leadfinder"
             echo "POSTGRES_PASSWORD=$PASSWORD"
+            echo "SHADOW_MODE_ENABLED=true"
             echo "DATABASE_URL=postgresql://leadfinder:$PASSWORD@postgres:5432/leadfinder"
             echo "API_PORT=3000"
             echo "OVERPASS_URL=http://host.docker.internal:18080"
@@ -120,7 +121,6 @@ jobs:
           curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://127.0.0.1:3000/health/ready
       - name: Optional public Overpass collection
         if: ${{ inputs.run_live_overpass }}
-        continue-on-error: true
         run: |
           sed -i 's#^OVERPASS_URL=.*#OVERPASS_URL=https://overpass-api.de/api/interpreter#' .env
           docker compose up -d --force-recreate worker

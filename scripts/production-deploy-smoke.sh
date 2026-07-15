@@ -67,6 +67,7 @@ docker compose --env-file .env -f docker-compose.yml -f docker-compose.productio
 echo '::endgroup::'
 
 echo '::group::Second deploy and pre-deploy backup'
+sleep 1
 second_log_file=/tmp/second-deploy.log
 DEPLOY_REF="$update_sha" scripts/deploy-production.sh | tee "$second_log_file"
 second_log="$(cat "$second_log_file")"
@@ -128,6 +129,7 @@ echo '::endgroup::'
 echo '::group::Post-migration rollback is repeatable'
 for run in $(seq 1 3); do
   rollback_log_file="/tmp/deploy-rollback-${run}.log"
+  sleep 1
   set +e
   DEPLOY_TEST_FORCE_FAILURE=true DEPLOY_REF="$failure_sha" scripts/deploy-production.sh 2>&1 | tee "$rollback_log_file"
   rollback_status=${PIPESTATUS[0]}

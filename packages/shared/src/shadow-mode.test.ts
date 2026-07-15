@@ -15,9 +15,21 @@ describe('shadow mode runtime', () => {
     const logger = { info: vi.fn() }; expect(new ShadowModeGuard(false, logger).block()).toBe(false);
     const store = new ShadowRunStore(); const run = store.start({ runId: 'run-2', segment: 's', region: 'r', source: 'o', now });
     expect(() => store.addEvidence('missing', 'e', {})).toThrow('NOT_FOUND');
-    store.addEvidence('run-2', 'e', { totalCollected: 100, totalDuplicates: 1 });
+    store.addEvidence('run-2', 'e', { totalCollected: 100, totalDuplicates: 1, totalValidContacts: 70 });
     expect(store.finish('run-2', now)).toBe(run); expect(store.finish('run-2', now)).toBe(run);
     const result = evaluateShadowGoNoGo(run, { guardBlocked: 1, criticalIncident: false, readiness: true, backup: true, rollback: true, reportGenerated: true, qualificationPrecision: .9, falsePositiveRate: .1 });
     expect(result.status).toBe('GO');
+  });
+  it.each([[0, 'NO_GO'], [69, 'NO_GO'], [70, 'GO'], [71, 'GO']])('requires 70 percent valid contacts: %i', (contacts, status) => {
+    const store = new ShadowRunStore(); const run = store.start({ runId: `contacts-${contacts}`, segment: 's', region: 'r', source: 'o', now });
+    store.addEvidence(run.runId, 'e', { totalCollected: 100, totalValidContacts: contacts });
+    expect(evaluateShadowGoNoGo(run, { guardBlocked: 1, criticalIncident: false, readiness: true, backup: true, rollback: true, reportGenerated: true, qualificationPrecision: .9, falsePositiveRate: .1 }).status).toBe(status);
+  });
+  it('supports custom contact threshold and never approves no collected leads', () => {
+    const store = new ShadowRunStore(); const run = store.start({ runId: 'empty', segment: 's', region: 'r', source: 'o', now });
+    const base = { guardBlocked: 1, criticalIncident: false, readiness: true, backup: true, rollback: true, reportGenerated: true, qualificationPrecision: .9, falsePositiveRate: .1 };
+    expect(evaluateShadowGoNoGo(run, base).status).toBe('NO_GO'); store.addEvidence('empty', 'e', { totalCollected: 100, totalValidContacts: 79 });
+    expect(evaluateShadowGoNoGo(run, { ...base, minValidContactRate: .8 }).criteria.validContacts).toBe('FAIL'); store.addEvidence('empty', 'next', { totalValidContacts: 1 });
+    expect(evaluateShadowGoNoGo(run, { ...base, minValidContactRate: .8 }).criteria.validContacts).toBe('PASS');
   });
 });

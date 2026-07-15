@@ -320,9 +320,9 @@ Responsável:
 
 A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
 
-## Shadow mode
+## Prontidão comercial
 
-O [runtime de shadow mode](docs/shadow-mode-runtime.md) bloqueia a execução de campanha antes do adapter quando habilitado; use o [checklist](docs/pilot-shadow-mode-checklist.md), [matriz](docs/commercial-readiness-matrix.md) e [observabilidade](docs/operational-observability.md). Não habilita contato externo.
+O projeto continua sem envio externo. A operação deve usar a [matriz](docs/commercial-readiness-matrix.md), [métricas de qualidade](docs/lead-quality-metrics.md), [métricas do funil](docs/commercial-funnel-metrics.md), [checklists de shadow mode](docs/pilot-shadow-mode-checklist.md) e [piloto manual](docs/pilot-manual-checklist.md), [política de recuperação](docs/lead-recovery-policy.md) e [template de relatório](docs/commercial-readiness-report.template.json). Não há aprovação de piloto nem resultados reais neste material.
 
 ## Requisitos locais
 

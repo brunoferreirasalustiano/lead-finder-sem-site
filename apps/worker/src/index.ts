@@ -6,6 +6,7 @@ import { processNextOutbox } from './process-outbox.js';
 import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 import { hostname } from 'node:os';
 import { createGracefulStop } from './graceful-stop.js';
+import { createConsoleOperationalLogger, OperationalMetrics } from './operational-observability.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const overpass = new OverpassClient({
@@ -25,11 +26,9 @@ const executionPolicy = {
   retryBaseMs: config.OUTBOX_RETRY_BASE_MS,
   retryMaxMs: config.OUTBOX_RETRY_MAX_MS,
 };
-const operationalLogger = {
-  info: (event: string, metadata: Record<string, string | number | boolean>) => console.info(event, metadata),
-  error: (event: string, metadata: Record<string, string | number | boolean>) => console.error(event, metadata),
-};
-const shadowGuard = new ShadowModeGuard(config.SHADOW_MODE_ENABLED, operationalLogger);
+const operationalLogger = createConsoleOperationalLogger();
+const operationalMetrics = new OperationalMetrics();
+const shadowGuard = new ShadowModeGuard(config.SHADOW_MODE_ENABLED, { info: (event, metadata) => operationalLogger.info({ correlationId: String(metadata.runId), event, outcome: 'INELIGIBLE', reason: 'UNKNOWN', durationMs: Number(metadata.durationMs ?? 0) }) });
 const gracefulStop = createGracefulStop();
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
@@ -55,9 +54,8 @@ while (gracefulStop.running) {
   const collected = await processNextJob(db, overpass);
   const consumedOutbox = gracefulStop.running
     ? await processNextOutbox(db, outboxAdapter, {
-      workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy,
-      shadowGuard,
-    }, operationalLogger)
+      workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy, shadowGuard,
+    }, operationalLogger, operationalMetrics)
     : false;
   if (!collected && !consumedOutbox && gracefulStop.running) {
     await gracefulStop.wait(config.WORKER_POLL_INTERVAL_MS);

@@ -56,8 +56,11 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     await recordPilotManualContact(db,created.data.id,funnel.lead.id,{contactId:funnel.phone.id,channel:'PHONE',approvedTemplateVersionId:'synthetic-template-v1',expectedVersion:1,idempotencyKey:`${key}-manual`},auth);
     const sequence=['CONTACTED','RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED'] as const;
     let version=1;
-    for(const result of sequence){await recordPilotResult(db,created.data.id,funnel.lead.id,{result,expectedVersion:version,idempotencyKey:`${key}-${result}`},auth);version+=1;}
-    await recordPilotResult(db,created.data.id,funnel.lead.id,{result:'CONVERTED',humanConfirmedConversion:true,expectedVersion:version,idempotencyKey:`${key}-converted`},auth);
+    const funnelResults=[];
+    for(const result of sequence){funnelResults.push((await recordPilotResult(db,created.data.id,funnel.lead.id,{result,expectedVersion:version,idempotencyKey:`${key}-${result}`},auth)).data);version+=1;}
+    const conversionCommand={result:'CONVERTED' as const,humanConfirmedConversion:true as const,expectedVersion:version,idempotencyKey:`${key}-converted`};
+    const conversion=(await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).data;
+    funnelResults.push(conversion);
 
     await expectCode(recordPilotResult(db,created.data.id,invalid.lead.id,{result:'INVALID_CONTACT',contactId:funnel.email.id,reason:'Contato sintetico de outro lead',expectedVersion:0,idempotencyKey:`${key}-cross-contact`},auth),'INELIGIBLE_LEAD');
     await expectCode(recordPilotResult(db,created.data.id,invalid.lead.id,{result:'INVALID_CONTACT',contactId:crypto.randomUUID(),reason:'Contato sintetico forjado',expectedVersion:0,idempotencyKey:`${key}-forged-contact`},auth),'INELIGIBLE_LEAD');
@@ -80,9 +83,18 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal((await db.select({value:count()}).from(campaignOptOuts).where(eq(campaignOptOuts.leadId,dnc.lead.id)))[0]?.value,1);
     assert.equal((await db.select({value:count()}).from(crmTimelineEvents).where(and(eq(crmTimelineEvents.leadId,dnc.lead.id),eq(crmTimelineEvents.eventType,'DO_NOT_CONTACT'))))[0]?.value,1);
 
-    const snapshot=await getPilotSnapshot(db,created.data.id,{from:new Date(Date.now()-60_000),to:new Date(Date.now()+60_000)});
+    const response=funnelResults.find(result=>result.result==='RESPONDED')!;
+    const snapshot=await getPilotSnapshot(db,created.data.id,{from:response.recordedAt,to:conversion.recordedAt});
     assert.deepEqual({responses:snapshot.counts.totalResponses,interested:snapshot.counts.totalInterested,meetings:snapshot.counts.totalMeetingRequested,proposals:snapshot.counts.totalProposalRequested,conversions:snapshot.counts.totalConversions},{responses:1,interested:1,meetings:1,proposals:1,conversions:1});
     assert.equal(Object.values(snapshot.rates).every(rate=>rate.value===null||rate.value<=1),true);
+    assert.equal(snapshot.counts.totalAssociated,3,'multiple associated leads must be counted once each');
+    assert.doesNotMatch(JSON.stringify(snapshot),/example\.invalid|\+5500|Empresa Ficticia/i,'snapshot must not expose PII');
+    const before=await getPilotSnapshot(db,created.data.id,{from:new Date(0),to:new Date(response.recordedAt.getTime()-1)});
+    assert.equal(before.counts.totalResponses,0,'events before the period must not be counted');
+    const after=await getPilotSnapshot(db,created.data.id,{from:new Date(conversion.recordedAt.getTime()+1),to:new Date(conversion.recordedAt.getTime()+60_000)});
+    assert.equal(after.counts.totalResponses,0,'events after the period must not be counted');
+    assert.equal((await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).replayed,true);
+    assert.deepEqual((await getPilotSnapshot(db,created.data.id,{from:response.recordedAt,to:conversion.recordedAt})).counts,snapshot.counts,'replay must not change metrics');
 
     const raceLead=await createLead('concorrente');
     const raceRuns=await Promise.all([0,1].map(index=>createPilotRun(db,{name:`Race ${index}`,region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-race-run-${index}`},auth)));

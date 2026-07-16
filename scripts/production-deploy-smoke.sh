@@ -35,6 +35,7 @@ POSTGRES_PASSWORD=smoke-only-password
 SHADOW_MODE_ENABLED=false
 DATABASE_URL=postgresql://leadfinder:smoke-only-password@postgres:5432/leadfinder
 API_PORT=3000
+API_AUTH_TOKEN=synthetic-deploy-smoke-api-token-0001
 DEPLOY_MODE=tunnel
 ENABLE_N8N=false
 OVERPASS_URL=http://127.0.0.1:9
@@ -168,6 +169,9 @@ if [[ "$public_ready" != true ]]; then
   docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml logs --no-color --tail=100 caddy api
   exit 1
 fi
+anonymous_snapshot_status="$(curl -sS -o /tmp/anonymous-snapshot.json -w '%{http_code}' http://127.0.0.1:18080/internal/operational-snapshot)"
+[[ "$anonymous_snapshot_status" == 401 ]]
+curl -fsS -H 'Authorization: Bearer synthetic-deploy-smoke-api-token-0001' http://127.0.0.1:18080/internal/operational-snapshot >/dev/null
 public_config="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.public.yml -f deploy/docker-compose.public-test.yml config --format json)"
 api_published_ports="$(jq '(.services.api.ports // []) | length' <<<"$public_config")"
 postgres_published_ports="$(jq '(.services.postgres.ports // []) | length' <<<"$public_config")"

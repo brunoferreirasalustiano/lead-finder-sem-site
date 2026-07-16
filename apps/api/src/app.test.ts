@@ -19,6 +19,63 @@ const authenticatedInject = (app: ReturnType<typeof buildApp>, options: InjectOp
 });
 
 describe('security-safe API output', () => {
+  it('rejects concurrent collection requests before service or database access when egress is disabled', async () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    let databaseAccesses = 0;
+    const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; } });
+    const enqueue = vi.fn();
+    const app = buildApp(db, {
+      collectionEgressEnabled: false,
+      authentication: { token: testToken },
+      enqueueCollection: enqueue,
+    });
+    let closed = false;
+    try {
+      const request = () => authenticatedInject(app, {
+        method: 'POST',
+        url: '/collect?endpoint=https://overpass.example.test',
+        payload: { category: 'synthetic', city: 'Test', token: 'tok_secret' },
+      });
+      const responses = await Promise.all([request(), request()]);
+      for (const response of responses) {
+        expect(response.statusCode).toBe(503);
+        expect(response.json()).toEqual({
+          error: 'Collection is temporarily unavailable',
+          code: 'COLLECTION_EGRESS_DISABLED',
+        });
+        expect(response.statusCode).not.toBe(202);
+      }
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(databaseAccesses).toBe(0);
+      await app.close();
+      closed = true;
+      const logs = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(logs).toContain('COLLECTION_EGRESS_DISABLED');
+      expect(logs).toContain('requestId');
+      expect(logs).not.toMatch(/tok_secret|overpass\.example|stack|payload|endpoint/i);
+    } finally {
+      if (!closed) await app.close();
+      stdout.mockRestore();
+    }
+  });
+
+  it('preserves 202 and passes trusted authorization when egress is explicitly enabled', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'synthetic-job', status: 'PENDING' });
+    const app = buildApp({} as Database, {
+      collectionEgressEnabled: true,
+      authentication: { token: testToken },
+      enqueueCollection: enqueue,
+    });
+    const response = await authenticatedInject(app, {
+      method: 'POST', url: '/collect', payload: { category: 'oficinas', city: 'Test' },
+    });
+    expect(response.statusCode).toBe(202);
+    expect(enqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      category: 'oficinas', city: 'Test',
+    }), { enabled: true, configurationVersion: 1 });
+    await app.close();
+  });
+
   it('returns and logs a sanitized unexpected error', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const sensitive = 'private@example.test +5511999999999 tok_secret postgresql://u:p@db/x select * from lead_contacts stack-canary';

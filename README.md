@@ -341,7 +341,7 @@ cp .env.example .env
 
 Defina `POSTGRES_PASSWORD` e ajuste `DATABASE_URL`. Nenhuma credencial real acompanha o repositório.
 
-Variáveis principais: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `OVERPASS_URL`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_MAX_RETRIES`, `WORKER_POLL_INTERVAL_MS` e `DAILY_LEAD_LIMIT`.
+Variáveis principais: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `COLLECTION_EGRESS_ENABLED`, `OVERPASS_API_URL`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_MAX_RETRIES`, `WORKER_POLL_INTERVAL_MS` e `DAILY_LEAD_LIMIT`. A coleta externa permanece desabilitada por padrão; para habilitá-la, defina explicitamente `COLLECTION_EGRESS_ENABLED=true` e `OVERPASS_API_URL`.
 
 ## Execução local
 

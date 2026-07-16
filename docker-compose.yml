@@ -22,6 +22,8 @@ services:
       API_PORT: 3000
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in .env}
       DAILY_LEAD_LIMIT: ${DAILY_LEAD_LIMIT:-50}
+      COLLECTION_EGRESS_ENABLED: ${COLLECTION_EGRESS_ENABLED:-false}
+      OVERPASS_API_URL: ${OVERPASS_API_URL:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-leadfinder}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-leadfinder}
     ports: ['127.0.0.1:${API_PORT:-3000}:3000']
     depends_on: { postgres: { condition: service_healthy } }
@@ -52,7 +54,8 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-leadfinder}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-leadfinder}
-      OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+      COLLECTION_EGRESS_ENABLED: ${COLLECTION_EGRESS_ENABLED:-false}
+      OVERPASS_API_URL: ${OVERPASS_API_URL:-}
       OVERPASS_TIMEOUT_MS: ${OVERPASS_TIMEOUT_MS:-30000}
       OVERPASS_MAX_RETRIES: ${OVERPASS_MAX_RETRIES:-3}
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-60000}

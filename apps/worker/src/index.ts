@@ -1,7 +1,6 @@
 import { createDatabase } from '@lead-finder/database';
-import { OverpassClient } from '@lead-finder/overpass-client';
 import { parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
-import { processNextJob } from './process-job.js';
+import { createCollectionProcessor } from './collection-egress.js';
 import { processNextOutbox } from './process-outbox.js';
 import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 import { hostname } from 'node:os';
@@ -9,11 +8,13 @@ import { createGracefulStop } from './graceful-stop.js';
 import { createConsoleOperationalLogger, OperationalMetrics } from './operational-observability.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
-const overpass = new OverpassClient({
-  endpoint: config.OVERPASS_URL,
+const operationalLogger = createConsoleOperationalLogger();
+const processCollection = createCollectionProcessor(db, {
+  enabled: config.COLLECTION_EGRESS_ENABLED,
+  endpoint: config.OVERPASS_API_URL,
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
-});
+}, operationalLogger);
 const outboxAdapter = new SimulatedOutboxAdapter(db);
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
@@ -26,7 +27,6 @@ const executionPolicy = {
   retryBaseMs: config.OUTBOX_RETRY_BASE_MS,
   retryMaxMs: config.OUTBOX_RETRY_MAX_MS,
 };
-const operationalLogger = createConsoleOperationalLogger();
 const operationalMetrics = new OperationalMetrics();
 const shadowGuard = new ShadowModeGuard(config.SHADOW_MODE_ENABLED, { info: (event, metadata) => operationalLogger.info({ correlationId: String(metadata.runId), event, outcome: 'INELIGIBLE', reason: 'UNKNOWN', durationMs: Number(metadata.durationMs ?? 0) }) });
 const gracefulStop = createGracefulStop();
@@ -51,7 +51,7 @@ process.on('SIGINT', requestGracefulStop);
 process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error));
 process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
-  const collected = await processNextJob(db, overpass);
+  const collected = await processCollection();
   const consumedOutbox = gracefulStop.running
     ? await processNextOutbox(db, outboxAdapter, {
       workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy, shadowGuard,

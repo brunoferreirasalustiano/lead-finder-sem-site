@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
 import { and, count, eq, sql } from 'drizzle-orm';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import {
@@ -8,7 +9,7 @@ import {
 import { createDatabase } from './index.js';
 import {
   campaignOptOuts, campaigns, crmTimelineEvents, leadContacts, leads, pilotIdempotencyKeys,
-  pilotManualContacts, pilotResults, pilotRuns, pilotTimelineEvents,
+  pilotLeads, pilotManualContacts, pilotResults, pilotReviews, pilotRuns, pilotTimelineEvents,
 } from './schema.js';
 
 const expectCode = async (operation: Promise<unknown>, code: string) => assert.rejects(operation, (error: unknown) =>
@@ -26,6 +27,26 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     ]).returning();
     return {lead,email:contacts[0]!,phone:contacts[1]!};
   };
+  const metricFixtureFingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');
+  // Isolated SQL fixture for PostgreSQL timestamp precision; this is not an operational API.
+  const insertMetricResultFixture=async(input:{pilotRunId:string;leadId:string;result:string;recordedAtText:string;version:number;humanConfirmed?:boolean}):Promise<string>=>{
+    const idempotencyKey=`metric-result-${input.leadId}-${input.version}-${suffix}`;
+    const rows=await db.execute(sql<{id:string}[]>`insert into pilot_results
+      (pilot_run_id,lead_id,result,principal_id,recorded_at,human_confirmed,version,idempotency_key,payload_fingerprint)
+      values (${input.pilotRunId}::uuid,${input.leadId}::uuid,${input.result},${'metric-fixture'},${input.recordedAtText}::timestamptz,
+        ${input.humanConfirmed===true},${input.version},${idempotencyKey},${metricFixtureFingerprint(idempotencyKey)}) returning id`);
+    const id=rows[0]?.id;if(typeof id!=='string')throw new Error('Metric result fixture insert did not return an id');return id;
+  };
+  const insertMetricManualContactFixture=async(input:{pilotRunId:string;leadId:string;contactId:string;recordedAtText:string}):Promise<string>=>{
+    const idempotencyKey=`metric-contact-${input.leadId}-${suffix}`;
+    const rows=await db.execute(sql<{id:string}[]>`insert into pilot_manual_contacts
+      (pilot_run_id,lead_id,contact_id,channel,approved_template_version_id,operator_principal_id,recorded_at,idempotency_key,payload_fingerprint)
+      values (${input.pilotRunId}::uuid,${input.leadId}::uuid,${input.contactId}::uuid,${'PHONE'},${'metric-template-v1'},${'metric-fixture'},
+        ${input.recordedAtText}::timestamptz,${idempotencyKey},${metricFixtureFingerprint(idempotencyKey)}) returning id`);
+    const id=rows[0]?.id;if(typeof id!=='string')throw new Error('Metric manual-contact fixture insert did not return an id');return id;
+  };
+  const expectAppendOnly=async(operation:Promise<unknown>)=>assert.rejects(operation,(error:unknown)=>
+    typeof error==='object'&&error!==null&&'code' in error&&error.code==='55000');
   try {
     const required=['pilot_runs','pilot_leads','pilot_reviews','pilot_manual_contacts','pilot_results','pilot_timeline_events','pilot_idempotency_keys'];
     for(const table of required){const rows=await db.execute(sql<{present:boolean}[]>`select to_regclass(${`public.${table}`}) is not null present`);assert.equal(rows[0]?.present,true,`missing pilot table: ${table}`);}
@@ -56,11 +77,9 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     await recordPilotManualContact(db,created.data.id,funnel.lead.id,{contactId:funnel.phone.id,channel:'PHONE',approvedTemplateVersionId:'synthetic-template-v1',expectedVersion:1,idempotencyKey:`${key}-manual`},auth);
     const sequence=['CONTACTED','RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED'] as const;
     let version=1;
-    const funnelResults=[];
-    for(const result of sequence){funnelResults.push((await recordPilotResult(db,created.data.id,funnel.lead.id,{result,expectedVersion:version,idempotencyKey:`${key}-${result}`},auth)).data);version+=1;}
+    for(const result of sequence){await recordPilotResult(db,created.data.id,funnel.lead.id,{result,expectedVersion:version,idempotencyKey:`${key}-${result}`},auth);version+=1;}
     const conversionCommand={result:'CONVERTED' as const,humanConfirmedConversion:true as const,expectedVersion:version,idempotencyKey:`${key}-converted`};
-    const conversion=(await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).data;
-    funnelResults.push(conversion);
+    await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth);
 
     await expectCode(recordPilotResult(db,created.data.id,invalid.lead.id,{result:'INVALID_CONTACT',contactId:funnel.email.id,reason:'Contato sintetico de outro lead',expectedVersion:0,idempotencyKey:`${key}-cross-contact`},auth),'INELIGIBLE_LEAD');
     await expectCode(recordPilotResult(db,created.data.id,invalid.lead.id,{result:'INVALID_CONTACT',contactId:crypto.randomUUID(),reason:'Contato sintetico forjado',expectedVersion:0,idempotencyKey:`${key}-forged-contact`},auth),'INELIGIBLE_LEAD');
@@ -83,39 +102,65 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal((await db.select({value:count()}).from(campaignOptOuts).where(eq(campaignOptOuts.leadId,dnc.lead.id)))[0]?.value,1);
     assert.equal((await db.select({value:count()}).from(crmTimelineEvents).where(and(eq(crmTimelineEvents.leadId,dnc.lead.id),eq(crmTimelineEvents.eventType,'DO_NOT_CONTACT'))))[0]?.value,1);
 
-    const metricFrom=new Date('2026-07-16T23:59:59.999Z'),metricTo=new Date('2026-07-17T00:00:00.123Z');
-    const controlledResultTimes=new Map([
-      ['CONTACTED','2026-07-16T23:59:59.998999Z'],
-      ['RESPONDED','2026-07-16T23:59:59.999000Z'],
-      ['INTERESTED','2026-07-17T00:00:00.000123Z'],
-      ['MEETING_REQUESTED','2026-07-17T00:00:00.050000Z'],
-      ['PROPOSAL_REQUESTED','2026-07-17T00:00:00.123100Z'],
-      ['CONVERTED','2026-07-17T00:00:00.123456Z'],
-    ]);
-    for(const result of funnelResults)await db.execute(sql`update pilot_results set recorded_at=${controlledResultTimes.get(result.result)}::timestamptz where id=${result.id}::uuid`);
-    await db.execute(sql`update pilot_manual_contacts set recorded_at='2026-07-16T23:59:59.998999Z'::timestamptz where pilot_run_id=${created.data.id}::uuid and lead_id=${funnel.lead.id}::uuid`);
-    await db.execute(sql`update pilot_results set recorded_at='2026-07-17T00:00:00.124000Z'::timestamptz where id=${invalidResult.data.id}::uuid`);
+    const operationalResultsBeforeReplay=(await db.select({value:count()}).from(pilotResults).where(eq(pilotResults.pilotRunId,created.data.id)))[0]!.value;
+    const operationalTimelineBeforeReplay=(await db.select({value:count()}).from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,created.data.id)))[0]!.value;
+    assert.equal((await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).replayed,true);
+    assert.equal((await db.select({value:count()}).from(pilotResults).where(eq(pilotResults.pilotRunId,created.data.id)))[0]!.value,operationalResultsBeforeReplay);
+    assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,created.data.id)))[0]!.value,operationalTimelineBeforeReplay);
 
-    const snapshot=await getPilotSnapshot(db,created.data.id,{from:metricFrom,to:metricTo});
+    const metricRun=(await db.insert(pilotRuns).values({name:'Metric Precision Fixture',region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:2,status:'RUNNING',createdBy:'metric-fixture',startedAt:new Date('2026-07-16T23:59:59.000Z')}).returning())[0]!;
+    const metricFunnel=await createLead('metric-funnel');
+    const metricAssociated=await createLead('metric-associated');
+    await db.insert(pilotLeads).values([
+      {pilotRunId:metricRun.id,leadId:metricFunnel.lead.id,source:'SYNTHETIC',addedBy:'metric-fixture'},
+      {pilotRunId:metricRun.id,leadId:metricAssociated.lead.id,source:'SYNTHETIC',addedBy:'metric-fixture'},
+    ]);
+    await db.insert(pilotReviews).values([
+      {pilotRunId:metricRun.id,leadId:metricFunnel.lead.id,decision:'APPROVED',reviewerPrincipalId:'metric-fixture',version:1},
+      {pilotRunId:metricRun.id,leadId:metricAssociated.lead.id,decision:'APPROVED',reviewerPrincipalId:'metric-fixture',version:1},
+    ]);
+    const metricManualContactId=await insertMetricManualContactFixture({pilotRunId:metricRun.id,leadId:metricFunnel.lead.id,contactId:metricFunnel.phone.id,recordedAtText:'2026-07-16T23:59:59.998999Z'});
+    const metricResultIds:string[]=[];
+    const metricEvents=[
+      ['CONTACTED','2026-07-16T23:59:59.998999Z',false],
+      ['RESPONDED','2026-07-16T23:59:59.999000Z',false],
+      ['INTERESTED','2026-07-17T00:00:00.000123Z',false],
+      ['MEETING_REQUESTED','2026-07-17T00:00:00.050000Z',false],
+      ['PROPOSAL_REQUESTED','2026-07-17T00:00:00.123100Z',false],
+      ['CONVERTED','2026-07-17T00:00:00.123456Z',true],
+    ] as const;
+    let metricVersion=1;
+    for(const [result,recordedAtText,humanConfirmed] of metricEvents){
+      metricResultIds.push(await insertMetricResultFixture({pilotRunId:metricRun.id,leadId:metricFunnel.lead.id,result,recordedAtText,version:metricVersion,humanConfirmed}));
+      metricVersion+=1;
+    }
+    await insertMetricResultFixture({pilotRunId:metricRun.id,leadId:metricAssociated.lead.id,result:'INVALID_CONTACT',recordedAtText:'2026-07-17T00:00:00.124000Z',version:1});
+
+    const metricFrom=new Date('2026-07-16T23:59:59.999Z'),metricTo=new Date('2026-07-17T00:00:00.123Z');
+    const snapshot=await getPilotSnapshot(db,metricRun.id,{from:metricFrom,to:metricTo});
     assert.deepEqual({responses:snapshot.counts.totalResponses,interested:snapshot.counts.totalInterested,meetings:snapshot.counts.totalMeetingRequested,proposals:snapshot.counts.totalProposalRequested,conversions:snapshot.counts.totalConversions},{responses:1,interested:1,meetings:1,proposals:1,conversions:1});
     assert.equal(snapshot.counts.totalManualContacts,0,'an event before the lower bound must be excluded');
     assert.equal(snapshot.counts.totalInvalidContacts,0,'an event in the millisecond after the upper bound must be excluded');
-    const singleMillisecond=await getPilotSnapshot(db,created.data.id,{from:metricTo,to:metricTo});
+    assert.equal(snapshot.counts.totalAssociated,2,'two associated leads must be counted separately');
+    assert.equal((await db.execute(sql<{human_confirmed:boolean}[]>`select human_confirmed from pilot_results where id=${metricResultIds.at(-1)!}::uuid`))[0]!.human_confirmed,true);
+    const lowerMillisecond=await getPilotSnapshot(db,metricRun.id,{from:metricFrom,to:metricFrom});
+    assert.equal(lowerMillisecond.counts.totalResponses,1,'an event exactly at the lower bound must be included');
+    const singleMillisecond=await getPilotSnapshot(db,metricRun.id,{from:metricTo,to:metricTo});
     assert.equal(singleMillisecond.counts.totalConversions,1,'from = to must include events with additional microseconds in that millisecond');
     assert.equal(Object.values(snapshot.rates).every(rate=>rate.value===null||rate.value<=1),true);
-    assert.equal(snapshot.counts.totalAssociated,3,'multiple associated leads must be counted once each');
-    assert.doesNotMatch(JSON.stringify(snapshot),/example\.invalid|\+5500|Empresa Ficticia/i,'snapshot must not expose PII');
-    const before=await getPilotSnapshot(db,created.data.id,{from:new Date(0),to:new Date(metricFrom.getTime()-1)});
+    assert.doesNotMatch(JSON.stringify(snapshot),/example\.invalid|\+5500|Empresa Ficticia|name|phone|email|address|cnpj|message/i,'snapshot must not expose PII');
+    const before=await getPilotSnapshot(db,metricRun.id,{from:new Date(0),to:new Date(metricFrom.getTime()-1)});
     assert.equal(before.counts.totalResponses,0,'events before the period must not be counted');
-    const after=await getPilotSnapshot(db,created.data.id,{from:new Date(metricTo.getTime()+1),to:new Date(metricTo.getTime()+60_000)});
+    const after=await getPilotSnapshot(db,metricRun.id,{from:new Date(metricTo.getTime()+1),to:new Date(metricTo.getTime()+60_000)});
     assert.equal(after.counts.totalResponses,0,'events after the period must not be counted');
-    assert.equal((await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).replayed,true);
-    assert.deepEqual((await getPilotSnapshot(db,created.data.id,{from:metricFrom,to:metricTo})).counts,snapshot.counts,'replay must not change metrics');
+    assert.equal(after.rates.response.value,null,'zero denominator must remain null');
 
     const raceLead=await createLead('concorrente');
     const raceRuns=await Promise.all([0,1].map(index=>createPilotRun(db,{name:`Race ${index}`,region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-race-run-${index}`},auth)));
     const race=await Promise.allSettled(raceRuns.map((run,index)=>addPilotLead(db,run.data.id,{leadId:raceLead.lead.id,source:'SYNTHETIC',expectedVersion:1,idempotencyKey:`${key}-race-lead-${index}`},auth)));
     assert.equal(race.filter(result=>result.status==='fulfilled').length,1,'one lead must belong to only one active pilot');
+    assert.equal(race.filter(result=>result.status==='rejected'&&result.reason instanceof Error&&'code' in result.reason&&result.reason.code==='LOGICAL_CONFLICT').length,1,'the losing operation must return a logical conflict');
+    assert.equal((await db.select({value:count()}).from(pilotLeads).where(eq(pilotLeads.leadId,raceLead.lead.id)))[0]!.value,1,'the losing operation must not leave a partial association');
 
     const rollbackRun=await createPilotRun(db,{name:'Rollback Pilot',region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-rollback-run`},auth);
     const rollbackLead=await createLead('rollback');
@@ -124,17 +169,27 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     await updatePilotRunStatus(db,rollbackRun.data.id,{status:'READY',expectedVersion:2,idempotencyKey:`${key}-rollback-ready`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false});
     await updatePilotRunStatus(db,rollbackRun.data.id,{status:'RUNNING',expectedVersion:3,idempotencyKey:`${key}-rollback-running`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false});
     await db.execute(sql`create or replace function pilot_test_fail_result() returns trigger language plpgsql as $$ begin raise exception 'synthetic rollback'; end $$`);
-    await db.execute(sql`create trigger pilot_test_fail_result before insert on pilot_results for each row when (new.idempotency_key like 'rollback-failure-%') execute function pilot_test_fail_result()`);
-    await assert.rejects(recordPilotResult(db,rollbackRun.data.id,rollbackLead.lead.id,{result:'DO_NOT_CONTACT',reason:'Rollback sintetico',expectedVersion:0,idempotencyKey:`rollback-failure-${suffix}`},auth));
-    await db.execute(sql`drop trigger pilot_test_fail_result on pilot_results`); await db.execute(sql`drop function pilot_test_fail_result()`);
+    try {
+      await db.execute(sql`create trigger pilot_test_fail_result before insert on pilot_results for each row when (new.idempotency_key like 'rollback-failure-%') execute function pilot_test_fail_result()`);
+      await assert.rejects(recordPilotResult(db,rollbackRun.data.id,rollbackLead.lead.id,{result:'DO_NOT_CONTACT',reason:'Rollback sintetico',expectedVersion:0,idempotencyKey:`rollback-failure-${suffix}`},auth));
+    } finally {
+      await db.execute(sql`drop trigger if exists pilot_test_fail_result on pilot_results`);
+      await db.execute(sql`drop function if exists pilot_test_fail_result()`);
+    }
     const rolledBack=(await db.select().from(leads).where(eq(leads.id,rollbackLead.lead.id)).limit(1))[0]!;
     assert.deepEqual({isBlocked:rolledBack.isBlocked,doNotContact:rolledBack.doNotContact,crmStage:rolledBack.crmStage},{isBlocked:false,doNotContact:false,crmStage:null});
     assert.equal((await db.select({value:count()}).from(campaignOptOuts).where(eq(campaignOptOuts.leadId,rollbackLead.lead.id)))[0]?.value,0);
     assert.equal((await db.select({value:count()}).from(pilotResults).where(eq(pilotResults.leadId,rollbackLead.lead.id)))[0]?.value,0);
+    assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(and(eq(pilotTimelineEvents.pilotRunId,rollbackRun.data.id),eq(pilotTimelineEvents.leadId,rollbackLead.lead.id),eq(pilotTimelineEvents.eventType,'PILOT_RESULT_RECORDED'))))[0]!.value,0);
+    assert.equal((await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`result:${rollbackRun.data.id}`),eq(pilotIdempotencyKeys.idempotencyKey,`rollback-failure-${suffix}`))))[0]!.value,0);
 
     const event=(await db.select().from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,created.data.id)).limit(1))[0]!;
-    await assert.rejects(db.update(pilotTimelineEvents).set({eventType:'FORGED'}).where(eq(pilotTimelineEvents.id,event.id)));
-    await assert.rejects(db.delete(pilotTimelineEvents).where(eq(pilotTimelineEvents.id,event.id)));
+    await expectAppendOnly(db.execute(sql`update pilot_results set recorded_at=recorded_at where id=${metricResultIds[0]!}::uuid`));
+    await expectAppendOnly(db.execute(sql`delete from pilot_results where id=${metricResultIds[0]!}::uuid`));
+    await expectAppendOnly(db.execute(sql`update pilot_manual_contacts set recorded_at=recorded_at where id=${metricManualContactId}::uuid`));
+    await expectAppendOnly(db.execute(sql`delete from pilot_manual_contacts where id=${metricManualContactId}::uuid`));
+    await expectAppendOnly(db.update(pilotTimelineEvents).set({eventType:'FORGED'}).where(eq(pilotTimelineEvents.id,event.id)));
+    await expectAppendOnly(db.delete(pilotTimelineEvents).where(eq(pilotTimelineEvents.id,event.id)));
     assert.ok((await db.select({value:count()}).from(pilotManualContacts).where(eq(pilotManualContacts.pilotRunId,created.data.id)))[0]!.value>0);
     assert.ok((await db.select({value:count()}).from(pilotIdempotencyKeys).where(eq(pilotIdempotencyKeys.scope,`result:${created.data.id}`)))[0]!.value>0);
   } finally { await close(); }

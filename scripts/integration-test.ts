@@ -62,6 +62,13 @@ const inject = (options: InjectOptions) => app.inject({
 try {
   await db.execute(sql`
     truncate table
+      pilot_timeline_events,
+      pilot_idempotency_keys,
+      pilot_results,
+      pilot_manual_contacts,
+      pilot_reviews,
+      pilot_leads,
+      pilot_runs,
       campaign_dead_letter_recoveries,
       campaign_simulated_confirmations,
       campaign_execution_starts,

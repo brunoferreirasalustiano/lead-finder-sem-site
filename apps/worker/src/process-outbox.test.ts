@@ -4,6 +4,7 @@ import {
 } from '@lead-finder/database';
 import { processNextOutbox } from './process-outbox.js';
 import { SimulatedExecutionError, SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
+import { OperationalMetrics } from './operational-observability.js';
 import { ShadowModeGuard } from '@lead-finder/shared';
 
 vi.mock('@lead-finder/database', () => ({
@@ -89,6 +90,31 @@ describe('processNextOutbox', () => {
       event: 'campaign_outbox_retry_scheduled', outcome: 'RETRY', reason: 'SIMULATED_EXECUTION_FAILED',
       correlationId: `outbox:${claimed.id}:cycle:0`, outboxId: claimed.id, workerId: 'worker-a', generation: 1,
     }));
+  });
+
+  it('preserves a persisted opt-out block without recording failure or scheduling retry', async () => {
+    vi.mocked(claimCampaignOutbox).mockResolvedValueOnce(claimed);
+    vi.mocked(authorizeCampaignExecution).mockResolvedValueOnce({
+      decision: 'STARTED', channel: 'EMAIL', attemptId: '00000000-0000-4000-8000-000000000003',
+      executionId: '00000000-0000-4000-8000-000000000004', startedAt: now,
+    });
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    vi.spyOn(adapter, 'execute').mockResolvedValueOnce({ outcome: 'BLOCKED', reason: 'OPT_OUT' });
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const metrics = new OperationalMetrics();
+    const failureCalls = vi.mocked(failCampaignOutbox).mock.calls.length;
+
+    await expect(processNextOutbox({} as Database, adapter, input, logger, metrics)).resolves.toBe(true);
+
+    expect(completeCampaignOutbox).not.toHaveBeenCalled();
+    expect(vi.mocked(failCampaignOutbox).mock.calls).toHaveLength(failureCalls);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'campaign_outbox_execution_decided', outcome: 'INELIGIBLE', reason: 'OPT_OUT',
+    }));
+    expect(metrics.snapshot()).toMatchObject({ retryCount: 0, deadLetterCount: 0,
+      errorsByReason: { OPT_OUT: 1 } });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
   });
 
   it('ACKs a durable confirmation after the deterministic timeout without scheduling failure', async () => {

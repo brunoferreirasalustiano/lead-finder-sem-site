@@ -270,17 +270,27 @@ try {
       leadId: postAuthorizationIdentity.lead_id, channel: 'EMAIL',
       reason: 'committed after authorization', source: 'integration-test',
     });
-    await assert.rejects(() => confirmSimulatedCampaignExecution(db, {
+    const blockedOutcome = await confirmSimulatedCampaignExecution(db, {
       executionId: postAuthorizationDecision.executionId, outboxId: postAuthorizationOptOutClaim.id,
       cycle: postAuthorizationOptOutClaim.deadLetterCycle, attemptId: postAuthorizationDecision.attemptId,
       channel: postAuthorizationDecision.channel, workerId: postAuthorizationOptOutClaim.workerId,
       token: postAuthorizationOptOutClaim.token, generation: postAuthorizationOptOutClaim.generation,
       confirmedAt: postAuthorizationOptOutAt,
-    }), (error: unknown) => error instanceof Error && error.message === 'SIMULATED_CONFIRMATION_INELIGIBLE');
+    });
+    assert.deepEqual(blockedOutcome, { outcome: 'BLOCKED', reason: 'OPT_OUT' });
     assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
       FROM campaign_simulated_confirmations WHERE outbox_id = ${postAuthorizationOptOutId}::uuid`))[0]?.value, 0);
-    assert.equal((await db.execute<{ status: string }>(sql`SELECT status FROM campaign_outbox
-      WHERE id = ${postAuthorizationOptOutId}::uuid`))[0]?.status, 'BLOCKED');
+    const blocked = (await db.execute<{ status: string; attempts: number; claim_worker_id: string | null;
+      claim_token: string | null; claim_expires_at: Date | null }>(sql`SELECT status, attempts, claim_worker_id,
+      claim_token, claim_expires_at FROM campaign_outbox WHERE id = ${postAuthorizationOptOutId}::uuid`))[0];
+    assert.equal(blocked?.status, 'BLOCKED');
+    assert.equal(blocked?.attempts, 1, 'confirmation blocking must not consume another attempt');
+    assert.equal(blocked?.claim_worker_id, null); assert.equal(blocked?.claim_token, null);
+    assert.equal(blocked?.claim_expires_at, null);
+    assert.equal(await claimCampaignOutbox(second.db, {
+      workerId: 'post-authorization-retry', leaseMs: 10_000, maxAttempts: 3,
+      now: new Date(postAuthorizationOptOutAt.getTime() + 20_000),
+    }), null, 'a blocked item must remain terminal and cannot be reclaimed');
   }
 
   const utcPolicy = {
@@ -503,8 +513,12 @@ try {
     assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
       FROM campaign_simulated_confirmations WHERE outbox_id = ${confirmationClaim.id}::uuid`))[0]?.value, 0,
     'a stale worker must not persist a simulated confirmation');
-    assert.equal((await confirmSimulatedCampaignExecution(db, confirmationInput)).replayed, false);
-    assert.equal((await confirmSimulatedCampaignExecution(second.db, confirmationInput)).replayed, true);
+    assert.deepEqual(await confirmSimulatedCampaignExecution(db, confirmationInput), {
+      outcome: 'CONFIRMED', executionId: confirmationAuthorization.executionId, replayed: false,
+    });
+    assert.deepEqual(await confirmSimulatedCampaignExecution(second.db, confirmationInput), {
+      outcome: 'CONFIRMED', executionId: confirmationAuthorization.executionId, replayed: true,
+    });
     assert.equal((await db.execute<{ value: number }>(sql`SELECT count(*)::int AS value
       FROM campaign_simulated_confirmations WHERE outbox_id = ${confirmationClaim.id}::uuid AND cycle = 0`))[0]?.value, 1);
     const restartedAt = new Date(confirmationAt.getTime() + 10_001);
@@ -516,10 +530,10 @@ try {
     assert.equal(restartedAuthorization.decision, 'STARTED');
     if (restartedAuthorization.decision === 'STARTED') {
       assert.equal(restartedAuthorization.executionId, confirmationAuthorization.executionId);
-      assert.equal((await confirmSimulatedCampaignExecution(second.db, {
+      assert.deepEqual(await confirmSimulatedCampaignExecution(second.db, {
         ...confirmationInput, workerId: restartedClaim.workerId, token: restartedClaim.token,
         generation: restartedClaim.generation, confirmedAt: restartedAt,
-      })).replayed, true);
+      }), { outcome: 'CONFIRMED', executionId: confirmationAuthorization.executionId, replayed: true });
     }
     assert.equal(await completeCampaignOutbox(second.db, restartedClaim, restartedAt), true);
   }
@@ -536,13 +550,13 @@ try {
   );
   assert.equal(finalConfirmationAuthorization.decision, 'STARTED');
   if (finalConfirmationAuthorization.decision === 'STARTED') {
-    assert.equal((await confirmSimulatedCampaignExecution(db, {
+    assert.deepEqual(await confirmSimulatedCampaignExecution(db, {
       executionId: finalConfirmationAuthorization.executionId, outboxId: finalConfirmationClaim.id,
       cycle: finalConfirmationClaim.deadLetterCycle, attemptId: finalConfirmationAuthorization.attemptId,
       channel: finalConfirmationAuthorization.channel, workerId: finalConfirmationClaim.workerId,
       token: finalConfirmationClaim.token, generation: finalConfirmationClaim.generation,
       confirmedAt: finalConfirmationAt,
-    })).replayed, false);
+    }), { outcome: 'CONFIRMED', executionId: finalConfirmationAuthorization.executionId, replayed: false });
   }
   await claimCampaignOutbox(second.db, {
     workerId: 'confirmed-final-sweeper', leaseMs: 10_000, maxAttempts: 3,

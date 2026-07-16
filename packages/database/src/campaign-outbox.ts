@@ -350,14 +350,27 @@ async function finalizeExpiredFinalAttempt(db: Database, maxAttempts: number, no
   });
 }
 
+export type SimulatedConfirmationBlockReason =
+  | 'LEAD_BLOCKED'
+  | 'DO_NOT_CONTACT'
+  | 'CRM_DO_NOT_CONTACT'
+  | 'OPT_OUT'
+  | 'UNKNOWN';
+
 export class SimulatedConfirmationError extends Error {
-  constructor(readonly code: 'STALE' | 'IDENTITY_CONFLICT' | 'INELIGIBLE') { super(`SIMULATED_CONFIRMATION_${code}`); }
+  constructor(readonly code: 'STALE' | 'IDENTITY_CONFLICT') {
+    super(`SIMULATED_CONFIRMATION_${code}`);
+    this.name = 'SimulatedConfirmationError';
+  }
 }
 
 export async function confirmSimulatedCampaignExecution(db: Database, input: {
   executionId: string; outboxId: string; cycle: number; attemptId?: string; channel: string;
   workerId: string; token: string; generation: number; confirmedAt?: Date;
-}): Promise<{ executionId: string; replayed: boolean }> {
+}): Promise<
+  | { outcome: 'CONFIRMED'; executionId: string; replayed: boolean }
+  | { outcome: 'BLOCKED'; reason: SimulatedConfirmationBlockReason }
+> {
   const confirmedAt = input.confirmedAt ?? new Date();
   const result = await db.transaction(async (tx) => {
     const identities = await tx.execute<{
@@ -396,14 +409,18 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
         FROM leads l WHERE l.id = ${identity.lead_id}::uuid FOR UPDATE
       `);
       const lead = eligibility[0];
-      if (!lead || lead.is_blocked || lead.do_not_contact
-        || lead.crm_stage === 'NAO_CONTATAR' || lead.has_opt_out) {
+      const blockedReason: SimulatedConfirmationBlockReason | null = !lead ? 'UNKNOWN'
+        : lead.is_blocked ? 'LEAD_BLOCKED'
+          : lead.do_not_contact ? 'DO_NOT_CONTACT'
+            : lead.crm_stage === 'NAO_CONTATAR' ? 'CRM_DO_NOT_CONTACT'
+              : lead.has_opt_out ? 'OPT_OUT' : null;
+      if (blockedReason) {
         await tx.execute(sql`UPDATE campaign_outbox SET status = 'BLOCKED',
           claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
           WHERE id = ${input.outboxId}::uuid AND status = 'PENDING'
             AND claim_worker_id = ${input.workerId} AND claim_token = ${input.token}::uuid
             AND claim_generation = ${input.generation} AND dead_letter_cycle = ${input.cycle}`);
-        return { blocked: true as const };
+        return { blocked: true as const, reason: blockedReason };
       }
     }
     const inserted = await tx.execute<{ execution_id: string }>(sql`
@@ -423,8 +440,8 @@ export async function confirmSimulatedCampaignExecution(db: Database, input: {
     }
     return { blocked: false as const, executionId: existing[0].execution_id, replayed: true };
   });
-  if (result.blocked) throw new SimulatedConfirmationError('INELIGIBLE');
-  return { executionId: result.executionId, replayed: result.replayed };
+  if (result.blocked) return { outcome: 'BLOCKED', reason: result.reason };
+  return { outcome: 'CONFIRMED', executionId: result.executionId, replayed: result.replayed };
 }
 export type CampaignDeadLetterRecoveryResult = { recoveryId: string; outboxId: string; fromCycle: number; toCycle: number; replayed: boolean };
 export class CampaignRecoveryError extends Error {

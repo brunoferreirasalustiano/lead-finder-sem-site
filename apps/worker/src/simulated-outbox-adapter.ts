@@ -1,10 +1,18 @@
-import { confirmSimulatedCampaignExecution, type Database } from '@lead-finder/database';
+import {
+  confirmSimulatedCampaignExecution,
+  type Database,
+  type SimulatedConfirmationBlockReason,
+} from '@lead-finder/database';
 
-export interface SimulatedExecution {
+export type SimulatedExecution = {
+  outcome: 'CONFIRMED';
   executionId: string;
   replayed: boolean;
   reconciled: boolean;
-}
+} | {
+  outcome: 'BLOCKED';
+  reason: SimulatedConfirmationBlockReason;
+};
 
 export type SimulatedFault = 'NONE' | 'TIMEOUT_BEFORE_CONFIRMATION' | 'TIMEOUT_AFTER_CONFIRMATION';
 export class SimulatedExecutionError extends Error {
@@ -24,6 +32,7 @@ export class SimulatedOutboxAdapter {
       workerId: input.workerId, token: input.token, generation: input.generation,
       ...(input.confirmedAt ? { confirmedAt: input.confirmedAt } : {}),
     });
+    if (confirmation.outcome === 'BLOCKED') return confirmation;
     if (this.fault === 'TIMEOUT_AFTER_CONFIRMATION' && !confirmation.replayed) {
       throw new SimulatedExecutionError('SIMULATED_TIMEOUT_AFTER_CONFIRMATION');
     }

@@ -18,6 +18,7 @@
 		max_size 1MB
 	}
 	reverse_proxy api:3000 {
+		# The upstream API enforces authentication; Caddy forwards Authorization unchanged.
 		health_uri /health/ready
 		health_interval 30s
 		health_timeout 5s

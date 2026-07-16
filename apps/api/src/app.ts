@@ -84,6 +84,7 @@ import {
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { simulateCampaignMessage } from './campaign-simulation.js';
+import { installAuthorization, type AuthenticationOptions } from './auth.js';
 
 const idSchema = z.string().uuid();
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
@@ -123,7 +124,12 @@ export const safeCampaignFailureItem = (value: unknown) => {
     createdAt: item['createdAt'],
   };
 };
-export function buildApp(db: Database, options: { dailyLeadLimit?: number; operationalBacklogDegradedCount?: number; operationalOldestPendingDegradedMs?: number } = {}) {
+export function buildApp(db: Database, options: {
+  dailyLeadLimit?: number;
+  operationalBacklogDegradedCount?: number;
+  operationalOldestPendingDegradedMs?: number;
+  authentication?: AuthenticationOptions;
+} = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const app = Fastify({ logger: true, bodyLimit: 16_384, requestTimeout: 15_000 });
   app.setErrorHandler((error, request, reply) => {
@@ -135,6 +141,7 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number; opera
     request.log.error({ event: 'request_failed', code: 'INTERNAL_ERROR', requestId: request.id }, 'request_failed');
     return reply.status(500).send({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
   });
+  installAuthorization(app, options.authentication);
   app.get('/health/live', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
   const ready = async (
     _request: unknown,
@@ -146,7 +153,7 @@ export function buildApp(db: Database, options: { dailyLeadLimit?: number; opera
         oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
       });
       if (readiness.status === 'unhealthy') return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
-      return { status: readiness.status, timestamp: new Date().toISOString(), snapshot: readiness.snapshot };
+      return { status: readiness.status, timestamp: new Date().toISOString() };
     } catch {
       return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
     }

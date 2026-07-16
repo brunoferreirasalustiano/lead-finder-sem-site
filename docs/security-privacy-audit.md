@@ -6,14 +6,14 @@ Base auditada: `2533e7e40f1b633fc05c83e23576858b09da7630`. Escopo: operação sh
 
 | Dado | Origem | Finalidade | Persistência | Exposição | Retenção | Risco | Controle existente | Controle faltante / decisão |
 |---|---|---|---|---|---|---|---|---|
-| Nome empresarial, endereço e localização | Overpass/API | qualificação | `leads`, snapshots | APIs de leads/CSV | enquanto necessário ao piloto | PII/comercial | Zod, paginação, dedupe OSM | exclusão formal e perímetro autenticado |
-| Nome de contato, telefone, WhatsApp e e-mail | API/qualificação | validar contato | `lead_contacts`, snapshots | APIs autorizadas; nunca observabilidade | enquanto consentido/necessário | alto | flags de validade, bloqueio e opt-out | autenticação antes de exposição pública |
+| Nome empresarial, endereço e localização | Overpass/API | qualificação | `leads`, snapshots | APIs de leads/CSV | enquanto necessário ao piloto | PII/comercial | Zod, paginação, dedupe OSM, autenticação na API | exclusão formal |
+| Nome de contato, telefone, WhatsApp e e-mail | API/qualificação | validar contato | `lead_contacts`, snapshots | APIs autorizadas; nunca observabilidade | enquanto consentido/necessário | alto | autenticação/autorização na API, flags de validade, bloqueio e opt-out | autorização por objeto antes de multiusuário |
 | CNPJ e identificadores externos | fonte de lead | dedupe/rastreio | identificadores de lead quando presentes | APIs operacionais | enquanto necessário | correlação | dedupe e IDs internos | CNPJ não possui fluxo dedicado atual |
 | Payload bruto, mensagem e template | campanha/simulação | evidência e replay | recipient/attempt snapshots, outbox/dead-letter | não deve sair em endpoints internos agregados | mínima para replay/incidente | alto | projeções seguras após esta auditoria | política de anonimização histórica |
 | Tokens, leases e idempotency keys | worker/API | concorrência e replay | outbox/audit | somente banco; nunca resposta/log | vida operacional/auditoria mínima | alto | fencing e logs allowlisted | rotação/expurgo por política |
 | Opt-out, bloqueio e histórico | API/CRM/campanha | impedir contato | leads, opt-outs, timeline | somente motivo seguro/agregado | opt-out permanente; histórico mínimo | crítico | opt-out imutável, transações e precedência | reconciliação pós-restore |
 
-Não existe fluxo de PDF. CSV de leads é exportação com PII por contrato e deve permanecer atrás de perímetro protegido; snapshots e relatórios operacionais são agregados.
+Não existe fluxo de PDF. CSV de leads é exportação com PII por contrato e exige Bearer com `leads:export` dentro da aplicação; snapshots e relatórios operacionais são agregados e exigem `operations:read`. O perímetro é apenas defesa em profundidade.
 
 ## Findings
 

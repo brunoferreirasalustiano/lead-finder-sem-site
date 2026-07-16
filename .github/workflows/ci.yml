@@ -25,6 +25,7 @@ jobs:
       - name: Validate Docker Compose
         env:
           POSTGRES_PASSWORD: ci-not-a-secret
+          API_AUTH_TOKEN: synthetic-ci-api-token-not-a-secret-0001
           SHADOW_MODE_ENABLED: 'false'
         run: docker compose config
       - name: Validate deployment scripts
@@ -39,6 +40,7 @@ jobs:
       - name: Validate production Docker Compose
         env:
           POSTGRES_PASSWORD: ci-not-a-secret
+          API_AUTH_TOKEN: synthetic-ci-api-token-not-a-secret-0001
           DATABASE_URL: postgresql://leadfinder:ci-not-a-secret@postgres:5432/leadfinder
           N8N_ENCRYPTION_KEY: ci-not-a-secret
           SHADOW_MODE_ENABLED: 'false'

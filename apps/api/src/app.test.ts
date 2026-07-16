@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { InjectOptions } from 'light-my-request';
 import type { Database } from '@lead-finder/database';
 import {
   buildApp,
@@ -9,16 +10,22 @@ import {
 } from './app.js';
 
 const sensitivePattern = /private@example\.test|\+5511999999999|tok_secret|postgresql:\/\/|select \* from|lead_contacts|stack-canary/i;
+const testToken = 'synthetic-api-token-for-tests-only-0001';
+const authenticatedApp = (db: Database) => buildApp(db, { authentication: { token: testToken } });
+const authenticatedInject = (app: ReturnType<typeof buildApp>, options: InjectOptions) => app.inject({
+  ...options,
+  headers: { ...options.headers, authorization: `Bearer ${testToken}` },
+});
 
 describe('security-safe API output', () => {
   it('returns and logs a sanitized unexpected error', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const sensitive = 'private@example.test +5511999999999 tok_secret postgresql://u:p@db/x select * from lead_contacts stack-canary';
     const db = new Proxy({} as Database, { get: () => { throw new Error(sensitive); } });
-    const app = buildApp(db);
+    const app = authenticatedApp(db);
     let closed = false;
     try {
-      const response = await app.inject({ method: 'GET', url: '/leads?page=1&pageSize=20' });
+      const response = await authenticatedInject(app, { method: 'GET', url: '/leads?page=1&pageSize=20' });
       expect(response.statusCode).toBe(500);
       expect(response.json()).toEqual({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
       await app.close();
@@ -33,8 +40,8 @@ describe('security-safe API output', () => {
   });
 
   it('preserves a safe client-error status for malformed JSON', async () => {
-    const app = buildApp({} as Database);
-    const response = await app.inject({
+    const app = authenticatedApp({} as Database);
+    const response = await authenticatedInject(app, {
       method: 'POST', url: '/collect', headers: { 'content-type': 'application/json' }, payload: '{',
     });
     expect(response.statusCode).toBe(400);
@@ -91,26 +98,26 @@ describe('CRM routes', () => {
   });
 
   it('rejects malformed stage commands before accessing the database', async () => {
-    const app = buildApp(db);
-    const response = await app.inject({ method: 'PATCH', url: `/leads/${leadId}/crm/stage`, payload: { stage: 'GANHO' } });
+    const app = authenticatedApp(db);
+    const response = await authenticatedInject(app, { method: 'PATCH', url: `/leads/${leadId}/crm/stage`, payload: { stage: 'GANHO' } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: 'Invalid CRM stage change' });
     await app.close();
   });
 
   it('requires a deterministic UTC boundary for overdue queues', async () => {
-    const app = buildApp(db);
-    const missing = await app.inject({ method: 'GET', url: '/crm/tasks/overdue' });
-    const offset = await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00-03:00' });
+    const app = authenticatedApp(db);
+    const missing = await authenticatedInject(app, { method: 'GET', url: '/crm/tasks/overdue' });
+    const offset = await authenticatedInject(app, { method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00-03:00' });
     expect(missing.statusCode).toBe(400);
     expect(offset.statusCode).toBe(400);
     await app.close();
   });
 
   it('bounds pagination and rejects unsupported query keys', async () => {
-    const app = buildApp(db);
-    const tooLarge = await app.inject({ method: 'GET', url: `/leads/${leadId}/notes?pageSize=101` });
-    const unknown = await app.inject({ method: 'GET', url: `/leads/${leadId}/tags?unexpected=true` });
+    const app = authenticatedApp(db);
+    const tooLarge = await authenticatedInject(app, { method: 'GET', url: `/leads/${leadId}/notes?pageSize=101` });
+    const unknown = await authenticatedInject(app, { method: 'GET', url: `/leads/${leadId}/tags?unexpected=true` });
     expect(tooLarge.statusCode).toBe(400);
     expect(unknown.statusCode).toBe(400);
     await app.close();
@@ -122,10 +129,10 @@ describe('campaign management routes', () => {
   const id = '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa';
 
   it('previews deterministically without database access and labels simulation explicitly', async () => {
-    const app = buildApp(db);
+    const app = authenticatedApp(db);
     const payload = { channel: 'EMAIL', content: 'Olá {{name}}', allowedVariables: ['name'], values: { name: 'Ana' } };
-    const first = await app.inject({ method: 'POST', url: '/campaigns/preview', payload });
-    const second = await app.inject({ method: 'POST', url: '/campaigns/preview', payload });
+    const first = await authenticatedInject(app, { method: 'POST', url: '/campaigns/preview', payload });
+    const second = await authenticatedInject(app, { method: 'POST', url: '/campaigns/preview', payload });
     expect(first.statusCode).toBe(200);
     expect(first.json()).toEqual({ mode: 'SIMULATION', channel: 'EMAIL', content: 'Olá Ana', dispatched: false });
     expect(second.body).toBe(first.body);
@@ -133,20 +140,20 @@ describe('campaign management routes', () => {
   });
 
   it('requires HTTP idempotency for mutations before database access', async () => {
-    const app = buildApp(db);
-    const creation = await app.inject({ method: 'POST', url: '/campaigns', payload: { name: 'Test', channel: 'EMAIL', content: 'Hello', allowedVariables: [] } });
-    const pause = await app.inject({ method: 'POST', url: `/campaigns/${id}/pause`, payload: { actor: 'reviewer', expectedVersion: 1 } });
+    const app = authenticatedApp(db);
+    const creation = await authenticatedInject(app, { method: 'POST', url: '/campaigns', payload: { name: 'Test', channel: 'EMAIL', content: 'Hello', allowedVariables: [] } });
+    const pause = await authenticatedInject(app, { method: 'POST', url: `/campaigns/${id}/pause`, payload: { actor: 'reviewer', expectedVersion: 1 } });
     expect(creation.statusCode).toBe(400); expect(creation.json()).toMatchObject({ code: 'INVALID_REQUEST' });
     expect(pause.statusCode).toBe(400); expect(pause.json()).toMatchObject({ code: 'INVALID_REQUEST' });
     await app.close();
   });
 
   it('rejects malformed approvals, pagination and simulations deterministically', async () => {
-    const app = buildApp(db);
+    const app = authenticatedApp(db);
     const headers = { 'idempotency-key': 'test-key' };
-    expect((await app.inject({ method: 'POST', url: `/campaign-versions/${id}/approve`, headers, payload: { actor: ' ', approvedAt: 'invalid' } })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'GET', url: '/campaigns/eligible/leads?channel=EMAIL&pageSize=101' })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'POST', url: `/campaigns/${id}/simulations`, headers, payload: { campaignVersionId: id, channel: 'EMAIL', pageSize: 51 } })).statusCode).toBe(400);
+    expect((await authenticatedInject(app, { method: 'POST', url: `/campaign-versions/${id}/approve`, headers, payload: { actor: ' ', approvedAt: 'invalid' } })).statusCode).toBe(400);
+    expect((await authenticatedInject(app, { method: 'GET', url: '/campaigns/eligible/leads?channel=EMAIL&pageSize=101' })).statusCode).toBe(400);
+    expect((await authenticatedInject(app, { method: 'POST', url: `/campaigns/${id}/simulations`, headers, payload: { campaignVersionId: id, channel: 'EMAIL', pageSize: 51 } })).statusCode).toBe(400);
     await app.close();
   });
 });

@@ -20,6 +20,7 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 3000
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in .env}
       DAILY_LEAD_LIMIT: ${DAILY_LEAD_LIMIT:-50}
       DATABASE_URL: postgresql://${POSTGRES_USER:-leadfinder}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-leadfinder}
     ports: ['127.0.0.1:${API_PORT:-3000}:3000']

@@ -364,6 +364,17 @@ As migrations usam `schema_migrations`; executá-las novamente é seguro.
 
 ## API atual
 
+Todas as rotas, exceto `GET /health/live`, `GET /health` e `GET /health/ready`, exigem
+`Authorization: Bearer <API_AUTH_TOKEN>`. O token deve ser um secret de ambiente com pelo menos
+32 caracteres; `CHANGE_ME`, valor vazio e configuração ausente são rejeitados na inicialização.
+O Caddy apenas encaminha a requisição para uma API que já autentica e autoriza na aplicação.
+Credenciais nunca devem ser versionadas, colocadas no Caddyfile, em URLs ou query strings.
+
+O principal operacional single-operator recebe permissões explícitas para leitura de leads e
+contatos, exportação, CRM, campanhas, operações e coleta. Antes de introduzir múltiplos usuários,
+operadores ou clientes, deve ser implementada autorização adicional por objeto/tenant e uma
+identidade OIDC apropriada.
+
 - `GET /health`
 - `GET /health/live`
 - `GET /health/ready`

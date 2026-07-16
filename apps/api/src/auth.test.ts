@@ -169,6 +169,22 @@ describe('API authentication boundary', () => {
 
   it('maintains a unique explicit policy for every protected application route', () => {
     expect(permissions).toContain('crm:reactivate-do-not-contact');
+    expect(permissions).toEqual(expect.arrayContaining([
+      'pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact',
+      'pilot:record-result', 'pilot:complete',
+    ]));
+    expect(publicRoutes).not.toContain('GET /pilots');
+    expect(routePolicies.filter(({ path }) => path.startsWith('/pilots'))).toEqual([
+      { method: 'POST', path: '/pilots', permission: 'pilot:write' },
+      { method: 'GET', path: '/pilots', permission: 'pilot:read' },
+      { method: 'GET', path: '/pilots/:id', permission: 'pilot:read' },
+      { method: 'PATCH', path: '/pilots/:id/status', permission: 'pilot:write' },
+      { method: 'POST', path: '/pilots/:id/leads', permission: 'pilot:write' },
+      { method: 'POST', path: '/pilots/:id/leads/:leadId/review', permission: 'pilot:review' },
+      { method: 'POST', path: '/pilots/:id/leads/:leadId/manual-contacts', permission: 'pilot:record-contact' },
+      { method: 'POST', path: '/pilots/:id/leads/:leadId/results', permission: 'pilot:record-result' },
+      { method: 'GET', path: '/pilots/:id/snapshot', permission: 'pilot:read' },
+    ]);
     expect(routePolicies.length).toBeGreaterThan(40);
     expect(new Set(routePolicies.map(({ method, path }) => `${method} ${path}`)).size).toBe(routePolicies.length);
   });

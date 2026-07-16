@@ -21,6 +21,12 @@ export const permissions = [
   'campaigns:write',
   'operations:read',
   'collection:execute',
+  'pilot:read',
+  'pilot:write',
+  'pilot:review',
+  'pilot:record-contact',
+  'pilot:record-result',
+  'pilot:complete',
 ] as const;
 export type Permission = (typeof permissions)[number];
 
@@ -89,6 +95,15 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/campaigns/:id/audit', 'campaigns:read'),
   policy('GET', '/campaign-versions/:id/audit', 'campaigns:read'),
   policy('GET', '/campaigns/failures', 'campaigns:read'),
+  policy('POST', '/pilots', 'pilot:write'),
+  policy('GET', '/pilots', 'pilot:read'),
+  policy('GET', '/pilots/:id', 'pilot:read'),
+  policy('PATCH', '/pilots/:id/status', 'pilot:write'),
+  policy('POST', '/pilots/:id/leads', 'pilot:write'),
+  policy('POST', '/pilots/:id/leads/:leadId/review', 'pilot:review'),
+  policy('POST', '/pilots/:id/leads/:leadId/manual-contacts', 'pilot:record-contact'),
+  policy('POST', '/pilots/:id/leads/:leadId/results', 'pilot:record-result'),
+  policy('GET', '/pilots/:id/snapshot', 'pilot:read'),
   policy('POST', '/collect', 'collection:execute'),
   policy('GET', '/leads/export.csv', 'leads:export'),
 ];

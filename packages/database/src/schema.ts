@@ -388,3 +388,64 @@ export const campaignDeadLetterRecoveries = pgTable('campaign_dead_letter_recove
   check('campaign_dead_letter_recoveries_cycle_transition_check', sql`${table.toCycle} = ${table.fromCycle} + 1`),
   check('campaign_dead_letter_recoveries_timestamps_check', sql`${table.createdAt} >= ${table.recoveredAt}`),
 ]);
+
+export const pilotRuns = pgTable('pilot_runs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull(), region: text('region').notNull(), category: text('category').notNull(),
+  targetLeadCount: integer('target_lead_count').notNull(), status: text('status').notNull().default('DRAFT'),
+  campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'restrict' }),
+  createdBy: text('created_by').notNull(), startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }), version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('pilot_runs_status_updated_idx').on(table.status, table.updatedAt, table.id),
+  check('pilot_runs_target_check', sql`${table.targetLeadCount} between 1 and 30`),
+]);
+export const pilotLeads = pgTable('pilot_leads', {
+  pilotRunId: uuid('pilot_run_id').notNull().references(() => pilotRuns.id, { onDelete: 'restrict' }),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'restrict' }),
+  source: text('source').notNull(), addedBy: text('added_by').notNull(),
+  addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(), version: integer('version').notNull().default(1),
+}, (table) => [primaryKey({ name: 'pilot_leads_pkey', columns: [table.pilotRunId, table.leadId] }), index('pilot_leads_lead_idx').on(table.leadId)]);
+export const pilotReviews = pgTable('pilot_reviews', {
+  id: uuid('id').defaultRandom().primaryKey(), pilotRunId: uuid('pilot_run_id').notNull(), leadId: uuid('lead_id').notNull(),
+  decision: text('decision').notNull(), reason: text('reason'), reviewerPrincipalId: text('reviewer_principal_id').notNull(),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }).defaultNow().notNull(), version: integer('version').notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),
+  uniqueIndex('pilot_reviews_current_version_uidx').on(table.pilotRunId, table.leadId, table.version),
+  index('pilot_reviews_current_idx').on(table.pilotRunId, table.leadId, table.version),
+]);
+export const pilotManualContacts = pgTable('pilot_manual_contacts', {
+  id: uuid('id').defaultRandom().primaryKey(), pilotRunId: uuid('pilot_run_id').notNull(), leadId: uuid('lead_id').notNull(),
+  contactId: uuid('contact_id').notNull().references(() => leadContacts.id, { onDelete: 'restrict' }), channel: text('channel').notNull(),
+  approvedTemplateVersionId: text('approved_template_version_id').notNull(), operatorPrincipalId: text('operator_principal_id').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(), requestId: text('request_id'), observation: text('observation'),
+  idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),
+  uniqueIndex('pilot_manual_contacts_idempotency_uidx').on(table.pilotRunId, table.idempotencyKey), index('pilot_manual_contacts_snapshot_idx').on(table.pilotRunId, table.recordedAt),
+]);
+export const pilotResults = pgTable('pilot_results', {
+  id: uuid('id').defaultRandom().primaryKey(), pilotRunId: uuid('pilot_run_id').notNull(), leadId: uuid('lead_id').notNull(),
+  result: text('result').notNull(), channel: text('channel'), principalId: text('principal_id').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(), reason: text('reason'), nextAction: text('next_action'),
+  humanConfirmed: boolean('human_confirmed').notNull().default(false), version: integer('version').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),
+  uniqueIndex('pilot_results_idempotency_uidx').on(table.pilotRunId, table.idempotencyKey), uniqueIndex('pilot_results_version_uidx').on(table.pilotRunId, table.leadId, table.version),
+  index('pilot_results_snapshot_idx').on(table.pilotRunId, table.recordedAt),
+]);
+export const pilotTimelineEvents = pgTable('pilot_timeline_events', {
+  id: uuid('id').defaultRandom().primaryKey(), pilotRunId: uuid('pilot_run_id').notNull().references(() => pilotRuns.id, { onDelete: 'restrict' }),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'restrict' }), eventType: text('event_type').notNull(),
+  principalId: text('principal_id').notNull(), previousValue: jsonb('previous_value'), newValue: jsonb('new_value').notNull(), metadata: jsonb('metadata').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [index('pilot_timeline_run_created_idx').on(table.pilotRunId, table.createdAt, table.id)]);
+export const pilotIdempotencyKeys = pgTable('pilot_idempotency_keys', {
+  scope: text('scope').notNull(), idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
+  resourceType: text('resource_type').notNull(), resourceId: uuid('resource_id').notNull(), result: jsonb('result').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [primaryKey({ name: 'pilot_idempotency_keys_pkey', columns: [table.scope, table.idempotencyKey] })]);

@@ -84,7 +84,7 @@ import {
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { simulateCampaignMessage } from './campaign-simulation.js';
-import { installAuthorization, type AuthenticationOptions } from './auth.js';
+import { authorizationContextFor, installAuthorization, requirePermission, type AuthenticationOptions } from './auth.js';
 
 const idSchema = z.string().uuid();
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
@@ -291,7 +291,11 @@ export function buildApp(db: Database, options: {
   app.patch('/leads/:id/crm/stage', async (request, reply) => {
     const id = leadId(request); const body = crmStageChangeSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM stage change', details: body.success ? undefined : body.error.flatten() });
-    return crmRoute(reply, async () => (await changeCrmStage(db, id.data, body.data)).data);
+    if (body.data.action === 'REACTIVATE'
+      && !requirePermission(request, reply, 'crm:reactivate-do-not-contact')) return;
+    return crmRoute(reply, async () => (await changeCrmStage(
+      db, id.data, body.data, authorizationContextFor(request),
+    )).data);
   });
   app.patch('/leads/:id/crm', async (request, reply) => {
     const id = leadId(request); const body = crmAssignmentUpdateSchema.safeParse(request.body);

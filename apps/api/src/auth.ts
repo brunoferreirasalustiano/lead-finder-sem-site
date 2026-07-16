@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { createAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
 
 export const permissions = [
   'leads:read',
@@ -7,6 +8,7 @@ export const permissions = [
   'leads:export',
   'crm:read',
   'crm:write',
+  'crm:reactivate-do-not-contact',
   'campaigns:read',
   'campaigns:write',
   'operations:read',
@@ -110,6 +112,30 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
 const unauthenticated = (reply: FastifyReply) =>
   reply.header('WWW-Authenticate', 'Bearer').status(401).send({ error: 'Authentication required', code: 'UNAUTHENTICATED' });
 
+export function requirePermission(request: FastifyRequest, reply: FastifyReply, permission: Permission): boolean {
+  if (!request.principal) {
+    unauthenticated(reply);
+    return false;
+  }
+  if (request.principal.permissions.has(permission)) return true;
+  request.log.warn({
+    event: 'authorization_denied', requestId: request.id, code: 'FORBIDDEN',
+    principalId: request.principal.id, permission,
+  }, 'authorization_denied');
+  reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+  return false;
+}
+
+export function authorizationContextFor(request: FastifyRequest): AuthorizationContext {
+  if (!request.principal) throw new Error('Authenticated principal is required');
+  return createAuthorizationContext({
+    principalId: request.principal.id,
+    permissions: request.principal.permissions,
+    authenticationMethod: request.principal.authenticationSource,
+    requestId: request.id,
+  });
+}
+
 export function installAuthorization(app: FastifyInstance, options: AuthenticationOptions = {}) {
   const registeredRoutes = new Set<string>();
   app.addHook('onRoute', (route) => {
@@ -136,13 +162,14 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     if (!principal) return unauthenticated(reply);
 
     const requiredPermission = policiesByRoute.get(routeKey);
-    if (!requiredPermission || !principal.permissions.has(requiredPermission)) {
+    request.principal = principal;
+    if (!requiredPermission) {
       request.log.warn({
         event: 'authorization_denied', requestId: request.id, code: 'FORBIDDEN',
-        principalId: principal.id, permission: requiredPermission ?? 'UNCLASSIFIED_ROUTE',
+        principalId: principal.id, permission: 'UNCLASSIFIED_ROUTE',
       }, 'authorization_denied');
       return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
     }
-    request.principal = principal;
+    if (!requirePermission(request, reply, requiredPermission)) return;
   });
 }

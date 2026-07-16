@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, gte, lt, lte, sql } from 'drizzle-orm';
 import {
   assertCrmTransition, CrmDomainError, isEligibleForCommercialQueue,
+  isTrustedAuthorizationContext, type AuthorizationContext,
   type CrmPriority, type CrmStageChangeInput,
   type NoteCreateInput, type OpportunityCreateInput, type OpportunityUpdateInput,
   type TaskCompleteInput, type TaskCreateInput, type TaskRescheduleInput,
@@ -108,21 +109,40 @@ export async function updateOpportunity(db: Database, opportunityId: string, inp
   });
 }
 
-export async function changeCrmStage(db: Database, leadId: string, input: CrmStageChangeInput) {
+export async function changeCrmStage(db: Database, leadId: string, command: CrmStageChangeInput, authorization: AuthorizationContext) {
+  if (!isTrustedAuthorizationContext(authorization))
+    throw new CrmDomainError('Trusted authorization context is required', 'INVALID_REACTIVATION');
+  const replayPayload = {
+    stage: command.stage,
+    reason: command.reason,
+    action: command.action,
+    expectedVersion: command.expectedVersion,
+    principalId: authorization.principalId,
+    authenticationMethod: authorization.authenticationMethod,
+  };
   return db.transaction(async (tx) => {
     const scope = `lead:${leadId}:stage`;
-    const old = await replay<Lead>(tx, scope, input.idempotencyKey, input); if (old) return old;
+    const old = await replay<Lead>(tx, scope, command.idempotencyKey, replayPayload); if (old) return old;
     const current = (await tx.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0];
     if (!current) throw new CrmDomainError('Lead not found', 'NOT_FOUND');
     const from = current.crmStage ?? 'NOVO';
     if (from !== 'NAO_CONTATAR') await requireCommercialLead(tx, leadId);
     else if (current.qualificationStatus !== 'SEM_SITE_CONFIRMADO' || current.isBlocked || current.doNotContact)
       throw new CrmDomainError('Lead is not eligible for commercial reactivation', 'INELIGIBLE_LEAD');
-    assertCrmTransition(from, input);
-    const row = (await tx.update(leads).set({ crmStage: input.stage, crmVersion: sql`${leads.crmVersion} + 1`, crmUpdatedAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.id, leadId), eq(leads.crmVersion, input.expectedVersion))).returning())[0];
+    assertCrmTransition(from, command, authorization);
+    const auditTimestamp = new Date();
+    const auditMetadata = command.action === 'REACTIVATE' || command.action === 'REOPEN' ? {
+      action: command.action,
+      principalId: authorization.principalId,
+      authenticationMethod: authorization.authenticationMethod,
+      ...(authorization.requestId ? { requestId: authorization.requestId } : {}),
+      source: 'authenticated-api',
+      timestamp: auditTimestamp.toISOString(),
+    } : {};
+    const row = (await tx.update(leads).set({ crmStage: command.stage, crmVersion: sql`${leads.crmVersion} + 1`, crmUpdatedAt: auditTimestamp, updatedAt: auditTimestamp }).where(and(eq(leads.id, leadId), eq(leads.crmVersion, command.expectedVersion))).returning())[0];
     if (!row) throw new CrmDomainError('Lead CRM version conflict', 'VERSION_CONFLICT');
-    await event(tx, { leadId, eventType: 'STAGE_CHANGED', actor: input.actor, reason: input.reason, previousValue: { stage: from, version: current.crmVersion }, newValue: { stage: row.crmStage, version: row.crmVersion }, metadata: input.auditMetadata ?? {} });
-    await remember(tx, scope, input.idempotencyKey, input, 'lead', leadId, row); return { data: row, replayed: false };
+    await event(tx, { leadId, eventType: 'STAGE_CHANGED', actor: authorization.principalId, reason: command.reason, previousValue: { stage: from, version: current.crmVersion }, newValue: { stage: row.crmStage, version: row.crmVersion }, metadata: auditMetadata, createdAt: auditTimestamp });
+    await remember(tx, scope, command.idempotencyKey, replayPayload, 'lead', leadId, row); return { data: row, replayed: false };
   });
 }
 

@@ -67,13 +67,55 @@ export const moneySchema = z.string().regex(/^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$
 export const idempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 export const expectedVersionSchema = z.number().int().nonnegative();
 
+export const crmReactivationPermission = 'crm:reactivate-do-not-contact' as const;
+const trustedAuthorizationContexts = new WeakSet<object>();
+
+export type AuthorizationContext = Readonly<{
+  principalId: string;
+  permissions: ReadonlySet<string>;
+  authenticationMethod: string;
+  requestId?: string;
+}>;
+
+const readonlySet = <T>(values: Iterable<T>): ReadonlySet<T> => {
+  const snapshot = new Set(values);
+  const view: ReadonlySet<T> = Object.freeze({
+    get size() { return snapshot.size; },
+    has: (value: T) => snapshot.has(value),
+    entries: () => snapshot.entries(),
+    keys: () => snapshot.keys(),
+    values: () => snapshot.values(),
+    forEach: (callback: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown) =>
+      snapshot.forEach((value) => callback.call(thisArg, value, value, view)),
+    [Symbol.iterator]: () => snapshot[Symbol.iterator](),
+  });
+  return view;
+};
+
+export function createAuthorizationContext(value: AuthorizationContext): AuthorizationContext {
+  const context = Object.freeze({
+    principalId: actorSchema.parse(value.principalId),
+    permissions: readonlySet(value.permissions),
+    authenticationMethod: nonBlank(100).parse(value.authenticationMethod),
+    ...(value.requestId ? { requestId: nonBlank(100).parse(value.requestId) } : {}),
+  });
+  trustedAuthorizationContexts.add(context);
+  return context;
+}
+
+export const isTrustedAuthorizationContext = (value: unknown): value is AuthorizationContext =>
+  typeof value === 'object' && value !== null && trustedAuthorizationContexts.has(value);
+
 const commandSchema = z.object({
   actor: actorSchema,
   idempotencyKey: idempotencyKeySchema,
   expectedVersion: expectedVersionSchema,
 }).strict();
 
-export const crmStageChangeSchema = commandSchema.extend({
+export const crmStageChangeSchema = z.object({
+  actor: actorSchema.optional(),
+  idempotencyKey: idempotencyKeySchema,
+  expectedVersion: expectedVersionSchema,
   stage: crmStageSchema,
   reason: reasonSchema.optional(),
   action: z.enum(['TRANSITION', 'REACTIVATE', 'REOPEN']).default('TRANSITION'),
@@ -82,8 +124,8 @@ export const crmStageChangeSchema = commandSchema.extend({
   if (value.stage === 'NAO_CONTATAR' && !value.reason) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'Reason is required to enter NAO_CONTATAR' });
   }
-  if ((value.action === 'REACTIVATE' || value.action === 'REOPEN') && (!value.reason || !value.auditMetadata)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['auditMetadata'], message: 'Reactivation and reopen require reason, actor, and audit metadata' });
+  if ((value.action === 'REACTIVATE' || value.action === 'REOPEN') && !value.reason) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'Reactivation and reopen require a reason' });
   }
 });
 export type CrmStageChangeInput = z.infer<typeof crmStageChangeSchema>;
@@ -98,15 +140,19 @@ export const crmAssignmentUpdateSchema = commandSchema.extend({
 );
 export type CrmAssignmentUpdateInput = z.infer<typeof crmAssignmentUpdateSchema>;
 
-export function assertCrmTransition(from: CrmStage, input: CrmStageChangeInput): void {
+export function assertCrmTransition(from: CrmStage, input: CrmStageChangeInput, authorization?: AuthorizationContext): void {
   const controlledExit = from === 'NAO_CONTATAR' && input.action === 'REACTIVATE';
   const controlledReopen = (from === 'GANHO' || from === 'PERDIDO') && input.action === 'REOPEN';
   if (controlledExit || controlledReopen) {
-    if (!input.reason || !input.actor || !input.auditMetadata) {
-      throw new CrmDomainError('Controlled transition requires action, reason, actor, and audit metadata', 'INVALID_REACTIVATION');
+    if (!input.reason) {
+      throw new CrmDomainError('Controlled transition requires an action and reason', 'INVALID_REACTIVATION');
     }
     if (controlledExit && input.stage !== 'NOVO') {
       throw new CrmDomainError('NAO_CONTATAR can only be reactivated into NOVO', 'INVALID_REACTIVATION');
+    }
+    if (controlledExit && (!isTrustedAuthorizationContext(authorization)
+      || !authorization.permissions.has(crmReactivationPermission))) {
+      throw new CrmDomainError('NAO_CONTATAR reactivation requires explicit authorization', 'INVALID_REACTIVATION');
     }
     if (controlledReopen && input.stage !== 'QUALIFICADO') {
       throw new CrmDomainError('Terminal CRM stages can only reopen into QUALIFICADO', 'INVALID_REACTIVATION');

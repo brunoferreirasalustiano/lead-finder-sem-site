@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { InjectOptions } from 'light-my-request';
 import type { Database } from '@lead-finder/database';
+import { changeCrmStage } from '@lead-finder/database';
 import {
   buildApp,
   creationStatus,
@@ -103,6 +104,40 @@ describe('CRM routes', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: 'Invalid CRM stage change' });
     await app.close();
+  });
+
+  it('requires authentication and the dedicated reactivation permission before database access', async () => {
+    let databaseAccesses = 0;
+    const guardedDb = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
+    const payload = {
+      actor: 'forged-client', expectedVersion: 3, idempotencyKey: 'reactivate-0001', stage: 'NOVO',
+      action: 'REACTIVATE', reason: 'Synthetic reason', auditMetadata: { principalId: 'forged', timestamp: '2000-01-01T00:00:00Z' },
+    };
+    const anonymous = buildApp(guardedDb, { authentication: { token: testToken } });
+    expect((await anonymous.inject({ method: 'PATCH', url: `/leads/${leadId}/crm/stage`, payload })).statusCode).toBe(401);
+    await anonymous.close();
+
+    const genericWriter = buildApp(guardedDb, { authentication: { token: testToken, principalPermissions: ['crm:write'] } });
+    const forbidden = await authenticatedInject(genericWriter, {
+      method: 'PATCH', url: `/leads/${leadId}/crm/stage?principalId=forged`, payload,
+      headers: { 'x-user-id': 'forged', 'x-role': 'admin', 'x-permissions': 'crm:reactivate-do-not-contact' },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json()).toEqual({ error: 'Access denied', code: 'FORBIDDEN' });
+    expect(databaseAccesses).toBe(0);
+    await genericWriter.close();
+  });
+
+  it('rejects direct service reactivation with missing or fabricated authorization context', async () => {
+    const command = {
+      expectedVersion: 3, idempotencyKey: 'reactivate-direct-0001', stage: 'NOVO' as const,
+      action: 'REACTIVATE' as const, reason: 'Synthetic reason',
+    };
+    // @ts-expect-error Runtime defense is required even for untyped internal callers.
+    await expect(changeCrmStage(db, leadId, command)).rejects.toMatchObject({ code: 'INVALID_REACTIVATION' });
+    await expect(changeCrmStage(db, leadId, command, {
+      principalId: 'forged', permissions: new Set(['crm:reactivate-do-not-contact']), authenticationMethod: 'forged',
+    })).rejects.toMatchObject({ code: 'INVALID_REACTIVATION' });
   });
 
   it('requires a deterministic UTC boundary for overdue queues', async () => {

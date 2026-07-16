@@ -111,6 +111,7 @@ describe('API authentication boundary', () => {
   });
 
   it('maintains a unique explicit policy for every protected application route', () => {
+    expect(permissions).toContain('crm:reactivate-do-not-contact');
     expect(routePolicies.length).toBeGreaterThan(40);
     expect(new Set(routePolicies.map(({ method, path }) => `${method} ${path}`)).size).toBe(routePolicies.length);
   });

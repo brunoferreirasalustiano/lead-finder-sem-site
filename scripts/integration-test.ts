@@ -46,7 +46,8 @@ const overpass = new OverpassClient({
   maxRetries: 0,
 });
 const apiAuthToken = 'synthetic-api-token-for-integration-0001';
-const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken } });
+const authenticatedPrincipalId = 'integration-principal';
+const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId } });
 const inject = (options: InjectOptions) => app.inject({
   ...options,
   headers: { ...options.headers, authorization: `Bearer ${apiAuthToken}` },
@@ -314,9 +315,13 @@ try {
   })).statusCode, 422);
   assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
-    payload: { actor, expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { ticket: 'CONSENT-1' } },
+    payload: { actor: 'forged-client', expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { principalId: 'forged-client', timestamp: '2000-01-01T00:00:00Z' } },
   })).statusCode, 200);
-  const timeline = (await inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string }> }>().items;
+  assert.equal((await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor: 'different-forged-client', expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { arbitrary: true } },
+  })).statusCode, 200);
+  const timeline = (await inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string; actor: string; metadata: Record<string, unknown> }> }>().items;
   assert.ok(timeline.length >= 9);
   assert.equal(new Set(timeline.map((item) => item.id)).size, timeline.length, 'timeline must not duplicate events on retries');
   assert.equal(timeline.filter((item) => item.eventType === 'TAG_ADDED').length, 1, 'tag retry must not duplicate TAG_ADDED');
@@ -324,6 +329,13 @@ try {
   for (let index = 1; index < timeline.length; index += 1)
     assert.ok(timeline[index - 1]!.createdAt >= timeline[index]!.createdAt, 'timeline must be newest-first');
   assert.ok(timeline.some((item) => item.eventType === 'STAGE_CHANGED'));
+  const reactivationEvent = timeline.find((item) => item.eventType === 'STAGE_CHANGED' && item.metadata['action'] === 'REACTIVATE');
+  assert.equal(reactivationEvent?.actor, authenticatedPrincipalId, 'reactivation actor must come from the authenticated principal');
+  assert.equal(reactivationEvent?.metadata['principalId'], authenticatedPrincipalId);
+  assert.equal(reactivationEvent?.metadata['authenticationMethod'], 'BEARER_TOKEN');
+  assert.equal(reactivationEvent?.metadata['source'], 'authenticated-api');
+  assert.match(String(reactivationEvent?.metadata['timestamp']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
+  assert.notEqual(reactivationEvent?.metadata['timestamp'], '2000-01-01T00:00:00Z');
 
   const otherLead = (await db.insert(leads).values({
     osmType: 'node', osmId: 'cross-resource-lead', category: 'oficinas', score: 10,

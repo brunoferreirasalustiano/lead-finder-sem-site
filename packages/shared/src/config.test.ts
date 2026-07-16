@@ -76,6 +76,9 @@ describe('environment configuration', () => {
 
   it('fails closed and rejects invalid shadow mode values', () => {
     expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(false);
+    expect(parseApiConfig(database).REAL_PROVIDER_CONFIGURED).toBe(false);
+    expect(parseApiConfig({ ...database, REAL_PROVIDER_CONFIGURED: 'true' }).REAL_PROVIDER_CONFIGURED).toBe(true);
+    expect(() => parseApiConfig({ ...database, REAL_PROVIDER_CONFIGURED: 'yes' })).toThrow('REAL_PROVIDER_CONFIGURED');
     expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' })).toMatchObject({
       SHADOW_MODE_ENABLED: true,
       COLLECTION_EGRESS_ENABLED: false,

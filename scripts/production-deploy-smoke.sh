@@ -33,6 +33,7 @@ POSTGRES_DB=leadfinder
 POSTGRES_USER=leadfinder
 POSTGRES_PASSWORD=smoke-only-password
 SHADOW_MODE_ENABLED=false
+REAL_PROVIDER_CONFIGURED=false
 DATABASE_URL=postgresql://leadfinder:smoke-only-password@postgres:5432/leadfinder
 API_PORT=3000
 API_AUTH_TOKEN=synthetic-deploy-smoke-api-token-0001
@@ -49,6 +50,9 @@ BACKUP_RETENTION_DAYS=7
 ENV
 chmod 600 .env
 export APP_DIR="$app_dir" DEPLOY_USER="$(id -un)" COMPOSE_PROJECT_NAME="$project"
+compose_tunnel() {
+  docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.tunnel.yml "$@"
+}
 echo '::endgroup::'
 
 echo '::group::First tunnel deploy'
@@ -63,6 +67,39 @@ echo '::endgroup::'
 
 echo '::group::Tunnel readiness'
 curl -fsS http://127.0.0.1:3000/health/ready >/dev/null
+echo '::endgroup::'
+
+echo '::group::Shadow mode reaches API and worker and gates pilot readiness'
+rendered_config="$(docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml -f deploy/docker-compose.tunnel.yml config --format json)"
+[[ "$(jq -r '.services.api.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == false ]]
+[[ "$(jq -r '.services.worker.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == false ]]
+compose_tunnel exec -T api node --input-type=module -e '
+  import { addPilotLead, createDatabase, createPilotRun, leadContacts, leads, reviewPilotLead, updatePilotRunStatus } from "@lead-finder/database";
+  import { createAuthorizationContext, parseApiConfig } from "@lead-finder/shared";
+  const config=parseApiConfig(process.env); if(config.SHADOW_MODE_ENABLED) throw new Error("API did not receive false shadow mode");
+  const {db,close}=createDatabase(config.DATABASE_URL); const auth=createAuthorizationContext({principalId:"deploy-smoke",permissions:new Set(["pilot:write","pilot:review"]),authenticationMethod:"deployment-smoke"});
+  try { const key=`deploy-shadow-${crypto.randomUUID()}`; const run=await createPilotRun(db,{name:key,region:"Regiao Ficticia",category:"Categoria Ficticia",targetLeadCount:1,idempotencyKey:key},auth);
+    const lead=(await db.insert(leads).values({osmType:"node",osmId:key,category:"Categoria Ficticia",city:"Regiao Ficticia",score:1,status:"SEM_SITE_CADASTRADO",qualificationStatus:"SEM_SITE_CONFIRMADO"}).returning())[0];
+    await db.insert(leadContacts).values({leadId:lead.id,type:"EMAIL",originalValue:"shadow@example.invalid",normalizedValue:"shadow@example.invalid",source:"SYNTHETIC",confidence:"1",verifiedAt:new Date(),isValid:true});
+    await addPilotLead(db,run.data.id,{leadId:lead.id,source:"SYNTHETIC",expectedVersion:1,idempotencyKey:`${key}-lead`},auth); await reviewPilotLead(db,run.data.id,lead.id,{decision:"APPROVED",expectedVersion:0,idempotencyKey:`${key}-review`},auth);
+    let blocked=false; try { await updatePilotRunStatus(db,run.data.id,{status:"READY",expectedVersion:2,idempotencyKey:`${key}-false`},auth,{shadowModeEnabled:config.SHADOW_MODE_ENABLED,realProviderConfigured:config.REAL_PROVIDER_CONFIGURED,collectionEgressEnabled:config.COLLECTION_EGRESS_ENABLED}); } catch(error) { blocked=error?.code==="INVALID_STATE"; } if(!blocked) throw new Error("false shadow mode did not block READY");
+  } finally { await close(); }
+'
+sed -i 's/^SHADOW_MODE_ENABLED=false$/SHADOW_MODE_ENABLED=true/' .env
+compose_tunnel up -d --force-recreate api worker
+for _attempt in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then break; fi
+  [[ "$_attempt" -lt 30 ]] || { compose_tunnel logs --no-color --tail=100 api worker; exit 1; }
+  sleep 2
+done
+rendered_config="$(compose_tunnel config --format json)"
+[[ "$(jq -r '.services.api.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == true ]]
+[[ "$(jq -r '.services.worker.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == true ]]
+compose_tunnel exec -T api node --input-type=module -e '
+  import { createDatabase, pilotRuns, updatePilotRunStatus } from "@lead-finder/database"; import { createAuthorizationContext, parseApiConfig } from "@lead-finder/shared"; import { desc, like } from "drizzle-orm";
+  const config=parseApiConfig(process.env); if(!config.SHADOW_MODE_ENABLED) throw new Error("API did not receive true shadow mode"); const {db,close}=createDatabase(config.DATABASE_URL); const auth=createAuthorizationContext({principalId:"deploy-smoke",permissions:new Set(["pilot:write","pilot:review"]),authenticationMethod:"deployment-smoke"});
+  try { const run=(await db.select().from(pilotRuns).where(like(pilotRuns.name,"deploy-shadow-%")).orderBy(desc(pilotRuns.createdAt)).limit(1))[0]; if(!run) throw new Error("shadow pilot missing"); await updatePilotRunStatus(db,run.id,{status:"READY",expectedVersion:2,idempotencyKey:`${run.name}-true`},auth,{shadowModeEnabled:config.SHADOW_MODE_ENABLED,realProviderConfigured:config.REAL_PROVIDER_CONFIGURED,collectionEgressEnabled:config.COLLECTION_EGRESS_ENABLED}); } finally { await close(); }
+'
 echo '::endgroup::'
 
 echo '::group::Insert persistence probe'

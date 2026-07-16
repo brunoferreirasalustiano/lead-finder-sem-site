@@ -40,4 +40,16 @@ describe('controlled pilot API boundary', () => {
     expect(databaseAccesses).toBe(0);
     await app.close();
   });
+
+  it('rejects divergent header and body idempotency keys before database access', async () => {
+    let databaseAccesses = 0;
+    const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
+    const app = buildApp(db, { authentication: { token, principalPermissions: ['pilot:record-result'] } });
+    const response = await app.inject({ method: 'POST', url: `/pilots/123e4567-e89b-42d3-a456-426614174000/leads/123e4567-e89b-42d3-a456-426614174001/results`,
+      headers: { ...headers, 'idempotency-key': 'header-key-0001' },
+      payload: { result: 'NOT_CONTACTED', expectedVersion: 0, idempotencyKey: 'body-key-000001' } });
+    expect(response.statusCode).toBe(400);
+    expect(databaseAccesses).toBe(0);
+    await app.close();
+  });
 });

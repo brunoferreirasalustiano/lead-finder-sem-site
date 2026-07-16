@@ -80,6 +80,7 @@ export function assertPilotResultTransition(from: PilotCommercialResult, to: Pil
 }
 export const pilotResultSchema = z.object({
   ...commandFields, result: pilotCommercialResultSchema, channel: manualContactChannelSchema.optional(),
+  contactId: entityIdSchema.optional(),
   reason: nonBlank(1000).optional(), observation: nonBlank(1000).optional(), nextAction: nonBlank(500).optional(),
   humanConfirmedConversion: z.literal(true).optional(),
 }).strict().superRefine((value, context) => {
@@ -87,6 +88,10 @@ export const pilotResultSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['humanConfirmedConversion'], message: 'Human confirmation is required for conversion' });
   if ((value.result === 'DO_NOT_CONTACT' || value.result === 'INVALID_CONTACT') && !value.reason)
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'Reason is required for this result' });
+  if (value.result === 'INVALID_CONTACT' && !value.contactId)
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['contactId'], message: 'Contact id is required for an invalid contact result' });
+  if (value.result !== 'INVALID_CONTACT' && value.contactId)
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['contactId'], message: 'Contact id is only accepted for an invalid contact result' });
 });
 
 export const pilotReadinessFailureReasons = [
@@ -150,7 +155,9 @@ export type PilotMetricSnapshot = Readonly<{
     proposal: PilotMetricRate; conversion: PilotMetricRate;
   }>;
 }>;
-const rate = (numerator: number, denominator: number): PilotMetricRate => ({ numerator, denominator, value: denominator === 0 ? null : numerator / denominator });
+const rate = (numerator: number, denominator: number): PilotMetricRate => ({
+  numerator, denominator, value: denominator === 0 ? null : Math.min(1, numerator / denominator),
+});
 export function createPilotMetricSnapshot(input: unknown): PilotMetricSnapshot {
   const { period, counts } = pilotMetricSnapshotInputSchema.parse(input);
   return { period, counts, rates: {

@@ -150,6 +150,7 @@ export function buildApp(db: Database, options: {
   dailyLeadLimit?: number;
   collectionEgressEnabled?: boolean;
   shadowModeEnabled?: boolean;
+  realProviderConfigured?: boolean;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
@@ -158,6 +159,7 @@ export function buildApp(db: Database, options: {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const collectionEgressEnabled = options.collectionEgressEnabled ?? false;
   const shadowModeEnabled = options.shadowModeEnabled ?? false;
+  const realProviderConfigured = options.realProviderConfigured ?? false;
   const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
   const app = Fastify({
     logger: { serializers: { req: serializeRequestForLog } },
@@ -253,8 +255,12 @@ export function buildApp(db: Database, options: {
     try { return await operation(); } catch (error) { return campaignError(error, reply); }
   };
   const idempotencyKey = (headers: Record<string, unknown>) => z.string().trim().min(1).max(200).safeParse(headers['idempotency-key']);
-  const clientSuppliedIdempotencyKey = (body: unknown) =>
-    typeof body === 'object' && body !== null && Object.prototype.hasOwnProperty.call(body, 'idempotencyKey');
+  const commandWithHeaderKey = (body: unknown, key: ReturnType<typeof idempotencyKey>) => {
+    if (!key.success || typeof body !== 'object' || body === null) return body;
+    const supplied = (body as Record<string, unknown>)['idempotencyKey'];
+    if (supplied !== undefined && supplied !== key.data) return null;
+    return { ...body, idempotencyKey: key.data };
+  };
   const pilotError = (error: unknown, reply: Parameters<typeof crmError>[1]) => {
     if (error instanceof PilotPersistenceError) {
       const status = error.code === 'NOT_FOUND' ? 404
@@ -547,7 +553,7 @@ export function buildApp(db: Database, options: {
     return pilotRoute(reply, async () => (await updatePilotRunStatus(db, id.data,
       { ...body.data, idempotencyKey: key.data }, authorizationContextFor(request), {
         shadowModeEnabled,
-        realProviderConfigured: false,
+        realProviderConfigured,
         collectionEgressEnabled,
       })).data);
   });
@@ -566,8 +572,7 @@ export function buildApp(db: Database, options: {
   app.post('/pilots/:id/leads/:leadId/review', async (request, reply) => {
     const id = parseId(request.params); const lead = parseId(request.params, 'leadId');
     const key = idempotencyKey(request.headers);
-    const body = pilotReviewSchema.safeParse(clientSuppliedIdempotencyKey(request.body) || !key.success
-      ? request.body : { ...(request.body as object), idempotencyKey: key.data });
+    const body = pilotReviewSchema.safeParse(commandWithHeaderKey(request.body, key));
     if (!id.success || !lead.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot review', code: 'INVALID_REQUEST' });
     return pilotRoute(reply, async () => (await reviewPilotLead(db, id.data, lead.data,
       body.data, authorizationContextFor(request))).data);
@@ -586,8 +591,7 @@ export function buildApp(db: Database, options: {
   app.post('/pilots/:id/leads/:leadId/results', async (request, reply) => {
     const id = parseId(request.params); const lead = parseId(request.params, 'leadId');
     const key = idempotencyKey(request.headers);
-    const body = pilotResultSchema.safeParse(clientSuppliedIdempotencyKey(request.body) || !key.success
-      ? request.body : { ...(request.body as object), idempotencyKey: key.data });
+    const body = pilotResultSchema.safeParse(commandWithHeaderKey(request.body, key));
     if (!id.success || !lead.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot result', code: 'INVALID_REQUEST' });
     return pilotRoute(reply, async () => {
       const result = await recordPilotResult(db, id.data, lead.data,

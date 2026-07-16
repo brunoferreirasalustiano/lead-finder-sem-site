@@ -8,7 +8,7 @@ import {
 } from '@lead-finder/shared';
 import type { Database } from './index.js';
 import {
-  campaignOptOuts, campaigns, crmTimelineEvents, leadContacts, leads, pilotIdempotencyKeys, pilotLeads, pilotManualContacts,
+  campaignOptOuts, crmTimelineEvents, leadContacts, leads, pilotIdempotencyKeys, pilotLeads, pilotManualContacts,
   pilotResults, pilotReviews, pilotRuns, pilotTimelineEvents,
 } from './schema.js';
 
@@ -55,6 +55,7 @@ async function eligibility(tx: Tx, leadId: string, contactId?: string, expected?
 }
 async function currentReview(tx: Tx,pilotRunId:string,leadId:string) { return (await tx.select().from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,pilotRunId),eq(pilotReviews.leadId,leadId))).orderBy(desc(pilotReviews.version)).limit(1))[0]??null; }
 async function currentResult(tx: Tx,pilotRunId:string,leadId:string) { return (await tx.select().from(pilotResults).where(and(eq(pilotResults.pilotRunId,pilotRunId),eq(pilotResults.leadId,leadId))).orderBy(desc(pilotResults.version)).limit(1))[0]??null; }
+async function hasManualContact(tx: Tx,pilotRunId:string,leadId:string) { return !!(await tx.select({id:pilotManualContacts.id}).from(pilotManualContacts).where(and(eq(pilotManualContacts.pilotRunId,pilotRunId),eq(pilotManualContacts.leadId,leadId))).limit(1))[0]; }
 
 export async function createPilotRun(db: Database,input: PilotRunCreateInput,authorization: AuthorizationContext) {
   const auth=trusted(authorization); const payload={name:input.name,region:input.region,category:input.category,targetLeadCount:input.targetLeadCount};
@@ -81,7 +82,9 @@ async function assertReady(tx:Tx,run:typeof pilotRuns.$inferSelect,safety:PilotR
    exists(select 1 from campaign_opt_outs o where o.lead_id=l.id) has_opt_out,
    (select r.decision from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by r.version desc limit 1) decision
    from pilot_leads pl join leads l on l.id=pl.lead_id where pl.pilot_run_id=${run.id}::uuid for update of l`);
-  const campaignSimulated=!run.campaignId || !!(await tx.select({id:campaigns.id}).from(campaigns).where(eq(campaigns.id,run.campaignId)).limit(1))[0];
+  // Pilot runs currently have no command that can attach a campaign. A non-null legacy/forged
+  // association is therefore not proof of simulation and must fail closed.
+  const campaignSimulated=run.campaignId===null;
   const readinessRows=associated as unknown as Array<{qualification_status:string;is_blocked:boolean;do_not_contact:boolean;crm_stage:string|null;has_contact:boolean;has_opt_out:boolean;decision:string|null}>;
   const check=evaluatePilotReadiness({name:run.name,region:run.region,category:run.category,targetLeadCount:run.targetLeadCount,
     leads:readinessRows.map(l=>({reviewDecision:l.decision as 'APPROVED'|'REJECTED'|'NEEDS_REVIEW'|null,qualificationStatus:l.qualification_status,hasValidVerifiedContact:l.has_contact,isBlocked:l.is_blocked,doNotContact:l.do_not_contact,hasActiveOptOut:l.has_opt_out,crmStage:l.crm_stage??'NOVO',versionConsistent:true})),
@@ -123,25 +126,35 @@ export async function recordPilotManualContact(db:Database,pilotRunId:string,lea
 }
 export async function recordPilotResult(db:Database,pilotRunId:string,leadId:string,input:PilotResultInput,authorization:AuthorizationContext) {
  const auth=trusted(authorization),payload={pilotRunId,leadId,...input};return db.transaction(async tx=>{const prior=await replay<typeof pilotResults.$inferSelect>(tx,`result:${pilotRunId}`,input.idempotencyKey,payload);if(prior)return prior;const run=(await tx.select().from(pilotRuns).where(eq(pilotRuns.id,pilotRunId)).for('update').limit(1))[0];if(!run)throw new PilotPersistenceError('Pilot run not found','NOT_FOUND');if(run.status!=='RUNNING')throw new PilotPersistenceError('Pilot is not running','INVALID_STATE');await eligibility(tx,leadId,undefined,{region:run.region,category:run.category});const review=await currentReview(tx,pilotRunId,leadId);if(review?.decision!=='APPROVED')throw new PilotPersistenceError('Lead review is not approved','INELIGIBLE_LEAD');const previous=await currentResult(tx,pilotRunId,leadId);const expected=previous?.version??0;if(expected!==input.expectedVersion)throw new PilotPersistenceError('Result version conflict','VERSION_CONFLICT');
-  if(previous)try{assertPilotResultTransition(previous.result as PilotCommercialResult,input.result,input.humanConfirmedConversion===true);}catch{throw new PilotPersistenceError('Invalid commercial result transition','INVALID_STATE');}else if(input.result==='CONVERTED')throw new PilotPersistenceError('Conversion requires a prior result','INVALID_STATE');
+  const manualContact=await hasManualContact(tx,pilotRunId,leadId);
+  if(previous)try{assertPilotResultTransition(previous.result as PilotCommercialResult,input.result,input.humanConfirmedConversion===true);}catch{throw new PilotPersistenceError('Invalid commercial result transition','INVALID_STATE');}
+  else if(!['NOT_CONTACTED','INVALID_CONTACT','DO_NOT_CONTACT'].includes(input.result)&&!(input.result==='CONTACTED'&&manualContact))throw new PilotPersistenceError('A persisted manual contact and CONTACTED result are required before later results','INVALID_STATE');
+  if(['CONTACTED','NO_RESPONSE','RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','NOT_INTERESTED','CONVERTED'].includes(input.result)&&!manualContact)throw new PilotPersistenceError('A persisted manual contact is required for this result','INVALID_STATE');
   if(input.result==='DO_NOT_CONTACT'){const before=(await tx.select().from(leads).where(eq(leads.id,leadId)).limit(1))[0]!;const blocked=(await tx.update(leads).set({isBlocked:true,doNotContact:true,crmStage:'NAO_CONTATAR',crmVersion:sql`${leads.crmVersion}+1`,crmUpdatedAt:new Date(),updatedAt:new Date()}).where(eq(leads.id,leadId)).returning())[0]!;await tx.insert(campaignOptOuts).values({leadId,channel:null,reason:sanitize(input.reason,1000)!,source:'PILOT_MANUAL_RESULT'}).onConflictDoNothing();await tx.insert(crmTimelineEvents).values({leadId,eventType:'DO_NOT_CONTACT',actor:auth.principalId,reason:sanitize(input.reason,1000),previousValue:before,newValue:blocked,metadata:{source:'PILOT_MANUAL_RESULT',pilotRunId}});}
-  if(input.result==='INVALID_CONTACT')await tx.update(leadContacts).set({isValid:false,updatedAt:new Date()}).where(eq(leadContacts.leadId,leadId));
+  if(input.result==='INVALID_CONTACT'){
+    const contact=(await tx.select().from(leadContacts).where(and(eq(leadContacts.id,input.contactId!),eq(leadContacts.leadId,leadId))).for('update').limit(1))[0];
+    if(!contact||!contact.isValid||!contact.verifiedAt||!contact.source.trim())throw new PilotPersistenceError('Contact is not eligible for invalidation','INELIGIBLE_LEAD');
+    const updated=(await tx.update(leadContacts).set({isValid:false,updatedAt:new Date()}).where(and(eq(leadContacts.id,input.contactId!),eq(leadContacts.leadId,leadId))).returning({id:leadContacts.id}))[0];
+    if(!updated)throw new PilotPersistenceError('Contact not found','NOT_FOUND');
+  }
   const row=(await tx.insert(pilotResults).values({pilotRunId,leadId,result:input.result,channel:input.channel,principalId:auth.principalId,reason:sanitize(input.reason??input.observation,1000),nextAction:sanitize(input.nextAction,500),humanConfirmed:input.humanConfirmedConversion===true,version:expected+1,idempotencyKey:input.idempotencyKey,payloadFingerprint:pilotFingerprint(payload)}).returning())[0]!;await timeline(tx,{pilotRunId,leadId,eventType:'PILOT_RESULT_RECORDED',principalId:auth.principalId,previousValue:previous,newValue:{id:row.id,result:row.result,channel:row.channel,recordedAt:row.recordedAt,version:row.version}});await remember(tx,`result:${pilotRunId}`,input.idempotencyKey,payload,'pilot-result',row.id,row);return{data:row,replayed:false};});
 }
 export async function getPilotSnapshot(db:Database,pilotRunId:string,period:{from:Date;to:Date}={from:new Date(0),to:new Date()}) {
+ // Funnel metrics use milestone-achieved semantics within the requested period. Every metric counts
+ // distinct leads, never event rows; no state outside the period is inferred.
  const run=(await db.select().from(pilotRuns).where(eq(pilotRuns.id,pilotRunId)).limit(1))[0];if(!run)throw new PilotPersistenceError('Pilot run not found','NOT_FOUND');
  const rows=await db.execute(sql<{total_associated:number;total_approved:number;total_rejected:number;total_needs_review:number;total_without_site:number;total_valid_contacts:number;total_manual_contacts:number;total_responses:number;total_interested:number;total_meetings:number;total_proposals:number;total_conversions:number;total_opt_outs:number;total_invalid:number;total_blocked:number}[]>`
  select count(distinct pl.lead_id)::int total_associated,
  count(distinct pl.lead_id) filter(where rv.decision='APPROVED')::int total_approved,count(distinct pl.lead_id) filter(where rv.decision='REJECTED')::int total_rejected,count(distinct pl.lead_id) filter(where rv.decision='NEEDS_REVIEW' or rv.decision is null)::int total_needs_review,
  count(distinct pl.lead_id) filter(where l.qualification_status='SEM_SITE_CONFIRMADO')::int total_without_site,count(distinct pl.lead_id) filter(where exists(select 1 from lead_contacts c where c.lead_id=l.id and c.is_valid and c.verified_at is not null))::int total_valid_contacts,
- (select count(*)::int from pilot_manual_contacts c where c.pilot_run_id=${pilotRunId}::uuid and c.recorded_at between ${period.from} and ${period.to}) total_manual_contacts,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result in ('RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_responses,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='INTERESTED') total_interested,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='MEETING_REQUESTED') total_meetings,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='PROPOSAL_REQUESTED') total_proposals,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='CONVERTED' and r.human_confirmed) total_conversions,
+ (select count(distinct c.lead_id)::int from pilot_manual_contacts c where c.pilot_run_id=${pilotRunId}::uuid and c.recorded_at between ${period.from} and ${period.to}) total_manual_contacts,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result in ('RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_responses,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result in ('INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_interested,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='MEETING_REQUESTED') total_meetings,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result in ('PROPOSAL_REQUESTED','CONVERTED')) total_proposals,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='CONVERTED' and r.human_confirmed) total_conversions,
  count(distinct pl.lead_id) filter(where exists(select 1 from campaign_opt_outs o where o.lead_id=pl.lead_id))::int total_opt_outs,
- (select count(*)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='INVALID_CONTACT') total_invalid,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${period.from} and ${period.to} and r.result='INVALID_CONTACT') total_invalid,
  count(distinct pl.lead_id) filter(where l.is_blocked)::int total_blocked from pilot_leads pl join leads l on l.id=pl.lead_id
  left join lateral(select decision from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by version desc limit 1) rv on true where pl.pilot_run_id=${pilotRunId}::uuid`);
  const r=rows[0]!,counts={totalAssociated:r.total_associated,totalApproved:r.total_approved,totalRejected:r.total_rejected,totalNeedsReview:r.total_needs_review,totalWithoutSiteConfirmed:r.total_without_site,totalValidContacts:r.total_valid_contacts,totalManualContacts:r.total_manual_contacts,totalResponses:r.total_responses,totalInterested:r.total_interested,totalMeetingRequested:r.total_meetings,totalProposalRequested:r.total_proposals,totalConversions:r.total_conversions,totalOptOuts:r.total_opt_outs,totalInvalidContacts:r.total_invalid,totalBlocked:r.total_blocked,totalIncidents:0};

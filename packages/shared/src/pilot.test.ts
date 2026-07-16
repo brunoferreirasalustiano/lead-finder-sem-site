@@ -60,7 +60,9 @@ describe('pilot shared contracts', () => {
     expect(() => assertPilotResultTransition('NOT_CONTACTED', 'INTERESTED', true)).toThrow();
     expect(() => pilotResultSchema.parse({ result: 'CONVERTED', expectedVersion: 1, idempotencyKey: key })).toThrow();
     expect(() => pilotResultSchema.parse({ result: 'DO_NOT_CONTACT', expectedVersion: 1, idempotencyKey: key })).toThrow();
-    expect(pilotResultSchema.parse({ result: 'INVALID_CONTACT', reason: 'Canario invalido', expectedVersion: 1, idempotencyKey: key }).result).toBe('INVALID_CONTACT');
+    expect(() => pilotResultSchema.parse({ result: 'INVALID_CONTACT', reason: 'Canario invalido', expectedVersion: 1, idempotencyKey: key })).toThrow();
+    expect(pilotResultSchema.parse({ result: 'INVALID_CONTACT', contactId: id, reason: 'Canario invalido', expectedVersion: 1, idempotencyKey: key }).result).toBe('INVALID_CONTACT');
+    expect(() => pilotResultSchema.parse({ result: 'CONTACTED', contactId: id, expectedVersion: 1, idempotencyKey: key })).toThrow();
   });
 });
 
@@ -112,5 +114,10 @@ describe('pilot metrics', () => {
     expect(() => createPilotMetricSnapshot({ period: { from: '2030-01-02T00:00:00Z', to: '2030-01-01T00:00:00Z' }, counts: zeroCounts })).toThrow();
     expect(() => createPilotMetricSnapshot({ period: { from: '2030-01-01T00:00:00+01:00', to: '2030-01-02T00:00:00Z' }, counts: zeroCounts })).toThrow();
     expect(() => createPilotMetricSnapshot({ period: { from: '2030-01-01T00:00:00Z', to: '2030-01-02T00:00:00Z' }, counts: { ...zeroCounts, totalAssociated: -1 } })).toThrow();
+  });
+  it('never emits a funnel rate above one for a partial period', () => {
+    const counts = { ...zeroCounts, totalResponses: 1, totalInterested: 2, totalProposalRequested: 3, totalConversions: 4 };
+    const snapshot = createPilotMetricSnapshot({ period: { from: '2030-01-01T00:00:00Z', to: '2030-01-02T00:00:00Z' }, counts });
+    expect(Object.values(snapshot.rates).every(({ value }) => value === null || value <= 1)).toBe(true);
   });
 });

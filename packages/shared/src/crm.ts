@@ -130,6 +130,16 @@ export const crmStageChangeSchema = z.object({
 });
 export type CrmStageChangeInput = z.infer<typeof crmStageChangeSchema>;
 
+export function legacyCrmStageReplayPayload(
+  command: CrmStageChangeInput,
+  authorization: AuthorizationContext,
+): CrmStageChangeInput | undefined {
+  if (!isTrustedAuthorizationContext(authorization)
+    || command.actor === undefined
+    || command.actor !== authorization.principalId) return undefined;
+  return command;
+}
+
 export const crmAssignmentUpdateSchema = commandSchema.extend({
   owner: nonBlank(100).nullable().optional(),
   priority: crmPrioritySchema.optional(),

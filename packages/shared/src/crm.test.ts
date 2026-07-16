@@ -3,7 +3,7 @@ import {
   CrmDomainError, assertCrmTransition, canTransitionCrmStage, crmAssignmentUpdateSchema, crmStageChangeSchema,
   crmStages, crmTransitionGraph, followUpFilterSchema, idempotencyKeySchema, moneySchema,
   createAuthorizationContext, isEligibleForCommercialQueue, noteCreateSchema, opportunityUpdateSchema,
-  taskCreateSchema, utcDateTimeSchema,
+  legacyCrmStageReplayPayload, taskCreateSchema, utcDateTimeSchema,
 } from './crm.js';
 
 const command = { actor: 'user-1', idempotencyKey: 'request-123', expectedVersion: 0 };
@@ -24,6 +24,22 @@ describe('CRM contracts', () => {
   it('requires a reason to enter NAO_CONTATAR', () => {
     expect(crmStageChangeSchema.safeParse({ ...command, stage: 'NAO_CONTATAR' }).success).toBe(false);
     expect(crmStageChangeSchema.safeParse({ ...command, stage: 'NAO_CONTATAR', reason: 'Opt-out' }).success).toBe(true);
+  });
+
+  it('reconstructs a legacy stage payload only for the same trusted principal', () => {
+    const authorization = createAuthorizationContext({
+      principalId: 'user-1', permissions: new Set(['crm:write']), authenticationMethod: 'BEARER_TOKEN',
+    });
+    const legacy = crmStageChangeSchema.parse({
+      ...command, stage: 'EM_VALIDACAO', reason: 'Qualified', auditMetadata: { source: 'synthetic' },
+    });
+    expect(legacyCrmStageReplayPayload(legacy, authorization)).toEqual(legacy);
+    expect(legacy.action).toBe('TRANSITION');
+    expect(legacyCrmStageReplayPayload({ ...legacy, actor: 'other-user' }, authorization)).toBeUndefined();
+    expect(legacyCrmStageReplayPayload({ ...legacy, actor: undefined }, authorization)).toBeUndefined();
+    expect(legacyCrmStageReplayPayload(legacy, {
+      principalId: 'user-1', permissions: new Set(['crm:write']), authenticationMethod: 'BEARER_TOKEN',
+    })).toBeUndefined();
   });
 
   it('requires explicit audited action to exit NAO_CONTATAR or reopen terminal stages', () => {

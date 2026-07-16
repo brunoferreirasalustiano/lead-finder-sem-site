@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import type { Database } from '@lead-finder/database';
 import { buildApp } from './app.js';
-import { installAuthorization, permissions, publicRoutes, routePolicies } from './auth.js';
+import { installAuthorization, permissions, publicRoutes, routePolicies, serializeRequestForLog } from './auth.js';
 
 const token = 'synthetic-api-token-for-tests-only-0001';
 const authorization = { authorization: `Bearer ${token}` };
@@ -108,6 +108,63 @@ describe('API authentication boundary', () => {
     } finally {
       stdout.mockRestore();
     }
+  });
+
+  it('structurally removes query strings and excludes headers and bodies from request logs', async () => {
+    const canaries = [
+      'synthetic-secret-canary', 'encoded-secret-canary', 'header-secret-canary',
+      'identity-secret-canary', 'body-token-canary', 'body-password-canary',
+    ];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const app = buildApp({} as Database, { authentication: { token } });
+    try {
+      const queries = [
+        'token=synthetic-secret-canary',
+        'access_token=encoded-secret-canary',
+        'api_key=synthetic-secret-canary&password=encoded-secret-canary',
+        'SECRET=synthetic-secret-canary&TOKEN=encoded-secret-canary',
+        'authorization=synthetic-secret-canary&token=synthetic-secret-canary&token=encoded-secret-canary',
+        'token%5B%5D=synthetic-secret-canary&token%5B%5D=encoded-secret-canary',
+        'token=%65%6e%63%6f%64%65%64%2d%73%65%63%72%65%74%2d%63%61%6e%61%72%79',
+        'token=%E0%A4%A',
+      ];
+      for (const query of queries) {
+        const response = await app.inject({ method: 'GET', url: `/leads?${query}` });
+        expect(response.statusCode).toBe(401);
+      }
+      expect((await app.inject({
+        method: 'POST', url: '/campaigns/preview?secret=synthetic-secret-canary',
+        headers: {
+          authorization: `Bearer ${token}`, 'x-user-id': 'identity-secret-canary',
+          'x-role': 'header-secret-canary', 'x-permissions': 'header-secret-canary',
+        },
+        payload: {
+          channel: 'EMAIL', content: 'Hello', allowedVariables: [], values: {},
+          token: 'body-token-canary', password: 'body-password-canary',
+        },
+      })).statusCode).toBe(400);
+      await app.close();
+      const logs = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      for (const canary of [...canaries, token]) expect(logs).not.toContain(canary);
+      expect(logs).toContain('"url":"/leads"');
+      expect(logs).toContain('"requestId":"req-');
+      expect(logs).not.toContain('?');
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+
+  it('keeps only the request log allow-list even for serializer-shaped sensitive input', () => {
+    const sensitiveRequest = {
+      method: 'GET', url: '/leads?token=synthetic-secret-canary', hostname: 'localhost',
+      ip: '127.0.0.1', id: 'request-1',
+      headers: { authorization: 'header-secret-canary' },
+      body: { password: 'body-password-canary' },
+      error: new Error('stack-secret-canary'),
+    };
+    expect(serializeRequestForLog(sensitiveRequest as unknown as Parameters<typeof serializeRequestForLog>[0])).toEqual({
+      method: 'GET', url: '/leads', host: 'localhost', remoteAddress: '127.0.0.1', requestId: 'request-1',
+    });
   });
 
   it('maintains a unique explicit policy for every protected application route', () => {

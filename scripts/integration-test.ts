@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
 import type { InjectOptions } from 'light-my-request';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -11,6 +12,7 @@ import {
   createOpportunity,
   createTask,
   createDatabase,
+  crmIdempotencyKeys,
   crmNotes,
   crmTimelineEvents,
   crmTasks,
@@ -242,6 +244,38 @@ try {
     inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, idempotencyKey: 'stage-transition-002', stage: 'EM_VALIDACAO' } }),
   ]);
   assert.deepEqual(concurrentStages.map((response) => response.statusCode).sort(), [200, 409]);
+  const legacyKey = 'stage-legacy-replay-001';
+  const legacyPayload = {
+    actor: authenticatedPrincipalId,
+    idempotencyKey: legacyKey,
+    expectedVersion: 1,
+    stage: 'EM_VALIDACAO',
+    action: 'TRANSITION',
+  };
+  const stageResult = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0]!;
+  const legacyFingerprint = createHash('sha256').update(JSON.stringify(legacyPayload)).digest('hex');
+  await db.insert(crmIdempotencyKeys).values({
+    scope: `lead:${lead.id}:stage`, idempotencyKey: legacyKey,
+    payloadFingerprint: legacyFingerprint, resourceType: 'lead', resourceId: lead.id, result: stageResult,
+  });
+  const timelineBeforeLegacyReplay = (await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value;
+  const legacyReplay = await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: legacyPayload,
+  });
+  assert.equal(legacyReplay.statusCode, 200);
+  assert.equal(legacyReplay.json<{ crmVersion: number }>().crmVersion, stageResult.crmVersion);
+  assert.equal((await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0]!.crmVersion, stageResult.crmVersion);
+  assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, timelineBeforeLegacyReplay);
+  for (const divergentPayload of [
+    { ...legacyPayload, stage: 'NAO_CONTATAR', reason: 'Different stage' },
+    { ...legacyPayload, action: 'REOPEN', stage: 'QUALIFICADO', reason: 'Different action' },
+    { ...legacyPayload, reason: 'Different reason' },
+    { ...legacyPayload, expectedVersion: 2 },
+    { ...legacyPayload, actor: 'different-principal' },
+    { ...legacyPayload, auditMetadata: { source: 'different' } },
+  ]) assert.equal((await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: divergentPayload,
+  })).statusCode, 409);
   assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-invalid-001', stage: 'GANHO' },

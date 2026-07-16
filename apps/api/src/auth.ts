@@ -2,6 +2,14 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
 
+export const serializeRequestForLog = (request: FastifyRequest) => ({
+  method: request.method,
+  url: request.url.split('?', 1)[0] ?? '',
+  host: request.hostname,
+  remoteAddress: request.ip,
+  requestId: request.id,
+});
+
 export const permissions = [
   'leads:read',
   'contacts:read',

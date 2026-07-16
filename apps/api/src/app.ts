@@ -84,7 +84,10 @@ import {
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { simulateCampaignMessage } from './campaign-simulation.js';
-import { authorizationContextFor, installAuthorization, requirePermission, type AuthenticationOptions } from './auth.js';
+import {
+  authorizationContextFor, installAuthorization, requirePermission, serializeRequestForLog,
+  type AuthenticationOptions,
+} from './auth.js';
 
 const idSchema = z.string().uuid();
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
@@ -131,7 +134,11 @@ export function buildApp(db: Database, options: {
   authentication?: AuthenticationOptions;
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
-  const app = Fastify({ logger: true, bodyLimit: 16_384, requestTimeout: 15_000 });
+  const app = Fastify({
+    logger: { serializers: { req: serializeRequestForLog } },
+    bodyLimit: 16_384,
+    requestTimeout: 15_000,
+  });
   app.setErrorHandler((error, request, reply) => {
     const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
       && typeof error.statusCode === 'number' ? error.statusCode : undefined;

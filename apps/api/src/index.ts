@@ -5,7 +5,9 @@ const config = parseApiConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
-  operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS });
+  operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
+  authentication: { token: config.API_AUTH_TOKEN },
+});
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
   process.exitCode = exitCode;
@@ -16,7 +18,8 @@ const shutdown = (exitCode = 0) => {
   return shutdownPromise;
 };
 const fatal = (kind: string, error: unknown) => {
-  app.log.fatal({ err: error }, kind);
+  void error;
+  app.log.fatal({ event: 'api_fatal', kind, decision: 'SHUTDOWN_REQUESTED' }, 'api_fatal');
   void shutdown(1);
 };
 process.on('SIGTERM', () => void shutdown());

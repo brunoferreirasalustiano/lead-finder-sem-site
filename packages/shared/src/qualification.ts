@@ -93,3 +93,9 @@ export const qualificationUpdateSchema = auditSchema
     doNotContact: z.boolean().optional(),
   })
   .strict();
+
+export const attemptsToClearNonContact = (
+  current: { isBlocked: boolean; doNotContact: boolean },
+  requested: { isBlocked?: boolean | undefined; doNotContact?: boolean | undefined },
+) => (current.isBlocked && requested.isBlocked === false)
+  || (current.doNotContact && requested.doNotContact === false);

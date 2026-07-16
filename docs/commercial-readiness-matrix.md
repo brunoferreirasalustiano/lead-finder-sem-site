@@ -28,3 +28,5 @@ Todos os itens aplicáveis devem ser `PASS`, sem bloqueador e com aprovação hu
 | Um operador → múltiplos | fora desta PR, requer projeto de isolamento | isolamento não testado |
 
 Registrar sempre precisão, falso positivo, duplicidade, contatos, bloqueados, opt-out, backlog, dead-letter, incidentes, pausa, backup/restore, rollback, rastreabilidade e aprovação humana, com denominadores. No shadow runtime, contatos válidos são `totalValidContacts / totalCollected`, com mínimo padrão configurável de 70% inclusivo; zero coletados é `NOT_RUN` e portanto `NO_GO`.
+
+Somente `GET /health`, `GET /health/live` e `GET /health/ready` são públicos. `/internal/operational-snapshot` e todos os endpoints de negócio exigem autenticação e autorização dentro da API; controles de perímetro são apenas defesa em profundidade. Restore sem reconciliação de exclusões/opt-outs posteriores ao backup e qualquer `SHADOW_MODE_ENABLED=false` são `NO-GO`.

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { parseApiConfig, parseWorkerConfig } from './config.js';
 
-const database = { DATABASE_URL: 'postgresql://user:password@localhost:5432/database' };
+const database = {
+  DATABASE_URL: 'postgresql://user:password@localhost:5432/database',
+  API_AUTH_TOKEN: 'synthetic-api-token-for-tests-only-0001',
+};
 
 describe('environment configuration', () => {
   it('applies safe defaults', () => {
@@ -30,6 +33,10 @@ describe('environment configuration', () => {
     ['DAILY_LEAD_LIMIT', '-1'],
   ])('rejects invalid API variable %s=%s', (name, value) => {
     expect(() => parseApiConfig({ ...database, [name]: value })).toThrow(name);
+  });
+
+  it.each([undefined, '', 'too-short', 'CHANGE_ME'])('rejects an unsafe API token %s', (value) => {
+    expect(() => parseApiConfig({ ...database, API_AUTH_TOKEN: value })).toThrow('API_AUTH_TOKEN');
   });
 
   it.each([
@@ -65,6 +72,7 @@ describe('environment configuration', () => {
   it('fails closed and rejects invalid shadow mode values', () => {
     expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(false);
     expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' }).SHADOW_MODE_ENABLED).toBe(true);
+    expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'false' }).SHADOW_MODE_ENABLED).toBe(false);
     expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
   });
 

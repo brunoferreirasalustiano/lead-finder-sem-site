@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export type OperationalOutcome = 'CLAIMED' | 'PUBLISHED' | 'RETRY' | 'STALE_ACK' | 'STALE' | 'DEAD_LETTERED' | 'RECOVERED' | 'RESCHEDULED' | 'INELIGIBLE';
 export type SafeOperationalReason = 'DAILY_LIMIT' | 'SPACING' | 'INVALID_CHANNEL' | 'CAMPAIGN_NOT_ACTIVE' | 'RECIPIENT_NOT_EXECUTABLE' | 'ATTEMPT_NOT_EXECUTABLE' | 'LEAD_BLOCKED' | 'DO_NOT_CONTACT' | 'CRM_DO_NOT_CONTACT' | 'CONTACT_NOT_VALIDATED' | 'OPT_OUT' | 'ALREADY_RESPONDED' | 'SIMULATED_TIMEOUT_BEFORE_CONFIRMATION' | 'SIMULATED_EXECUTION_FAILED' | 'FINAL_LEASE_EXPIRED' | 'UNKNOWN';
 
@@ -26,9 +28,19 @@ const safeReasons = new Set<SafeOperationalReason>([
 export const correlationForOutbox = (outboxId: string, deadLetterCycle: number) =>
   `outbox:${outboxId}:cycle:${deadLetterCycle}`;
 
+const correlate = (value: string | undefined) => value === undefined
+  ? undefined
+  : createHash('sha256').update(value).digest('hex').slice(0, 16);
+
 export function sanitizeOperationalLog(fields: OperationalLogFields): OperationalLogFields {
   return {
     ...fields,
+    correlationId: correlate(fields.correlationId)!,
+    campaignId: correlate(fields.campaignId),
+    recipientId: correlate(fields.recipientId),
+    outboxId: correlate(fields.outboxId),
+    attemptId: correlate(fields.attemptId),
+    workerId: correlate(fields.workerId),
     reason: fields.reason && safeReasons.has(fields.reason) ? fields.reason : undefined,
     durationMs: fields.durationMs === undefined ? undefined : Math.max(0, Math.round(fields.durationMs)),
   };

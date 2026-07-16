@@ -13,11 +13,11 @@ import type { ShadowModeGuard } from '@lead-finder/shared';
 export async function processNextOutbox(
   db: Database,
   adapter: SimulatedOutboxAdapter,
-  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard?: ShadowModeGuard; shadowRunId?: string },
+  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard: ShadowModeGuard; shadowRunId?: string },
   logger: OperationalLogger,
   metrics?: OperationalMetrics,
 ): Promise<boolean> {
-  if (input.shadowGuard?.block(input.shadowRunId)) return false;
+  if (!input.shadowGuard || input.shadowGuard.block(input.shadowRunId)) return false;
   const now = input.now ?? new Date();
   const claim = await claimCampaignOutbox(db, {
     workerId: input.workerId,
@@ -48,7 +48,14 @@ export async function processNextOutbox(
         token: claim.token, generation: claim.generation,
         ...(input.now ? { confirmedAt: input.now } : {}),
       })
-      : { replayed: false, reconciled: false };
+      : { outcome: 'CONFIRMED' as const, replayed: false, reconciled: false };
+    if (execution.outcome === 'BLOCKED') {
+      logger.info({ ...base, attemptId: authorization.decision === 'STARTED' ? authorization.attemptId : undefined,
+        event: 'campaign_outbox_execution_decided', outcome: 'INELIGIBLE', reason: execution.reason,
+        durationMs: Date.now() - now.getTime() });
+      metrics?.record('INELIGIBLE', execution.reason, Date.now() - now.getTime());
+      return true;
+    }
     if (execution.reconciled) logger.info({ ...base, attemptId: authorization.decision === 'STARTED' ? authorization.attemptId : undefined, event: 'campaign_outbox_confirmation_reconciled', outcome: 'PUBLISHED', durationMs: Date.now() - now.getTime() });
     const completed = await completeCampaignOutbox(db, claim, input.now ?? new Date());
     const outcome = completed ? 'PUBLISHED' : 'STALE_ACK';

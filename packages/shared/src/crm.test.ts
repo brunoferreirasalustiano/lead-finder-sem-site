@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CrmDomainError, assertCrmTransition, canTransitionCrmStage, crmAssignmentUpdateSchema, crmStageChangeSchema,
   crmStages, crmTransitionGraph, followUpFilterSchema, idempotencyKeySchema, moneySchema,
-  isEligibleForCommercialQueue, noteCreateSchema, opportunityUpdateSchema, taskCreateSchema, utcDateTimeSchema,
+  createAuthorizationContext, isEligibleForCommercialQueue, noteCreateSchema, opportunityUpdateSchema,
+  legacyCrmStageReplayPayload, taskCreateSchema, utcDateTimeSchema,
 } from './crm.js';
 
 const command = { actor: 'user-1', idempotencyKey: 'request-123', expectedVersion: 0 };
@@ -25,9 +26,39 @@ describe('CRM contracts', () => {
     expect(crmStageChangeSchema.safeParse({ ...command, stage: 'NAO_CONTATAR', reason: 'Opt-out' }).success).toBe(true);
   });
 
+  it('reconstructs a legacy stage payload only for the same trusted principal', () => {
+    const authorization = createAuthorizationContext({
+      principalId: 'user-1', permissions: new Set(['crm:write']), authenticationMethod: 'BEARER_TOKEN',
+    });
+    const legacy = crmStageChangeSchema.parse({
+      ...command, stage: 'EM_VALIDACAO', reason: 'Qualified', auditMetadata: { source: 'synthetic' },
+    });
+    expect(legacyCrmStageReplayPayload(legacy, authorization)).toEqual(legacy);
+    expect(legacy.action).toBe('TRANSITION');
+    expect(legacyCrmStageReplayPayload({ ...legacy, actor: 'other-user' }, authorization)).toBeUndefined();
+    expect(legacyCrmStageReplayPayload({ ...legacy, actor: undefined }, authorization)).toBeUndefined();
+    expect(legacyCrmStageReplayPayload(legacy, {
+      principalId: 'user-1', permissions: new Set(['crm:write']), authenticationMethod: 'BEARER_TOKEN',
+    })).toBeUndefined();
+  });
+
   it('requires explicit audited action to exit NAO_CONTATAR or reopen terminal stages', () => {
     const reactivation = crmStageChangeSchema.parse({ ...command, stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent recorded', auditMetadata: { ticket: '42' } });
-    expect(() => assertCrmTransition('NAO_CONTATAR', reactivation)).not.toThrow();
+    const authorization = createAuthorizationContext({
+      principalId: 'authenticated-operator',
+      permissions: new Set(['crm:write', 'crm:reactivate-do-not-contact']),
+      authenticationMethod: 'BEARER_TOKEN',
+    });
+    expect(() => assertCrmTransition('NAO_CONTATAR', reactivation)).toThrowError(CrmDomainError);
+    expect(() => assertCrmTransition('NAO_CONTATAR', reactivation, {
+      principalId: 'forged', permissions: new Set(['crm:reactivate-do-not-contact']), authenticationMethod: 'forged',
+    })).toThrowError(CrmDomainError);
+    expect(() => assertCrmTransition('NAO_CONTATAR', reactivation, createAuthorizationContext({
+      principalId: 'generic-writer', permissions: new Set(['crm:write']), authenticationMethod: 'BEARER_TOKEN',
+    }))).toThrowError(CrmDomainError);
+    expect(() => assertCrmTransition('NAO_CONTATAR', reactivation, authorization)).not.toThrow();
+    expect(() => (authorization.permissions as Set<string>).add('forged')).toThrow();
+    expect(authorization.permissions.has('forged')).toBe(false);
     const ordinary = crmStageChangeSchema.parse({ ...command, stage: 'NOVO' });
     expect(() => assertCrmTransition('NAO_CONTATAR', ordinary)).toThrowError(CrmDomainError);
     const reopen = crmStageChangeSchema.parse({ ...command, stage: 'QUALIFICADO', action: 'REOPEN', reason: 'New request', auditMetadata: { source: 'inbound' } });

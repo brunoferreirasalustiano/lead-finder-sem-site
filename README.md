@@ -1,5 +1,7 @@
 # Lead Finder CRM — Prospecção de empresas sem site
 
+Segurança operacional: [auditoria de segurança e privacidade](docs/security-privacy-audit.md), [threat model](docs/operational-threat-model.md), [retenção e exclusão](docs/data-retention-and-deletion.md), [runtime shadow](docs/shadow-mode-runtime.md), [checklist do piloto](docs/pilot-shadow-mode-checklist.md) e [matriz de prontidão](docs/commercial-readiness-matrix.md).
+
 > Documento oficial de visão, arquitetura, execução, roadmap, critérios de aceite e evidências de teste.
 >
 > Ambiente oficial: **VPS Oracle Cloud**, com Ubuntu, Docker Compose, PostgreSQL, API, worker, Caddy e n8n opcional.
@@ -361,6 +363,17 @@ docker compose --profile integration up -d n8n
 As migrations usam `schema_migrations`; executá-las novamente é seguro.
 
 ## API atual
+
+Todas as rotas, exceto `GET /health/live`, `GET /health` e `GET /health/ready`, exigem
+`Authorization: Bearer <API_AUTH_TOKEN>`. O token deve ser um secret de ambiente com pelo menos
+32 caracteres; `CHANGE_ME`, valor vazio e configuração ausente são rejeitados na inicialização.
+O Caddy apenas encaminha a requisição para uma API que já autentica e autoriza na aplicação.
+Credenciais nunca devem ser versionadas, colocadas no Caddyfile, em URLs ou query strings.
+
+O principal operacional single-operator recebe permissões explícitas para leitura de leads e
+contatos, exportação, CRM, campanhas, operações e coleta. Antes de introduzir múltiplos usuários,
+operadores ou clientes, deve ser implementada autorização adicional por objeto/tenant e uma
+identidade OIDC apropriada.
 
 - `GET /health`
 - `GET /health/live`

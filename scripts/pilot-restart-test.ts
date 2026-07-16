@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import type { InjectOptions } from 'light-my-request';
 import { readFile, writeFile } from 'node:fs/promises';
 import { count, eq } from 'drizzle-orm';
 import {
@@ -22,7 +23,12 @@ const databaseUrl = process.env['DATABASE_URL'];
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 
 const { db, close } = createDatabase(databaseUrl);
-const app = buildApp(db, { dailyLeadLimit: 5 });
+const apiAuthToken = 'synthetic-api-token-for-integration-0001';
+const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken } });
+const inject = (options: InjectOptions) => app.inject({
+  ...options,
+  headers: { ...options.headers, authorization: `Bearer ${apiAuthToken}` },
+});
 
 const snapshotCounts = async () => ({
   leads: (await db.select({ value: count() }).from(leads))[0]!.value,
@@ -93,7 +99,7 @@ try {
     isValid: true,
     possibleWhatsapp: true,
   };
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'PUT',
     url: `/leads/${lead.id}/contacts`,
     payload: contactPayload,
@@ -109,7 +115,7 @@ try {
     observedAt: '2026-07-11T12:00:00.000Z',
     notes: 'deterministic evidence',
   };
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'POST',
     url: `/leads/${lead.id}/evidence`,
     payload: evidencePayload,
@@ -140,8 +146,8 @@ try {
   });
   assert.equal(attemptReplay.replayed, true);
 
-  assert.equal((await app.inject({ method: 'GET', url: '/leads?page=1&pageSize=20' })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'GET', url: '/leads/export.csv' })).statusCode, 200);
+  assert.equal((await inject({ method: 'GET', url: '/leads?page=1&pageSize=20' })).statusCode, 200);
+  assert.equal((await inject({ method: 'GET', url: '/leads/export.csv' })).statusCode, 200);
 
   const after = await snapshotCounts();
   assert.deepEqual(after, before, 'logical restart and exact replays must not duplicate persisted resources');

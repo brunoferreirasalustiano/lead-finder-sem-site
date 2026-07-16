@@ -105,11 +105,11 @@ try {
   assert.equal(resumedAuthorization.decision, 'STARTED');
   if (firstAuthorization.decision === 'STARTED' && resumedAuthorization.decision === 'STARTED') {
     assert.equal(resumedAuthorization.executionId, firstAuthorization.executionId, 'restart must reuse the logical execution identity');
-    assert.equal(await confirmSimulatedCampaignExecution(workerB.db, {
+    assert.deepEqual(await confirmSimulatedCampaignExecution(workerB.db, {
       executionId: resumedAuthorization.executionId, outboxId: executableId, cycle: resumedClaim.deadLetterCycle,
       attemptId: resumedAuthorization.attemptId, channel: resumedAuthorization.channel, workerId: resumedClaim.workerId,
       token: resumedClaim.token, generation: resumedClaim.generation, confirmedAt: at(311_000),
-    }).then((result) => result.replayed), false);
+    }), { outcome: 'CONFIRMED', executionId: resumedAuthorization.executionId, replayed: false });
   }
   assert.equal(await completeCampaignOutbox(workerB.db, resumedClaim, at(311_000)), true);
   assert.equal(await starts(executableId), 1, 'processing restarts must never create duplicate executions');

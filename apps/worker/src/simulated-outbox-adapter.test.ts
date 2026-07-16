@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { confirmSimulatedCampaignExecution, type Database } from '@lead-finder/database';
 import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 
-vi.mock('@lead-finder/database', () => ({ confirmSimulatedCampaignExecution: vi.fn() }));
+vi.mock('@lead-finder/database', () => {
+  return {
+    confirmSimulatedCampaignExecution: vi.fn(),
+  };
+});
 
 const input = {
   id: '00000000-0000-4000-8000-000000000001', deadLetterCycle: 0,
@@ -24,7 +28,7 @@ describe('SimulatedOutboxAdapter', () => {
   });
 
   it('persists confirmation before the deterministic after-confirmation timeout', async () => {
-    vi.mocked(confirmSimulatedCampaignExecution).mockResolvedValue({ executionId: input.executionId, replayed: false });
+    vi.mocked(confirmSimulatedCampaignExecution).mockResolvedValue({ outcome: 'CONFIRMED', executionId: input.executionId, replayed: false });
     const adapter = new SimulatedOutboxAdapter({} as Database, 'TIMEOUT_AFTER_CONFIRMATION');
     await expect(adapter.execute(input)).rejects.toMatchObject({
       code: 'SIMULATED_TIMEOUT_AFTER_CONFIRMATION',
@@ -37,10 +41,16 @@ describe('SimulatedOutboxAdapter', () => {
   });
 
   it('reconciles the same execution after restart without a second logical execution', async () => {
-    vi.mocked(confirmSimulatedCampaignExecution).mockResolvedValue({ executionId: input.executionId, replayed: true });
+    vi.mocked(confirmSimulatedCampaignExecution).mockResolvedValue({ outcome: 'CONFIRMED', executionId: input.executionId, replayed: true });
     const restartedAdapter = new SimulatedOutboxAdapter({} as Database);
     await expect(restartedAdapter.execute(input)).resolves.toEqual({
-      executionId: input.executionId, replayed: true, reconciled: true,
+      outcome: 'CONFIRMED', executionId: input.executionId, replayed: true, reconciled: true,
     });
+  });
+
+  it('returns a typed blocked outcome when confirmation persists an opt-out block', async () => {
+    vi.mocked(confirmSimulatedCampaignExecution).mockResolvedValue({ outcome: 'BLOCKED', reason: 'OPT_OUT' });
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    await expect(adapter.execute(input)).resolves.toEqual({ outcome: 'BLOCKED', reason: 'OPT_OUT' });
   });
 });

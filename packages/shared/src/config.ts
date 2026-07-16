@@ -14,6 +14,7 @@ const commonSchema = z.object({
 });
 
 const apiSchema = commonSchema.extend({
+  API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
   OPERATIONAL_BACKLOG_DEGRADED_COUNT: integerFromEnvironment('OPERATIONAL_BACKLOG_DEGRADED_COUNT', 1, 1_000_000, 100),
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),

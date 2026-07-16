@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
+import type { InjectOptions } from 'light-my-request';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -10,6 +12,7 @@ import {
   createOpportunity,
   createTask,
   createDatabase,
+  crmIdempotencyKeys,
   crmNotes,
   crmTimelineEvents,
   crmTasks,
@@ -44,7 +47,13 @@ const overpass = new OverpassClient({
   timeoutMs: 1_000,
   maxRetries: 0,
 });
-const app = buildApp(db, { dailyLeadLimit: 5 });
+const apiAuthToken = 'synthetic-api-token-for-integration-0001';
+const authenticatedPrincipalId = 'integration-principal';
+const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId } });
+const inject = (options: InjectOptions) => app.inject({
+  ...options,
+  headers: { ...options.headers, authorization: `Bearer ${apiAuthToken}` },
+});
 
 try {
   await db.execute(sql`
@@ -77,7 +86,7 @@ try {
       leads
     restart identity
   `);
-  const ready = await app.inject({ method: 'GET', url: '/health/ready' });
+  const ready = await inject({ method: 'GET', url: '/health/ready' });
   assert.equal(ready.statusCode, 200);
 
   const invalidCases = [
@@ -90,11 +99,11 @@ try {
     ['/leads?category=unknown', 400],
   ] as const;
   for (const [url, expected] of invalidCases)
-    assert.equal((await app.inject({ method: 'GET', url })).statusCode, expected, url);
-  assert.equal((await app.inject({ method: 'POST', url: '/collect' })).statusCode, 400);
+    assert.equal((await inject({ method: 'GET', url })).statusCode, expected, url);
+  assert.equal((await inject({ method: 'POST', url: '/collect' })).statusCode, 400);
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'POST',
         url: '/collect',
         payload: { category: 'oficinas', query: '[out:json]' },
@@ -104,7 +113,7 @@ try {
   );
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'POST',
         url: '/collect',
         payload: { category: 'oficinas', limit: 6 },
@@ -120,7 +129,7 @@ try {
     category: 'oficinas',
     limit: 5,
   };
-  const accepted = await app.inject({ method: 'POST', url: '/collect', payload });
+  const accepted = await inject({ method: 'POST', url: '/collect', payload });
   assert.equal(accepted.statusCode, 202);
   responses.push({
     status: 200,
@@ -152,7 +161,7 @@ try {
   const audit = { actor: 'integration-test', source: 'test', reason: 'phase-1 validation' };
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'PATCH',
         url: `/leads/${lead.id}/qualification`,
         payload: { ...audit, status: 'SEM_SITE_CONFIRMADO' },
@@ -162,7 +171,7 @@ try {
   );
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'PATCH',
         url: `/leads/${lead.id}/qualification`,
         payload: { ...audit, status: 'VALIDANDO' },
@@ -172,7 +181,7 @@ try {
   );
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'PATCH',
         url: `/leads/${lead.id}/qualification`,
         payload: { ...audit, status: 'SEM_SITE_CONFIRMADO' },
@@ -195,8 +204,8 @@ try {
     possibleWhatsapp: true,
   };
   const concurrentContacts = await Promise.all([
-    app.inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
-    app.inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
+    inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
+    inject({ method: 'PUT', url: `/leads/${lead.id}/contacts`, payload: contactPayload }),
   ]);
   assert.deepEqual(
     concurrentContacts.map((response) => response.statusCode),
@@ -214,41 +223,73 @@ try {
     actor,
     idempotencyKey: 'opportunity-create-001',
   };
-  const opportunityCreated = await app.inject({
+  const opportunityCreated = await inject({
     method: 'POST', url: `/leads/${lead.id}/opportunities`, payload: opportunityPayload,
   });
-  const opportunityReplay = await app.inject({
+  const opportunityReplay = await inject({
     method: 'POST', url: `/leads/${lead.id}/opportunities`, payload: opportunityPayload,
   });
   assert.equal(opportunityCreated.statusCode, 201);
   assert.equal(opportunityReplay.statusCode, 200);
   const opportunity = opportunityCreated.json<{ id: string; version: number }>();
   assert.equal(opportunityReplay.json<{ id: string }>().id, opportunity.id);
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'POST', url: `/leads/${lead.id}/opportunities`,
     payload: { ...opportunityPayload, title: 'Conflicting retry' },
   })).statusCode, 409);
 
   const stageBase = { actor, expectedVersion: 1, idempotencyKey: 'stage-transition-001' };
   const concurrentStages = await Promise.all([
-    app.inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, stage: 'EM_VALIDACAO' } }),
-    app.inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, idempotencyKey: 'stage-transition-002', stage: 'EM_VALIDACAO' } }),
+    inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, stage: 'EM_VALIDACAO' } }),
+    inject({ method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: { ...stageBase, idempotencyKey: 'stage-transition-002', stage: 'EM_VALIDACAO' } }),
   ]);
   assert.deepEqual(concurrentStages.map((response) => response.statusCode).sort(), [200, 409]);
-  assert.equal((await app.inject({
+  const legacyKey = 'stage-legacy-replay-001';
+  const legacyPayload = {
+    actor: authenticatedPrincipalId,
+    idempotencyKey: legacyKey,
+    expectedVersion: 1,
+    stage: 'EM_VALIDACAO',
+    action: 'TRANSITION',
+  };
+  const stageResult = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0]!;
+  const legacyFingerprint = createHash('sha256').update(JSON.stringify(legacyPayload)).digest('hex');
+  await db.insert(crmIdempotencyKeys).values({
+    scope: `lead:${lead.id}:stage`, idempotencyKey: legacyKey,
+    payloadFingerprint: legacyFingerprint, resourceType: 'lead', resourceId: lead.id, result: stageResult,
+  });
+  const timelineBeforeLegacyReplay = (await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value;
+  const legacyReplay = await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: legacyPayload,
+  });
+  assert.equal(legacyReplay.statusCode, 200);
+  assert.equal(legacyReplay.json<{ crmVersion: number }>().crmVersion, stageResult.crmVersion);
+  assert.equal((await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0]!.crmVersion, stageResult.crmVersion);
+  assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, timelineBeforeLegacyReplay);
+  for (const divergentPayload of [
+    { ...legacyPayload, stage: 'NAO_CONTATAR', reason: 'Different stage' },
+    { ...legacyPayload, action: 'REOPEN', stage: 'QUALIFICADO', reason: 'Different action' },
+    { ...legacyPayload, reason: 'Different reason' },
+    { ...legacyPayload, expectedVersion: 2 },
+    { ...legacyPayload, actor: 'different-principal' },
+    { ...legacyPayload, auditMetadata: { source: 'different' } },
+  ]) assert.equal((await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`, payload: divergentPayload,
+  })).statusCode, 409);
+  assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-invalid-001', stage: 'GANHO' },
   })).statusCode, 422);
 
-  const won = await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+  const won = await inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
     actor, expectedVersion: opportunity.version, idempotencyKey: 'opportunity-win-001', status: 'GANHA',
   } });
   assert.equal(won.statusCode, 200);
   assert.ok(won.json<{ closedAt: string | null }>().closedAt);
-  assert.equal((await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+  assert.equal((await inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
     actor, expectedVersion: opportunity.version + 1, idempotencyKey: 'opportunity-loss-missing', status: 'PERDIDA',
   } })).statusCode, 400);
-  const lost = await app.inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
+  const lost = await inject({ method: 'PATCH', url: `/opportunities/${opportunity.id}`, payload: {
     actor, expectedVersion: opportunity.version + 1, idempotencyKey: 'opportunity-loss-001', status: 'PERDIDA', lossReason: 'Budget deferred',
   } });
   assert.equal(lost.statusCode, 200);
@@ -256,61 +297,65 @@ try {
   assert.ok(lost.json<{ closedAt: string | null }>().closedAt);
 
   const notePayload = { body: 'Discovery completed', opportunityId: opportunity.id, actor, idempotencyKey: 'note-create-0001' };
-  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 201);
-  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: { ...notePayload, body: 'Changed retry' } })).statusCode, 409);
+  assert.equal((await inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 201);
+  assert.equal((await inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 200);
+  assert.equal((await inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: { ...notePayload, body: 'Changed retry' } })).statusCode, 409);
 
   const taskPayload = {
     title: 'Overdue follow-up', dueAt: '2026-07-11T09:59:59Z', priority: 'ALTA',
     assignee: actor, opportunityId: opportunity.id, actor, idempotencyKey: 'task-create-0001',
   };
-  const taskCreated = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
-  const taskReplay = await app.inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
+  const taskCreated = await inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
+  const taskReplay = await inject({ method: 'POST', url: `/leads/${lead.id}/tasks`, payload: taskPayload });
   assert.equal(taskCreated.statusCode, 201);
   assert.equal(taskReplay.statusCode, 200);
   const task = taskCreated.json<{ id: string; version: number }>();
   assert.equal(taskReplay.json<{ id: string }>().id, task.id);
-  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 1);
-  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T09:59:59Z' })).json<unknown[]>().length, 0);
-  assert.equal((await app.inject({
+  assert.equal((await inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 1);
+  assert.equal((await inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T09:59:59Z' })).json<unknown[]>().length, 0);
+  assert.equal((await inject({
     method: 'PATCH', url: `/tasks/${task.id}/reschedule`,
     payload: { actor, expectedVersion: task.version, idempotencyKey: 'task-reschedule-001', dueAt: '2026-07-11T10:30:00Z', reason: 'Customer request' },
   })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T10:30:00Z' })).json<unknown[]>().length, 1);
-  assert.equal((await app.inject({
+  assert.equal((await inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T10:30:00Z' })).json<unknown[]>().length, 1);
+  assert.equal((await inject({
     method: 'PATCH', url: `/tasks/${task.id}/complete`,
     payload: { actor, expectedVersion: task.version + 1, idempotencyKey: 'task-complete-0001', completedAt: '2026-07-11T10:15:00Z' },
   })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T11:00:00Z' })).json<unknown[]>().length, 0);
+  assert.equal((await inject({ method: 'GET', url: '/crm/follow-ups/upcoming?from=2026-07-11T10:00:00Z&to=2026-07-11T11:00:00Z' })).json<unknown[]>().length, 0);
 
   const tagBody = { actor, idempotencyKey: 'tag-add-0000001' };
-  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/different`, payload: tagBody })).statusCode, 409);
-  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'GET', url: `/leads/${lead.id}/tags` })).json<{ items: unknown[] }>().items.length, 1);
+  assert.equal((await inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
+  assert.equal((await inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: tagBody })).statusCode, 200);
+  assert.equal((await inject({ method: 'PUT', url: `/leads/${lead.id}/tags/different`, payload: tagBody })).statusCode, 409);
+  assert.equal((await inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
+  assert.equal((await inject({ method: 'PUT', url: `/leads/${lead.id}/tags/priority`, payload: { ...tagBody, idempotencyKey: 'tag-add-0000002' } })).statusCode, 200);
+  assert.equal((await inject({ method: 'GET', url: `/leads/${lead.id}/tags` })).json<{ items: unknown[] }>().items.length, 1);
   const removeTagBody = { actor, idempotencyKey: 'tag-remove-00001' };
-  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
-  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
+  assert.equal((await inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
+  assert.equal((await inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/priority`, payload: removeTagBody })).statusCode, 200);
   const beforeAbsentTag = (await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value;
-  assert.equal((await app.inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/absent`, payload: { actor, idempotencyKey: 'tag-remove-absent' } })).statusCode, 404);
+  assert.equal((await inject({ method: 'DELETE', url: `/leads/${lead.id}/tags/absent`, payload: { actor, idempotencyKey: 'tag-remove-absent' } })).statusCode, 404);
   assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, beforeAbsentTag);
 
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor, expectedVersion: 2, idempotencyKey: 'stage-no-contact-001', stage: 'NAO_CONTATAR', reason: 'Explicit opt-out' },
   })).statusCode, 200);
   assert.equal((await listOutreachEligibleLeads(db)).length, 0);
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor, expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-bad', stage: 'NOVO' },
   })).statusCode, 422);
-  assert.equal((await app.inject({
+  assert.equal((await inject({
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
-    payload: { actor, expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { ticket: 'CONSENT-1' } },
+    payload: { actor: 'forged-client', expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { principalId: 'forged-client', timestamp: '2000-01-01T00:00:00Z' } },
   })).statusCode, 200);
-  const timeline = (await app.inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string }> }>().items;
+  assert.equal((await inject({
+    method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
+    payload: { actor: 'different-forged-client', expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { arbitrary: true } },
+  })).statusCode, 200);
+  const timeline = (await inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string; actor: string; metadata: Record<string, unknown> }> }>().items;
   assert.ok(timeline.length >= 9);
   assert.equal(new Set(timeline.map((item) => item.id)).size, timeline.length, 'timeline must not duplicate events on retries');
   assert.equal(timeline.filter((item) => item.eventType === 'TAG_ADDED').length, 1, 'tag retry must not duplicate TAG_ADDED');
@@ -318,6 +363,13 @@ try {
   for (let index = 1; index < timeline.length; index += 1)
     assert.ok(timeline[index - 1]!.createdAt >= timeline[index]!.createdAt, 'timeline must be newest-first');
   assert.ok(timeline.some((item) => item.eventType === 'STAGE_CHANGED'));
+  const reactivationEvent = timeline.find((item) => item.eventType === 'STAGE_CHANGED' && item.metadata['action'] === 'REACTIVATE');
+  assert.equal(reactivationEvent?.actor, authenticatedPrincipalId, 'reactivation actor must come from the authenticated principal');
+  assert.equal(reactivationEvent?.metadata['principalId'], authenticatedPrincipalId);
+  assert.equal(reactivationEvent?.metadata['authenticationMethod'], 'BEARER_TOKEN');
+  assert.equal(reactivationEvent?.metadata['source'], 'authenticated-api');
+  assert.match(String(reactivationEvent?.metadata['timestamp']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
+  assert.notEqual(reactivationEvent?.metadata['timestamp'], '2000-01-01T00:00:00Z');
 
   const otherLead = (await db.insert(leads).values({
     osmType: 'node', osmId: 'cross-resource-lead', category: 'oficinas', score: 10,
@@ -346,7 +398,7 @@ try {
   await db.insert(crmTasks).values(excludedLeads.map((excluded, index) => ({
     leadId: excluded.id, title: `Excluded ${index}`, dueAt: new Date('2026-07-11T09:00:00Z'), owner: actor,
   })));
-  assert.equal((await app.inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 0,
+  assert.equal((await inject({ method: 'GET', url: '/crm/tasks/overdue?to=2026-07-11T10:00:00Z' })).json<unknown[]>().length, 0,
     'blocked, do-not-contact, incompatible, and NAO_CONTATAR leads must be absent from queues');
   assert.equal((await listOutreachEligibleLeads(db)).some((candidate) => excludedLeads.some((excluded) => excluded.id === candidate.id)), false);
   for (const excluded of excludedLeads) await db.delete(leads).where(eq(leads.id, excluded.id));
@@ -360,8 +412,8 @@ try {
     notes: 'deterministic evidence',
   };
   await Promise.all([
-    app.inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
-    app.inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
+    inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
+    inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
   ]);
   assert.equal((await db.select({ value: count() }).from(leadEvidence))[0]?.value, 1);
   assert.ok((await db.select({ value: count() }).from(leadQualificationHistory))[0]!.value >= 5);
@@ -379,7 +431,7 @@ try {
   )[0]!;
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'PUT',
         url: `/leads/${secondLead.id}/contacts`,
         payload: contactPayload,
@@ -391,7 +443,7 @@ try {
   await db.delete(leads).where(eq(leads.id, secondLead.id));
   assert.equal(
     (
-      await app.inject({
+      await inject({
         method: 'PATCH',
         url: `/leads/${lead.id}/qualification`,
         payload: { ...audit, status: 'DESCARTADO', doNotContact: true },
@@ -431,7 +483,7 @@ try {
   responses.push({ status: 200, body: JSON.stringify({ elements: [] }) });
   assert.equal(await processNextJob(db, overpass), true);
 
-  const csv = await app.inject({ method: 'GET', url: '/leads/export.csv' });
+  const csv = await inject({ method: 'GET', url: '/leads/export.csv' });
   assert.equal(csv.statusCode, 200);
   assert.match(csv.headers['content-type'] ?? '', /text\/csv; charset=utf-8/);
   assert.equal(csv.headers['content-disposition'], 'attachment; filename="leads.csv"');

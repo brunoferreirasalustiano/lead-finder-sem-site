@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import {
   assertPilotResultTransition, assertPilotRunTransition, createPilotMetricSnapshot, evaluatePilotReadiness,
   isTrustedAuthorizationContext, type AuthorizationContext, type PilotCommercialResult, type PilotLeadAddInput,
@@ -143,19 +143,20 @@ export async function getPilotSnapshot(db:Database,pilotRunId:string,period:{fro
  // Funnel metrics use milestone-achieved semantics within the requested period. Every metric counts
  // distinct leads, never event rows; no state outside the period is inferred.
  const periodFrom=period.from.toISOString(),periodTo=period.to.toISOString();
+ const withinPeriod=(recordedAt:SQL)=>sql`${recordedAt} >= ${periodFrom}::timestamptz and ${recordedAt} < (${periodTo}::timestamptz + interval '1 millisecond')`;
  const run=(await db.select().from(pilotRuns).where(eq(pilotRuns.id,pilotRunId)).limit(1))[0];if(!run)throw new PilotPersistenceError('Pilot run not found','NOT_FOUND');
  const rows=await db.execute(sql<{total_associated:number;total_approved:number;total_rejected:number;total_needs_review:number;total_without_site:number;total_valid_contacts:number;total_manual_contacts:number;total_responses:number;total_interested:number;total_meetings:number;total_proposals:number;total_conversions:number;total_opt_outs:number;total_invalid:number;total_blocked:number}[]>`
  select count(distinct pl.lead_id)::int total_associated,
  count(distinct pl.lead_id) filter(where rv.decision='APPROVED')::int total_approved,count(distinct pl.lead_id) filter(where rv.decision='REJECTED')::int total_rejected,count(distinct pl.lead_id) filter(where rv.decision='NEEDS_REVIEW' or rv.decision is null)::int total_needs_review,
  count(distinct pl.lead_id) filter(where l.qualification_status='SEM_SITE_CONFIRMADO')::int total_without_site,count(distinct pl.lead_id) filter(where exists(select 1 from lead_contacts c where c.lead_id=l.id and c.is_valid and c.verified_at is not null))::int total_valid_contacts,
- (select count(distinct c.lead_id)::int from pilot_manual_contacts c where c.pilot_run_id=${pilotRunId}::uuid and c.recorded_at between ${periodFrom} and ${periodTo}) total_manual_contacts,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result in ('RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_responses,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result in ('INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_interested,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result='MEETING_REQUESTED') total_meetings,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result in ('PROPOSAL_REQUESTED','CONVERTED')) total_proposals,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result='CONVERTED' and r.human_confirmed) total_conversions,
+ (select count(distinct c.lead_id)::int from pilot_manual_contacts c where c.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`c.recorded_at`)}) total_manual_contacts,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result in ('RESPONDED','INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_responses,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result in ('INTERESTED','MEETING_REQUESTED','PROPOSAL_REQUESTED','CONVERTED')) total_interested,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result='MEETING_REQUESTED') total_meetings,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result in ('PROPOSAL_REQUESTED','CONVERTED')) total_proposals,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result='CONVERTED' and r.human_confirmed) total_conversions,
  count(distinct pl.lead_id) filter(where exists(select 1 from campaign_opt_outs o where o.lead_id=pl.lead_id))::int total_opt_outs,
- (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and r.recorded_at between ${periodFrom} and ${periodTo} and r.result='INVALID_CONTACT') total_invalid,
+ (select count(distinct r.lead_id)::int from pilot_results r where r.pilot_run_id=${pilotRunId}::uuid and ${withinPeriod(sql`r.recorded_at`)} and r.result='INVALID_CONTACT') total_invalid,
  count(distinct pl.lead_id) filter(where l.is_blocked)::int total_blocked from pilot_leads pl join leads l on l.id=pl.lead_id
  left join lateral(select decision from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by version desc limit 1) rv on true where pl.pilot_run_id=${pilotRunId}::uuid`);
  const r=rows[0]!,counts={totalAssociated:r.total_associated,totalApproved:r.total_approved,totalRejected:r.total_rejected,totalNeedsReview:r.total_needs_review,totalWithoutSiteConfirmed:r.total_without_site,totalValidContacts:r.total_valid_contacts,totalManualContacts:r.total_manual_contacts,totalResponses:r.total_responses,totalInterested:r.total_interested,totalMeetingRequested:r.total_meetings,totalProposalRequested:r.total_proposals,totalConversions:r.total_conversions,totalOptOuts:r.total_opt_outs,totalInvalidContacts:r.total_invalid,totalBlocked:r.total_blocked,totalIncidents:0};

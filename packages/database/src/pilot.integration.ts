@@ -83,18 +83,34 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal((await db.select({value:count()}).from(campaignOptOuts).where(eq(campaignOptOuts.leadId,dnc.lead.id)))[0]?.value,1);
     assert.equal((await db.select({value:count()}).from(crmTimelineEvents).where(and(eq(crmTimelineEvents.leadId,dnc.lead.id),eq(crmTimelineEvents.eventType,'DO_NOT_CONTACT'))))[0]?.value,1);
 
-    const response=funnelResults.find(result=>result.result==='RESPONDED')!;
-    const snapshot=await getPilotSnapshot(db,created.data.id,{from:response.recordedAt,to:conversion.recordedAt});
+    const metricFrom=new Date('2026-07-16T23:59:59.999Z'),metricTo=new Date('2026-07-17T00:00:00.123Z');
+    const controlledResultTimes=new Map([
+      ['CONTACTED','2026-07-16T23:59:59.998999Z'],
+      ['RESPONDED','2026-07-16T23:59:59.999000Z'],
+      ['INTERESTED','2026-07-17T00:00:00.000123Z'],
+      ['MEETING_REQUESTED','2026-07-17T00:00:00.050000Z'],
+      ['PROPOSAL_REQUESTED','2026-07-17T00:00:00.123100Z'],
+      ['CONVERTED','2026-07-17T00:00:00.123456Z'],
+    ]);
+    for(const result of funnelResults)await db.execute(sql`update pilot_results set recorded_at=${controlledResultTimes.get(result.result)}::timestamptz where id=${result.id}::uuid`);
+    await db.execute(sql`update pilot_manual_contacts set recorded_at='2026-07-16T23:59:59.998999Z'::timestamptz where pilot_run_id=${created.data.id}::uuid and lead_id=${funnel.lead.id}::uuid`);
+    await db.execute(sql`update pilot_results set recorded_at='2026-07-17T00:00:00.124000Z'::timestamptz where id=${invalidResult.data.id}::uuid`);
+
+    const snapshot=await getPilotSnapshot(db,created.data.id,{from:metricFrom,to:metricTo});
     assert.deepEqual({responses:snapshot.counts.totalResponses,interested:snapshot.counts.totalInterested,meetings:snapshot.counts.totalMeetingRequested,proposals:snapshot.counts.totalProposalRequested,conversions:snapshot.counts.totalConversions},{responses:1,interested:1,meetings:1,proposals:1,conversions:1});
+    assert.equal(snapshot.counts.totalManualContacts,0,'an event before the lower bound must be excluded');
+    assert.equal(snapshot.counts.totalInvalidContacts,0,'an event in the millisecond after the upper bound must be excluded');
+    const singleMillisecond=await getPilotSnapshot(db,created.data.id,{from:metricTo,to:metricTo});
+    assert.equal(singleMillisecond.counts.totalConversions,1,'from = to must include events with additional microseconds in that millisecond');
     assert.equal(Object.values(snapshot.rates).every(rate=>rate.value===null||rate.value<=1),true);
     assert.equal(snapshot.counts.totalAssociated,3,'multiple associated leads must be counted once each');
     assert.doesNotMatch(JSON.stringify(snapshot),/example\.invalid|\+5500|Empresa Ficticia/i,'snapshot must not expose PII');
-    const before=await getPilotSnapshot(db,created.data.id,{from:new Date(0),to:new Date(response.recordedAt.getTime()-1)});
+    const before=await getPilotSnapshot(db,created.data.id,{from:new Date(0),to:new Date(metricFrom.getTime()-1)});
     assert.equal(before.counts.totalResponses,0,'events before the period must not be counted');
-    const after=await getPilotSnapshot(db,created.data.id,{from:new Date(conversion.recordedAt.getTime()+1),to:new Date(conversion.recordedAt.getTime()+60_000)});
+    const after=await getPilotSnapshot(db,created.data.id,{from:new Date(metricTo.getTime()+1),to:new Date(metricTo.getTime()+60_000)});
     assert.equal(after.counts.totalResponses,0,'events after the period must not be counted');
     assert.equal((await recordPilotResult(db,created.data.id,funnel.lead.id,conversionCommand,auth)).replayed,true);
-    assert.deepEqual((await getPilotSnapshot(db,created.data.id,{from:response.recordedAt,to:conversion.recordedAt})).counts,snapshot.counts,'replay must not change metrics');
+    assert.deepEqual((await getPilotSnapshot(db,created.data.id,{from:metricFrom,to:metricTo})).counts,snapshot.counts,'replay must not change metrics');
 
     const raceLead=await createLead('concorrente');
     const raceRuns=await Promise.all([0,1].map(index=>createPilotRun(db,{name:`Race ${index}`,region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-race-run-${index}`},auth)));

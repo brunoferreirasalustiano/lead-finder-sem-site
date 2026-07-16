@@ -4,6 +4,7 @@ import { buildApp } from './app.js';
 const config = parseApiConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
+  collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
   authentication: { token: config.API_AUTH_TOKEN },

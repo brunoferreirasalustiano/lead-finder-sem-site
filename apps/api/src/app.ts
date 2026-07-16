@@ -129,11 +129,15 @@ export const safeCampaignFailureItem = (value: unknown) => {
 };
 export function buildApp(db: Database, options: {
   dailyLeadLimit?: number;
+  collectionEgressEnabled?: boolean;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
+  enqueueCollection?: typeof enqueueCollection;
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
+  const collectionEgressEnabled = options.collectionEgressEnabled ?? false;
+  const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
   const app = Fastify({
     logger: { serializers: { req: serializeRequestForLog } },
     bodyLimit: 16_384,
@@ -474,6 +478,17 @@ export function buildApp(db: Database, options: {
     return page(failures.map(safeCampaignFailureItem), query.data);
   });
   app.post('/collect', async (request, reply) => {
+    if (!collectionEgressEnabled) {
+      request.log.info({
+        event: 'COLLECTION_EGRESS_DISABLED',
+        code: 'COLLECTION_EGRESS_DISABLED',
+        requestId: request.id,
+      }, 'collection_request_blocked');
+      return reply.status(503).send({
+        error: 'Collection is temporarily unavailable',
+        code: 'COLLECTION_EGRESS_DISABLED',
+      });
+    }
     const parsed = collectSchema.safeParse(request.body);
     if (!parsed.success)
       return reply
@@ -484,7 +499,10 @@ export function buildApp(db: Database, options: {
         error: 'Invalid collection parameters',
         details: { fieldErrors: { limit: [`Limit exceeds DAILY_LEAD_LIMIT (${dailyLeadLimit})`] } },
       });
-    const job = await enqueueCollection(db, parsed.data);
+    const job = await enqueueCollectionJob(db, parsed.data, {
+      enabled: true,
+      configurationVersion: 1,
+    });
     return reply.status(202).send(job);
   });
   app.get('/leads/export.csv', async (request, reply) => {

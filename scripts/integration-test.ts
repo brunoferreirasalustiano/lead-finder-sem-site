@@ -49,7 +49,11 @@ const overpass = new OverpassClient({
 });
 const apiAuthToken = 'synthetic-api-token-for-integration-0001';
 const authenticatedPrincipalId = 'integration-principal';
-const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId } });
+const app = buildApp(db, {
+  dailyLeadLimit: 5,
+  collectionEgressEnabled: true,
+  authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId },
+});
 const inject = (options: InjectOptions) => app.inject({
   ...options,
   headers: { ...options.headers, authorization: `Bearer ${apiAuthToken}` },
@@ -88,6 +92,26 @@ try {
   `);
   const ready = await inject({ method: 'GET', url: '/health/ready' });
   assert.equal(ready.statusCode, 200);
+
+  const disabledApp = buildApp(db, {
+    collectionEgressEnabled: false,
+    authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId },
+  });
+  const collectionCountBeforeBlockedRequest = (await db.select({ value: count() }).from(collectionJobs))[0]?.value;
+  const blockedCollection = await disabledApp.inject({
+    method: 'POST',
+    url: '/collect',
+    headers: { authorization: `Bearer ${apiAuthToken}` },
+    payload: { category: 'synthetic', city: 'Test' },
+  });
+  assert.equal(blockedCollection.statusCode, 503);
+  assert.equal(blockedCollection.json().code, 'COLLECTION_EGRESS_DISABLED');
+  assert.equal(
+    (await db.select({ value: count() }).from(collectionJobs))[0]?.value,
+    collectionCountBeforeBlockedRequest,
+    'disabled collection must not persist a job',
+  );
+  await disabledApp.close();
 
   const invalidCases = [
     ['/leads/not-a-uuid', 400],
@@ -461,7 +485,14 @@ try {
     1,
   );
 
-  await enqueueCollection(db, payload);
+  await db.insert(collectionJobs).values({ payload });
+  const responseCountBeforeLegacyClaim = responses.length;
+  assert.equal(await processNextJob(db, overpass), false, 'historical job must remain ineligible');
+  assert.equal(responses.length, responseCountBeforeLegacyClaim, 'historical job must not fetch');
+  const [historicalJob] = await db.select().from(collectionJobs).where(eq(collectionJobs.status, 'PENDING'));
+  assert.ok(historicalJob, 'historical job must remain pending without consuming an attempt');
+
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
   responses.push({
     status: 200,
     body: JSON.stringify({ elements: [{ type: 'node', id: 1001, tags: { name: 'duplicate' } }] }),
@@ -472,14 +503,14 @@ try {
     1,
   );
 
-  await enqueueCollection(db, payload);
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
   responses.push({ status: 200, body: '{invalid-json' });
   assert.equal(await processNextJob(db, overpass), true);
   assert.equal(
     (await db.select().from(collectionJobs).where(eq(collectionJobs.status, 'FAILED'))).length,
     1,
   );
-  await enqueueCollection(db, payload);
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
   responses.push({ status: 200, body: JSON.stringify({ elements: [] }) });
   assert.equal(await processNextJob(db, overpass), true);
 

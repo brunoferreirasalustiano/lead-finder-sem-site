@@ -8,7 +8,7 @@ const database = {
 
 describe('environment configuration', () => {
   it('applies safe defaults', () => {
-    expect(parseApiConfig(database).API_PORT).toBe(3000);
+    expect(parseApiConfig(database)).toMatchObject({ API_PORT: 3000, COLLECTION_EGRESS_ENABLED: false });
     expect(parseWorkerConfig(database)).toMatchObject({
       COLLECTION_EGRESS_ENABLED: false,
       OVERPASS_TIMEOUT_MS: 30000,
@@ -28,6 +28,8 @@ describe('environment configuration', () => {
     });
     expect(parseWorkerConfig(database).OVERPASS_API_URL).toBeUndefined();
     expect(parseWorkerConfig({ ...database, OVERPASS_API_URL: '' }).OVERPASS_API_URL).toBeUndefined();
+    expect(parseApiConfig({ ...database, COLLECTION_EGRESS_ENABLED: '' }).COLLECTION_EGRESS_ENABLED).toBe(false);
+    expect(parseWorkerConfig({ ...database, COLLECTION_EGRESS_ENABLED: '' }).COLLECTION_EGRESS_ENABLED).toBe(false);
   });
 
   it.each([
@@ -83,6 +85,11 @@ describe('environment configuration', () => {
   });
 
   it('requires an explicit Overpass URL only when collection egress is enabled', () => {
+    expect(() => parseApiConfig({
+      ...database,
+      COLLECTION_EGRESS_ENABLED: 'true',
+    })).toThrow('OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true');
+
     expect(() => parseWorkerConfig({
       ...database,
       COLLECTION_EGRESS_ENABLED: 'true',

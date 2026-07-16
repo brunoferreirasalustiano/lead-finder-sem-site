@@ -11,24 +11,40 @@ const integerFromEnvironment = (name: string, minimum: number, maximum: number, 
 const commonSchema = z.object({
   DATABASE_URL: z.string().url().startsWith('postgresql://'),
   DAILY_LEAD_LIMIT: integerFromEnvironment('DAILY_LEAD_LIMIT', 1, 10_000, 50),
+  COLLECTION_EGRESS_ENABLED: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false'),
+  ).transform((value) => value === 'true'),
+  OVERPASS_API_URL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().trim().url().optional(),
+  ),
 });
+
+const requireCollectionEndpoint = (
+  configuration: { COLLECTION_EGRESS_ENABLED: boolean; OVERPASS_API_URL?: string | undefined },
+  context: z.RefinementCtx,
+) => {
+  if (configuration.COLLECTION_EGRESS_ENABLED && !configuration.OVERPASS_API_URL) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OVERPASS_API_URL'],
+      message: 'OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true',
+    });
+  }
+};
 
 const apiSchema = commonSchema.extend({
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
   OPERATIONAL_BACKLOG_DEGRADED_COUNT: integerFromEnvironment('OPERATIONAL_BACKLOG_DEGRADED_COUNT', 1, 1_000_000, 100),
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
-});
+}).superRefine(requireCollectionEndpoint);
 
 const workerSchema = commonSchema.extend({
-  COLLECTION_EGRESS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WORKER_ID: z.string().trim().min(1).max(200).optional(),
   OUTBOX_LEASE_MS: integerFromEnvironment('OUTBOX_LEASE_MS', 1_000, 3_600_000, 30_000),
-  OVERPASS_API_URL: z.preprocess(
-    (value) => value === '' ? undefined : value,
-    z.string().trim().url().optional(),
-  ),
   OVERPASS_TIMEOUT_MS: integerFromEnvironment('OVERPASS_TIMEOUT_MS', 1_000, 120_000, 30_000),
   OVERPASS_MAX_RETRIES: integerFromEnvironment('OVERPASS_MAX_RETRIES', 0, 10, 3),
   WORKER_POLL_INTERVAL_MS: integerFromEnvironment(
@@ -64,13 +80,7 @@ const workerSchema = commonSchema.extend({
     'OUTBOX_RETRY_MAX_MS', 1, 604_800_000, 60_000,
   ),
 }).superRefine((configuration, context) => {
-  if (configuration.COLLECTION_EGRESS_ENABLED && !configuration.OVERPASS_API_URL) {
-    context.addIssue({
-      code: 'custom',
-      path: ['OVERPASS_API_URL'],
-      message: 'OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true',
-    });
-  }
+  requireCollectionEndpoint(configuration, context);
   if (configuration.CAMPAIGN_WINDOW_START_UTC >= configuration.CAMPAIGN_WINDOW_END_UTC) {
     context.addIssue({
       code: 'custom',

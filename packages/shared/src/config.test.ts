@@ -10,6 +10,7 @@ describe('environment configuration', () => {
   it('applies safe defaults', () => {
     expect(parseApiConfig(database).API_PORT).toBe(3000);
     expect(parseWorkerConfig(database)).toMatchObject({
+      COLLECTION_EGRESS_ENABLED: false,
       OVERPASS_TIMEOUT_MS: 30000,
       OVERPASS_MAX_RETRIES: 3,
       WORKER_POLL_INTERVAL_MS: 60000,
@@ -25,6 +26,8 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_MAX_MS: 60000,
       SHADOW_MODE_ENABLED: false,
     });
+    expect(parseWorkerConfig(database).OVERPASS_API_URL).toBeUndefined();
+    expect(parseWorkerConfig({ ...database, OVERPASS_API_URL: '' }).OVERPASS_API_URL).toBeUndefined();
   });
 
   it.each([
@@ -71,9 +74,32 @@ describe('environment configuration', () => {
 
   it('fails closed and rejects invalid shadow mode values', () => {
     expect(parseWorkerConfig(database).SHADOW_MODE_ENABLED).toBe(false);
-    expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' }).SHADOW_MODE_ENABLED).toBe(true);
+    expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'true' })).toMatchObject({
+      SHADOW_MODE_ENABLED: true,
+      COLLECTION_EGRESS_ENABLED: false,
+    });
     expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'false' }).SHADOW_MODE_ENABLED).toBe(false);
     expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
+  });
+
+  it('requires an explicit Overpass URL only when collection egress is enabled', () => {
+    expect(() => parseWorkerConfig({
+      ...database,
+      COLLECTION_EGRESS_ENABLED: 'true',
+    })).toThrow('OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true');
+
+    expect(parseWorkerConfig({
+      ...database,
+      COLLECTION_EGRESS_ENABLED: 'true',
+      OVERPASS_API_URL: 'https://overpass.example.test/api',
+    })).toMatchObject({
+      COLLECTION_EGRESS_ENABLED: true,
+      OVERPASS_API_URL: 'https://overpass.example.test/api',
+    });
+    expect(() => parseWorkerConfig({
+      ...database,
+      COLLECTION_EGRESS_ENABLED: 'yes',
+    })).toThrow('COLLECTION_EGRESS_ENABLED');
   });
 
   it('rejects retry base greater than retry maximum', () => {

@@ -21,10 +21,14 @@ const apiSchema = commonSchema.extend({
 });
 
 const workerSchema = commonSchema.extend({
+  COLLECTION_EGRESS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WORKER_ID: z.string().trim().min(1).max(200).optional(),
   OUTBOX_LEASE_MS: integerFromEnvironment('OUTBOX_LEASE_MS', 1_000, 3_600_000, 30_000),
-  OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
+  OVERPASS_API_URL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().trim().url().optional(),
+  ),
   OVERPASS_TIMEOUT_MS: integerFromEnvironment('OVERPASS_TIMEOUT_MS', 1_000, 120_000, 30_000),
   OVERPASS_MAX_RETRIES: integerFromEnvironment('OVERPASS_MAX_RETRIES', 0, 10, 3),
   WORKER_POLL_INTERVAL_MS: integerFromEnvironment(
@@ -60,6 +64,13 @@ const workerSchema = commonSchema.extend({
     'OUTBOX_RETRY_MAX_MS', 1, 604_800_000, 60_000,
   ),
 }).superRefine((configuration, context) => {
+  if (configuration.COLLECTION_EGRESS_ENABLED && !configuration.OVERPASS_API_URL) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OVERPASS_API_URL'],
+      message: 'OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true',
+    });
+  }
   if (configuration.CAMPAIGN_WINDOW_START_UTC >= configuration.CAMPAIGN_WINDOW_END_UTC) {
     context.addIssue({
       code: 'custom',

@@ -21,6 +21,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in .env}
+      API_AUTH_PERMISSIONS: ${API_AUTH_PERMISSIONS:?Set least-privilege API_AUTH_PERMISSIONS in .env}
       SHADOW_MODE_ENABLED: ${SHADOW_MODE_ENABLED:?Set SHADOW_MODE_ENABLED=true for shadow operation}
       REAL_PROVIDER_CONFIGURED: ${REAL_PROVIDER_CONFIGURED:-false}
     logging: *production-logging

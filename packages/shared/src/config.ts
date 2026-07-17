@@ -1,5 +1,44 @@
 import { z } from 'zod';
 
+export const apiAuthPermissions = [
+  'leads:read',
+  'contacts:read',
+  'leads:export',
+  'crm:read',
+  'crm:write',
+  'crm:reactivate-do-not-contact',
+  'campaigns:read',
+  'campaigns:write',
+  'operations:read',
+  'collection:execute',
+  'pilot:read',
+  'pilot:write',
+  'pilot:review',
+  'pilot:record-contact',
+  'pilot:record-result',
+  'pilot:complete',
+] as const;
+export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
+
+const apiAuthPermissionSet = new Set<string>(apiAuthPermissions);
+const apiAuthPermissionsFromEnvironment = z.string().superRefine((value, context) => {
+  const entries = value.split(',');
+  if (entries.some((entry) => entry.length === 0)) {
+    context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS must not contain empty entries' });
+    return;
+  }
+  if (entries.some((entry) => entry.trim() !== entry || !/^[a-z]+(?::[a-z][a-z-]*)+$/.test(entry))) {
+    context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS contains a malformed permission' });
+  }
+  const duplicates = entries.filter((entry, index) => entries.indexOf(entry) !== index);
+  if (duplicates.length > 0) {
+    context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS must not contain duplicate permissions' });
+  }
+  for (const entry of entries) if (!apiAuthPermissionSet.has(entry)) {
+    context.addIssue({ code: 'custom', message: `API_AUTH_PERMISSIONS contains unknown permission: ${entry}` });
+  }
+}).transform((value) => value.split(',') as ApiAuthPermission[]);
+
 const integerFromEnvironment = (name: string, minimum: number, maximum: number, fallback: number) =>
   z
     .string()
@@ -38,6 +77,7 @@ const apiSchema = commonSchema.extend({
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   REAL_PROVIDER_CONFIGURED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
+  API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
   OPERATIONAL_BACKLOG_DEGRADED_COUNT: integerFromEnvironment('OPERATIONAL_BACKLOG_DEGRADED_COUNT', 1, 1_000_000, 100),
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),

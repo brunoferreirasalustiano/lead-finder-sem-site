@@ -25,6 +25,7 @@ import {
 } from '@lead-finder/database';
 import { OverpassClient } from '@lead-finder/overpass-client';
 import { buildApp } from '../apps/api/src/app.js';
+import { permissions } from '../apps/api/src/auth.js';
 import { processNextJob } from '../apps/worker/src/process-job.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -52,7 +53,7 @@ const authenticatedPrincipalId = 'integration-principal';
 const app = buildApp(db, {
   dailyLeadLimit: 5,
   collectionEgressEnabled: true,
-  authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId },
+  authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId, principalPermissions: permissions },
 });
 const inject = (options: InjectOptions) => app.inject({
   ...options,
@@ -102,7 +103,7 @@ try {
 
   const disabledApp = buildApp(db, {
     collectionEgressEnabled: false,
-    authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId },
+    authentication: { token: apiAuthToken, principalId: authenticatedPrincipalId, principalPermissions: permissions },
   });
   const collectionCountBeforeBlockedRequest = (await db.select({ value: count() }).from(collectionJobs))[0]?.value;
   const blockedCollection = await disabledApp.inject({

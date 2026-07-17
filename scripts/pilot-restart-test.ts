@@ -21,13 +21,17 @@ import {
   pilotTimelineEvents,
 } from '@lead-finder/database';
 import { buildApp } from '../apps/api/src/app.js';
+import { permissions } from '../apps/api/src/auth.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 
 const { db, close } = createDatabase(databaseUrl);
 const apiAuthToken = 'synthetic-api-token-for-integration-0001';
-const app = buildApp(db, { dailyLeadLimit: 5, authentication: { token: apiAuthToken } });
+const app = buildApp(db, {
+  dailyLeadLimit: 5,
+  authentication: { token: apiAuthToken, principalPermissions: permissions },
+});
 const inject = (options: InjectOptions) => app.inject({
   ...options,
   headers: { ...options.headers, authorization: `Bearer ${apiAuthToken}` },

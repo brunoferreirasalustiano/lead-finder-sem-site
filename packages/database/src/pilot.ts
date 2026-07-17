@@ -38,6 +38,14 @@ async function replay<T>(tx: Tx, scope: string, key: string, payload: unknown): 
 const remember = (tx: Tx, scope: string, key: string, payload: unknown, type: string, id: string, result: unknown) => tx.insert(pilotIdempotencyKeys).values({ scope,idempotencyKey:key,payloadFingerprint:pilotFingerprint(payload),resourceType:type,resourceId:id,result });
 const timeline = (tx: Tx, value: typeof pilotTimelineEvents.$inferInsert) => tx.insert(pilotTimelineEvents).values(value);
 const sanitize = (value?: string, max=500) => value?.replace(/\p{Cc}/gu,' ').trim().slice(0,max) || undefined;
+const hasPostgresCode = (error: unknown, expectedCode: string): boolean => {
+  let current = error;
+  while (current && typeof current === 'object') {
+    if ('code' in current && (current as {code?:unknown}).code === expectedCode) return true;
+    current = 'cause' in current ? (current as {cause?:unknown}).cause : undefined;
+  }
+  return false;
+};
 
 async function eligibility(tx: Tx, leadId: string, contactId?: string, expected?: {region:string;category:string}) {
   await lock(tx, `pilot:lead:${leadId}`);
@@ -106,7 +114,7 @@ export async function addPilotLead(db:Database,pilotRunId:string,input:PilotLead
   const run=(await tx.select().from(pilotRuns).where(eq(pilotRuns.id,pilotRunId)).for('update').limit(1))[0];if(!run)throw new PilotPersistenceError('Pilot run not found','NOT_FOUND');if(run.status!=='DRAFT'||run.version!==input.expectedVersion)throw new PilotPersistenceError('Pilot state or version conflict','VERSION_CONFLICT');
   await eligibility(tx,input.leadId,undefined,{region:run.region,category:run.category});
   const total=(await tx.select({value:count()}).from(pilotLeads).where(eq(pilotLeads.pilotRunId,pilotRunId)))[0]?.value??0;if(total>=run.targetLeadCount)throw new PilotPersistenceError('Pilot target lead count exceeded','LOGICAL_CONFLICT');
-  try{const row=(await tx.insert(pilotLeads).values({pilotRunId,leadId:input.leadId,source:input.source,addedBy:auth.principalId}).returning())[0]!;await tx.update(pilotRuns).set({version:sql`${pilotRuns.version}+1`,updatedAt:new Date()}).where(and(eq(pilotRuns.id,pilotRunId),eq(pilotRuns.version,input.expectedVersion)));await timeline(tx,{pilotRunId,leadId:input.leadId,eventType:'PILOT_LEAD_ADDED',principalId:auth.principalId,newValue:row});await remember(tx,`lead:${pilotRunId}`,input.idempotencyKey,payload,'pilot-lead',input.leadId,row);return{data:row,replayed:false};}catch(e){if((e as {code?:string}).code==='23505')throw new PilotPersistenceError('Lead already belongs to this or another active pilot','LOGICAL_CONFLICT');throw e;}});
+  try{const row=(await tx.insert(pilotLeads).values({pilotRunId,leadId:input.leadId,source:input.source,addedBy:auth.principalId}).returning())[0]!;await tx.update(pilotRuns).set({version:sql`${pilotRuns.version}+1`,updatedAt:new Date()}).where(and(eq(pilotRuns.id,pilotRunId),eq(pilotRuns.version,input.expectedVersion)));await timeline(tx,{pilotRunId,leadId:input.leadId,eventType:'PILOT_LEAD_ADDED',principalId:auth.principalId,newValue:row});await remember(tx,`lead:${pilotRunId}`,input.idempotencyKey,payload,'pilot-lead',input.leadId,row);return{data:row,replayed:false};}catch(e){if(hasPostgresCode(e,'23505'))throw new PilotPersistenceError('Lead already belongs to this or another active pilot','LOGICAL_CONFLICT');throw e;}});
 }
 export async function reviewPilotLead(db:Database,pilotRunId:string,leadId:string,input:PilotReviewInput,authorization:AuthorizationContext) {
  const auth=trusted(authorization),payload={pilotRunId,leadId,...input};return db.transaction(async tx=>{const prior=await replay<typeof pilotReviews.$inferSelect>(tx,`review:${pilotRunId}:${leadId}`,input.idempotencyKey,payload);if(prior)return prior;await lock(tx,`pilot:review:${pilotRunId}:${leadId}`);

@@ -90,8 +90,12 @@ describe('pilot real preflight report', () => {
     const composeArguments = ['compose', '--env-file', environmentFile, '-f', 'docker-compose.yml', '-f', 'docker-compose.homologation.yml'];
     try {
       const rendered = await execFileAsync('docker', [...composeArguments, 'config', '--format', 'json']);
-      const configuration = JSON.parse(rendered.stdout) as { services: Record<string, { profiles?: unknown }> };
-      expect(configuration.services.n8n.profiles).toEqual(expect.arrayContaining(['disabled']));
+      const defaultConfiguration = JSON.parse(rendered.stdout) as { services: Record<string, { profiles?: unknown }> };
+      expect(defaultConfiguration.services.n8n).toBeUndefined();
+
+      const profiled = await execFileAsync('docker', ['compose', '--profile', 'disabled', ...composeArguments.slice(1), 'config', '--format', 'json']);
+      const profiledConfiguration = JSON.parse(profiled.stdout) as { services: Record<string, { profiles?: unknown }> };
+      expect(profiledConfiguration.services.n8n.profiles).toEqual(expect.arrayContaining(['disabled']));
 
       const dryRun = await execFileAsync('docker', [...composeArguments, 'up', '--dry-run', '--no-build']);
       expect(`${dryRun.stdout}\n${dryRun.stderr}`).not.toMatch(/\bn8n\b/u);

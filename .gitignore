@@ -4,8 +4,11 @@ dist/
 .env.*
 !.env.example
 !.env.production.example
+!.env.homologation.example
 coverage/
 /backups/
+.pilot-evidence/
+.pilot-backups/
 *.tsbuildinfo
 *.log
 .DS_Store

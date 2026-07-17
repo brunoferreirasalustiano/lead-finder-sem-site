@@ -97,6 +97,23 @@ describe('API authentication boundary', () => {
     await app.close();
   });
 
+  it.each([
+    ['GET', '/pilots', undefined],
+    ['POST', '/pilots', {}],
+    ['PATCH', '/pilots/not-a-uuid/status', {}],
+    ['POST', '/pilots/not-a-uuid/leads', {}],
+    ['POST', '/pilots/not-a-uuid/leads/not-a-uuid/review', {}],
+    ['POST', '/pilots/not-a-uuid/leads/not-a-uuid/manual-contacts', {}],
+    ['POST', '/pilots/not-a-uuid/leads/not-a-uuid/results', {}],
+    ['GET', '/pilots/not-a-uuid/snapshot', undefined],
+  ] as const)('authorizes the relevant pilot route before its request validation: %s %s', async (method, url, payload) => {
+    const app = buildApp({} as Database, { authentication: { token, principalPermissions: minimalPermissions } });
+    const response = await app.inject({ method, url, headers: authorization, ...(payload ? { payload } : {}) });
+    expect(response.statusCode).not.toBe(401);
+    expect(response.statusCode).not.toBe(403);
+    await app.close();
+  });
+
   it('allows only the route covered by the injected permission', async () => {
     const app = buildApp({} as Database, { authentication: { token, principalPermissions: ['campaigns:read'] } });
     const allowed = await app.inject({

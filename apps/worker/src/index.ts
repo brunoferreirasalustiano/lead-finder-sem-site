@@ -10,7 +10,7 @@ const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const operationalLogger = createConsoleOperationalLogger();
 const processCollection = createCollectionProcessor(db, {
-  enabled: config.COLLECTION_EGRESS_ENABLED,
+  enabled: config.COLLECTION_EGRESS_ENABLED && !config.PILOT_KILL_SWITCH_ENABLED,
   endpoint: config.OVERPASS_API_URL,
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
@@ -55,6 +55,7 @@ while (gracefulStop.running) {
   const consumedOutbox = gracefulStop.running
     ? await processNextOutbox(db, outboxAdapter, {
       workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy, shadowGuard,
+      killSwitchEnabled: config.PILOT_KILL_SWITCH_ENABLED,
     }, operationalLogger, operationalMetrics)
     : false;
   if (!collected && !consumedOutbox && gracefulStop.running) {

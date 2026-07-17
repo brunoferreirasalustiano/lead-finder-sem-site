@@ -13,10 +13,14 @@ import type { ShadowModeGuard } from '@lead-finder/shared';
 export async function processNextOutbox(
   db: Database,
   adapter: SimulatedOutboxAdapter,
-  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard: ShadowModeGuard; shadowRunId?: string },
+  input: { workerId: string; leaseMs: number; policy: CampaignExecutionPolicy; now?: Date; shadowGuard: ShadowModeGuard; shadowRunId?: string; killSwitchEnabled?: boolean },
   logger: OperationalLogger,
   metrics?: OperationalMetrics,
 ): Promise<boolean> {
+  if (input.killSwitchEnabled) {
+    logger.info({ correlationId: 'pilot-kill-switch', event: 'PILOT_KILL_SWITCH_BLOCKED', outcome: 'INELIGIBLE', reason: 'UNKNOWN', durationMs: 0 });
+    return false;
+  }
   if (!input.shadowGuard || input.shadowGuard.block(input.shadowRunId)) return false;
   const now = input.now ?? new Date();
   const claim = await claimCampaignOutbox(db, {

@@ -42,6 +42,15 @@ describe('processNextOutbox', () => {
     expect(claimCampaignOutbox).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(guard.blockedCount).toBe(1);
     expect(JSON.stringify(logger.info.mock.calls)).toContain('SHADOW_MODE_BLOCKED'); expect(JSON.stringify(logger.info.mock.calls)).not.toContain('private@example.test');
   });
+  it('blocks before claim, authorization, or adapter execution when the pilot kill switch is engaged', async () => {
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const adapter = new SimulatedOutboxAdapter({} as Database);
+    const execute = vi.spyOn(adapter, 'execute');
+    await expect(processNextOutbox({} as Database, adapter, { ...input, killSwitchEnabled: true }, logger)).resolves.toBe(false);
+    expect(claimCampaignOutbox).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'PILOT_KILL_SWITCH_BLOCKED' }));
+  });
   it('fails closed before claim when an untyped caller omits the mandatory guard', async () => {
     const adapter = new SimulatedOutboxAdapter({} as Database);
     const execute = vi.spyOn(adapter, 'execute');

@@ -30,6 +30,7 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_BASE_MS: 1000,
       OUTBOX_RETRY_MAX_MS: 60000,
       SHADOW_MODE_ENABLED: false,
+      PILOT_KILL_SWITCH_ENABLED: false,
     });
     expect(parseWorkerConfig(database).OVERPASS_API_URL).toBeUndefined();
     expect(parseWorkerConfig({ ...database, OVERPASS_API_URL: '' }).OVERPASS_API_URL).toBeUndefined();
@@ -113,6 +114,8 @@ describe('environment configuration', () => {
     });
     expect(parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'false' }).SHADOW_MODE_ENABLED).toBe(false);
     expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
+    expect(parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'true' }).PILOT_KILL_SWITCH_ENABLED).toBe(true);
+    expect(() => parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'yes' })).toThrow('PILOT_KILL_SWITCH_ENABLED');
   });
 
   it('requires an explicit Overpass URL only when collection egress is enabled', () => {

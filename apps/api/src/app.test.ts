@@ -9,10 +9,13 @@ import {
   safeCampaignAuditItem,
   safeCampaignFailureItem,
 } from './app.js';
+import { permissions } from './auth.js';
 
 const sensitivePattern = /private@example\.test|\+5511999999999|tok_secret|postgresql:\/\/|select \* from|lead_contacts|stack-canary/i;
 const testToken = 'synthetic-api-token-for-tests-only-0001';
-const authenticatedApp = (db: Database) => buildApp(db, { authentication: { token: testToken } });
+const authenticatedApp = (db: Database) => buildApp(db, {
+  authentication: { token: testToken, principalPermissions: permissions },
+});
 const authenticatedInject = (app: ReturnType<typeof buildApp>, options: InjectOptions) => app.inject({
   ...options,
   headers: { ...options.headers, authorization: `Bearer ${testToken}` },
@@ -26,7 +29,7 @@ describe('security-safe API output', () => {
     const enqueue = vi.fn();
     const app = buildApp(db, {
       collectionEgressEnabled: false,
-      authentication: { token: testToken },
+      authentication: { token: testToken, principalPermissions: permissions },
       enqueueCollection: enqueue,
     });
     let closed = false;
@@ -63,7 +66,7 @@ describe('security-safe API output', () => {
     const enqueue = vi.fn().mockResolvedValue({ id: 'synthetic-job', status: 'PENDING' });
     const app = buildApp({} as Database, {
       collectionEgressEnabled: true,
-      authentication: { token: testToken },
+      authentication: { token: testToken, principalPermissions: permissions },
       enqueueCollection: enqueue,
     });
     const response = await authenticatedInject(app, {
@@ -170,7 +173,9 @@ describe('CRM routes', () => {
       actor: 'forged-client', expectedVersion: 3, idempotencyKey: 'reactivate-0001', stage: 'NOVO',
       action: 'REACTIVATE', reason: 'Synthetic reason', auditMetadata: { principalId: 'forged', timestamp: '2000-01-01T00:00:00Z' },
     };
-    const anonymous = buildApp(guardedDb, { authentication: { token: testToken } });
+    const anonymous = buildApp(guardedDb, {
+      authentication: { token: testToken, principalPermissions: permissions },
+    });
     expect((await anonymous.inject({ method: 'PATCH', url: `/leads/${leadId}/crm/stage`, payload })).statusCode).toBe(401);
     await anonymous.close();
 

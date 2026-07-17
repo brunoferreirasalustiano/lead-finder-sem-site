@@ -4,11 +4,16 @@ import { parseApiConfig, parseWorkerConfig } from './config.js';
 const database = {
   DATABASE_URL: 'postgresql://user:password@localhost:5432/database',
   API_AUTH_TOKEN: 'synthetic-api-token-for-tests-only-0001',
+  API_AUTH_PERMISSIONS: 'pilot:read,pilot:write,pilot:review,pilot:record-contact,pilot:record-result',
 };
 
 describe('environment configuration', () => {
   it('applies safe defaults', () => {
-    expect(parseApiConfig(database)).toMatchObject({ API_PORT: 3000, COLLECTION_EGRESS_ENABLED: false });
+    expect(parseApiConfig(database)).toMatchObject({
+      API_PORT: 3000,
+      COLLECTION_EGRESS_ENABLED: false,
+      API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
+    });
     expect(parseWorkerConfig(database)).toMatchObject({
       COLLECTION_EGRESS_ENABLED: false,
       OVERPASS_TIMEOUT_MS: 30000,
@@ -42,6 +47,29 @@ describe('environment configuration', () => {
 
   it.each([undefined, '', 'too-short', 'CHANGE_ME'])('rejects an unsafe API token %s', (value) => {
     expect(() => parseApiConfig({ ...database, API_AUTH_TOKEN: value })).toThrow('API_AUTH_TOKEN');
+  });
+
+  it.each([
+    [undefined, 'API_AUTH_PERMISSIONS'],
+    ['', 'empty entries'],
+    ['pilot:read,', 'empty entries'],
+    [',pilot:read', 'empty entries'],
+    ['pilot:read,,pilot:write', 'empty entries'],
+    ['pilot:read,pilot:read', 'duplicate permissions'],
+    ['pilot:read,unknown:permission', 'unknown permission'],
+    ['pilot:*', 'malformed permission'],
+    [' pilot:read', 'malformed permission'],
+    ['pilot:read ', 'malformed permission'],
+  ])('rejects unsafe API permission configuration %s', (value, message) => {
+    expect(() => parseApiConfig({ ...database, API_AUTH_PERMISSIONS: value })).toThrow(message);
+  });
+
+  it('keeps pilot completion as a separate opt-in permission', () => {
+    expect(parseApiConfig(database).API_AUTH_PERMISSIONS).not.toContain('pilot:complete');
+    expect(parseApiConfig({
+      ...database,
+      API_AUTH_PERMISSIONS: `${database.API_AUTH_PERMISSIONS},pilot:complete`,
+    }).API_AUTH_PERMISSIONS).toContain('pilot:complete');
   });
 
   it.each([

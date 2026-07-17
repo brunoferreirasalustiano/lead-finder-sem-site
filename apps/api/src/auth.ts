@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { createAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
+import {
+  apiAuthPermissions, createAuthorizationContext, type ApiAuthPermission, type AuthorizationContext,
+} from '@lead-finder/shared';
 
 export const serializeRequestForLog = (request: FastifyRequest) => ({
   method: request.method,
@@ -10,25 +12,8 @@ export const serializeRequestForLog = (request: FastifyRequest) => ({
   requestId: request.id,
 });
 
-export const permissions = [
-  'leads:read',
-  'contacts:read',
-  'leads:export',
-  'crm:read',
-  'crm:write',
-  'crm:reactivate-do-not-contact',
-  'campaigns:read',
-  'campaigns:write',
-  'operations:read',
-  'collection:execute',
-  'pilot:read',
-  'pilot:write',
-  'pilot:review',
-  'pilot:record-contact',
-  'pilot:record-result',
-  'pilot:complete',
-] as const;
-export type Permission = (typeof permissions)[number];
+export const permissions = apiAuthPermissions;
+export type Permission = ApiAuthPermission;
 
 export type OperationalPrincipal = Readonly<{
   id: string;
@@ -127,7 +112,7 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
   return {
     id: options.principalId ?? 'single-operator',
     type: 'OPERATOR' as const,
-    permissions: new Set(options.principalPermissions ?? permissions),
+    permissions: new Set(options.principalPermissions ?? []),
     authenticationSource: 'BEARER_TOKEN' as const,
   };
 };
@@ -160,6 +145,9 @@ export function authorizationContextFor(request: FastifyRequest): AuthorizationC
 }
 
 export function installAuthorization(app: FastifyInstance, options: AuthenticationOptions = {}) {
+  if (options.token && !options.authenticate && options.principalPermissions === undefined) {
+    throw new Error('Bearer token authentication requires explicit principal permissions');
+  }
   const registeredRoutes = new Set<string>();
   app.addHook('onRoute', (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];

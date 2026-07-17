@@ -9,7 +9,7 @@ describe('controlled pilot API boundary', () => {
   it('keeps pilot routes authenticated and non-public before database access', async () => {
     let databaseAccesses = 0;
     const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
-    const app = buildApp(db, { authentication: { token } });
+    const app = buildApp(db, { authentication: { token, principalPermissions: ['pilot:read'] } });
     const response = await app.inject({ method: 'GET', url: '/pilots' });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({ error: 'Authentication required', code: 'UNAUTHENTICATED' });

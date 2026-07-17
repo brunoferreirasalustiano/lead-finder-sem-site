@@ -37,6 +37,7 @@ REAL_PROVIDER_CONFIGURED=false
 DATABASE_URL=postgresql://leadfinder:smoke-only-password@postgres:5432/leadfinder
 API_PORT=3000
 API_AUTH_TOKEN=synthetic-deploy-smoke-api-token-0001
+API_AUTH_PERMISSIONS=operations:read,pilot:read,pilot:write,pilot:review,pilot:record-contact,pilot:record-result
 DEPLOY_MODE=tunnel
 ENABLE_N8N=false
 COLLECTION_EGRESS_ENABLED=false

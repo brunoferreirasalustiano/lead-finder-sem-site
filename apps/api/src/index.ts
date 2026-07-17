@@ -9,7 +9,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   realProviderConfigured: config.REAL_PROVIDER_CONFIGURED,
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
-  authentication: { token: config.API_AUTH_TOKEN },
+  authentication: { token: config.API_AUTH_TOKEN, principalPermissions: config.API_AUTH_PERMISSIONS },
 });
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {

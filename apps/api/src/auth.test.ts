@@ -7,6 +7,7 @@ import { installAuthorization, permissions, publicRoutes, routePolicies, seriali
 const token = 'synthetic-api-token-for-tests-only-0001';
 const authorization = { authorization: `Bearer ${token}` };
 const leadId = '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa';
+const minimalPermissions = ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'] as const;
 
 describe('API authentication boundary', () => {
   it('keeps only the three exact health routes public', async () => {
@@ -28,7 +29,7 @@ describe('API authentication boundary', () => {
   ])('changes the original anonymous PoC to 401 before database access: %s', async (url) => {
     let databaseAccesses = 0;
     const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
-    const app = buildApp(db, { authentication: { token } });
+    const app = buildApp(db, { authentication: { token, principalPermissions: minimalPermissions } });
     const response = await app.inject({ method: 'GET', url });
     expect(response.statusCode).toBe(401);
     expect(response.headers['www-authenticate']).toBe('Bearer');
@@ -46,7 +47,7 @@ describe('API authentication boundary', () => {
     `Bearer  ${token}`,
     `Bearer ${token}, Bearer ${token}`,
   ])('rejects absent or malformed credentials without revealing why: %s', async (header) => {
-    const app = buildApp({} as Database, { authentication: { token } });
+    const app = buildApp({} as Database, { authentication: { token, principalPermissions: minimalPermissions } });
     const response = await app.inject(header
       ? { method: 'GET', url: '/leads', headers: { authorization: header } }
       : { method: 'GET', url: '/leads' });
@@ -56,7 +57,7 @@ describe('API authentication boundary', () => {
   });
 
   it('accepts case-insensitive Bearer and ignores query or client-asserted identity headers', async () => {
-    const app = buildApp({} as Database, { authentication: { token } });
+    const app = buildApp({} as Database, { authentication: { token, principalPermissions: ['campaigns:read'] } });
     const accepted = await app.inject({ method: 'POST', url: '/campaigns/preview?token=attacker', headers: {
       authorization: `bEaReR ${token}`, 'x-user-id': 'attacker', 'x-role': 'admin', 'x-permissions': '*',
     }, payload: { channel: 'EMAIL', content: 'Hello', allowedVariables: [], values: {} } });
@@ -75,6 +76,36 @@ describe('API authentication boundary', () => {
     expect((await app.inject({ method: 'GET', url: `/leads/${leadId}/contacts`, headers: authorization })).statusCode).toBe(403);
     expect((await app.inject({ method: 'GET', url: '/leads/export.csv', headers: authorization })).statusCode).toBe(403);
     expect(databaseAccesses).toBe(0);
+    await app.close();
+  });
+
+  it('fails startup when a bearer token has no explicit permission set', () => {
+    expect(() => buildApp({} as Database, { authentication: { token } })).toThrow(
+      'Bearer token authentication requires explicit principal permissions',
+    );
+  });
+
+  it('denies privileged routes omitted from the operational permission set', async () => {
+    const app = buildApp({} as Database, { authentication: { token, principalPermissions: minimalPermissions } });
+    expect((await app.inject({ method: 'GET', url: '/leads/export.csv', headers: authorization })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/collect', headers: authorization, payload: {} })).statusCode).toBe(403);
+    expect((await app.inject({
+      method: 'PATCH', url: '/pilots/123e4567-e89b-42d3-a456-426614174000/status',
+      headers: { ...authorization, 'idempotency-key': 'complete-pilot-0001' },
+      payload: { status: 'COMPLETED', expectedVersion: 1 },
+    })).statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('allows only the route covered by the injected permission', async () => {
+    const app = buildApp({} as Database, { authentication: { token, principalPermissions: ['campaigns:read'] } });
+    const allowed = await app.inject({
+      method: 'POST', url: '/campaigns/preview', headers: authorization,
+      payload: { channel: 'EMAIL', content: 'Hello', allowedVariables: [], values: {} },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/pilots', headers: authorization })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/leads/export.csv', headers: authorization })).statusCode).toBe(403);
     await app.close();
   });
 
@@ -116,7 +147,9 @@ describe('API authentication boundary', () => {
       'identity-secret-canary', 'body-token-canary', 'body-password-canary',
     ];
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const app = buildApp({} as Database, { authentication: { token } });
+    const app = buildApp({} as Database, {
+      authentication: { token, principalPermissions: [...minimalPermissions, 'campaigns:read'] },
+    });
     try {
       const queries = [
         'token=synthetic-secret-canary',

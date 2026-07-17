@@ -370,10 +370,13 @@ Todas as rotas, exceto `GET /health/live`, `GET /health` e `GET /health/ready`, 
 O Caddy apenas encaminha a requisição para uma API que já autentica e autoriza na aplicação.
 Credenciais nunca devem ser versionadas, colocadas no Caddyfile, em URLs ou query strings.
 
-O principal operacional single-operator recebe permissões explícitas para leitura de leads e
-contatos, exportação, CRM, campanhas, operações e coleta. Antes de introduzir múltiplos usuários,
-operadores ou clientes, deve ser implementada autorização adicional por objeto/tenant e uma
-identidade OIDC apropriada.
+`API_AUTH_PERMISSIONS` é obrigatória e define, por lista CSV estrita, as permissões concedidas ao
+principal operacional single-operator. Entradas vazias, duplicadas, desconhecidas, malformadas e
+wildcards são rejeitadas no startup. A configuração mínima recomendada para o piloto interno é
+`pilot:read,pilot:write,pilot:review,pilot:record-contact,pilot:record-result`; `pilot:complete`,
+`leads:export` e `collection:execute` permanecem opt-in e não fazem parte desse perfil comum.
+Antes de introduzir múltiplos usuários, operadores ou clientes, deve ser implementada autorização
+adicional por objeto/tenant e uma identidade OIDC apropriada.
 
 - `GET /health`
 - `GET /health/live`

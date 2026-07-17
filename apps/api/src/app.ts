@@ -48,6 +48,16 @@ import {
   reserveSimulatedRecipient,
   transitionCampaign,
   transitionCampaignVersion,
+  PilotPersistenceError,
+  createPilotRun,
+  listPilotRuns,
+  getPilotRun,
+  updatePilotRunStatus,
+  addPilotLead,
+  reviewPilotLead,
+  recordPilotManualContact,
+  recordPilotResult,
+  getPilotSnapshot,
 } from '@lead-finder/database';
 import {
   collectSchema,
@@ -81,6 +91,15 @@ import {
   campaignStateCommandSchema,
   campaignVersionCreateSchema,
   defineCampaignTemplate,
+  PilotDomainError,
+  pilotRunCreateSchema,
+  pilotRunStatusChangeSchema,
+  pilotRunListSchema,
+  pilotLeadAddSchema,
+  pilotReviewSchema,
+  pilotManualContactSchema,
+  pilotResultSchema,
+  pilotMetricPeriodSchema,
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { simulateCampaignMessage } from './campaign-simulation.js';
@@ -130,6 +149,8 @@ export const safeCampaignFailureItem = (value: unknown) => {
 export function buildApp(db: Database, options: {
   dailyLeadLimit?: number;
   collectionEgressEnabled?: boolean;
+  shadowModeEnabled?: boolean;
+  realProviderConfigured?: boolean;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
@@ -137,6 +158,8 @@ export function buildApp(db: Database, options: {
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const collectionEgressEnabled = options.collectionEgressEnabled ?? false;
+  const shadowModeEnabled = options.shadowModeEnabled ?? false;
+  const realProviderConfigured = options.realProviderConfigured ?? false;
   const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
   const app = Fastify({
     logger: { serializers: { req: serializeRequestForLog } },
@@ -232,6 +255,27 @@ export function buildApp(db: Database, options: {
     try { return await operation(); } catch (error) { return campaignError(error, reply); }
   };
   const idempotencyKey = (headers: Record<string, unknown>) => z.string().trim().min(1).max(200).safeParse(headers['idempotency-key']);
+  const commandWithHeaderKey = (body: unknown, key: ReturnType<typeof idempotencyKey>) => {
+    if (!key.success || typeof body !== 'object' || body === null) return body;
+    const supplied = (body as Record<string, unknown>)['idempotencyKey'];
+    if (supplied !== undefined && supplied !== key.data) return null;
+    return { ...body, idempotencyKey: key.data };
+  };
+  const pilotError = (error: unknown, reply: Parameters<typeof crmError>[1]) => {
+    if (error instanceof PilotPersistenceError) {
+      const status = error.code === 'NOT_FOUND' ? 404
+        : error.code === 'VERSION_CONFLICT' || error.code === 'IDEMPOTENCY_CONFLICT'
+          || error.code === 'INVALID_STATE' || error.code === 'LOGICAL_CONFLICT' ? 409 : 400;
+      return reply.status(status).send({ error: 'Pilot operation failed', code: error.code });
+    }
+    if (error instanceof PilotDomainError)
+      return reply.status(error.code === 'INVALID_TRANSITION' || error.code === 'INVALID_RESULT_TRANSITION' ? 409 : 400)
+        .send({ error: 'Pilot operation failed', code: error.code });
+    throw error;
+  };
+  const pilotRoute = async <T>(reply: Parameters<typeof crmError>[1], operation: () => Promise<T>) => {
+    try { return await operation(); } catch (error) { return pilotError(error, reply); }
+  };
   app.get('/leads/:id/qualification', async (request, reply) => {
     const id = leadId(request);
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
@@ -476,6 +520,92 @@ export function buildApp(db: Database, options: {
     const query = campaignListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid failure query', code: 'INVALID_REQUEST' });
     const failures = await listCampaignFailures(db, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
     return page(failures.map(safeCampaignFailureItem), query.data);
+  });
+  app.post('/pilots', async (request, reply) => {
+    const body = pilotRunCreateSchema.omit({ idempotencyKey: true }).safeParse(request.body);
+    const key = idempotencyKey(request.headers);
+    if (!body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot request', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, async () => {
+      const result = await createPilotRun(db, { ...body.data, idempotencyKey: key.data }, authorizationContextFor(request));
+      return reply.status(creationStatus(result.replayed)).send(result.data);
+    });
+  });
+  app.get('/pilots', async (request, reply) => {
+    const query = pilotRunListSchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: 'Invalid pilot query', code: 'INVALID_REQUEST' });
+    return listPilotRuns(db, {
+      page: query.data.page,
+      pageSize: query.data.pageSize,
+      ...(query.data.status ? { status: query.data.status } : {}),
+    });
+  });
+  app.get('/pilots/:id', async (request, reply) => {
+    const id = parseId(request.params);
+    if (!id.success) return reply.status(400).send({ error: 'Invalid pilot id', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, () => getPilotRun(db, id.data));
+  });
+  app.patch('/pilots/:id/status', async (request, reply) => {
+    const id = parseId(request.params);
+    const body = pilotRunStatusChangeSchema.omit({ idempotencyKey: true }).safeParse(request.body);
+    const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot status request', code: 'INVALID_REQUEST' });
+    if (body.data.status === 'COMPLETED' && !requirePermission(request, reply, 'pilot:complete')) return;
+    return pilotRoute(reply, async () => (await updatePilotRunStatus(db, id.data,
+      { ...body.data, idempotencyKey: key.data }, authorizationContextFor(request), {
+        shadowModeEnabled,
+        realProviderConfigured,
+        collectionEgressEnabled,
+      })).data);
+  });
+  app.post('/pilots/:id/leads', async (request, reply) => {
+    const id = parseId(request.params);
+    const body = pilotLeadAddSchema.omit({ idempotencyKey: true }).safeParse(request.body);
+    const key = idempotencyKey(request.headers);
+    if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot lead request', code: 'INVALID_REQUEST' });
+    if (body.data.source === 'COLLECTION' && !collectionEgressEnabled)
+      return reply.status(409).send({ error: 'Pilot operation failed', code: 'COLLECTION_EGRESS_DISABLED' });
+    return pilotRoute(reply, async () => {
+      const result = await addPilotLead(db, id.data, { ...body.data, idempotencyKey: key.data }, authorizationContextFor(request));
+      return reply.status(creationStatus(result.replayed)).send(result.data);
+    });
+  });
+  app.post('/pilots/:id/leads/:leadId/review', async (request, reply) => {
+    const id = parseId(request.params); const lead = parseId(request.params, 'leadId');
+    const key = idempotencyKey(request.headers);
+    const body = pilotReviewSchema.safeParse(commandWithHeaderKey(request.body, key));
+    if (!id.success || !lead.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot review', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, async () => (await reviewPilotLead(db, id.data, lead.data,
+      body.data, authorizationContextFor(request))).data);
+  });
+  app.post('/pilots/:id/leads/:leadId/manual-contacts', async (request, reply) => {
+    const id = parseId(request.params); const lead = parseId(request.params, 'leadId');
+    const body = pilotManualContactSchema.omit({ idempotencyKey: true }).safeParse(request.body);
+    const key = idempotencyKey(request.headers);
+    if (!id.success || !lead.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid manual contact record', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, async () => {
+      const result = await recordPilotManualContact(db, id.data, lead.data,
+        { ...body.data, idempotencyKey: key.data }, authorizationContextFor(request));
+      return reply.status(creationStatus(result.replayed)).send(result.data);
+    });
+  });
+  app.post('/pilots/:id/leads/:leadId/results', async (request, reply) => {
+    const id = parseId(request.params); const lead = parseId(request.params, 'leadId');
+    const key = idempotencyKey(request.headers);
+    const body = pilotResultSchema.safeParse(commandWithHeaderKey(request.body, key));
+    if (!id.success || !lead.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid pilot result', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, async () => {
+      const result = await recordPilotResult(db, id.data, lead.data,
+        body.data, authorizationContextFor(request));
+      return reply.status(creationStatus(result.replayed)).send(result.data);
+    });
+  });
+  app.get('/pilots/:id/snapshot', async (request, reply) => {
+    const id = parseId(request.params); const query = pilotMetricPeriodSchema.safeParse(request.query);
+    if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid pilot snapshot query', code: 'INVALID_REQUEST' });
+    return pilotRoute(reply, () => getPilotSnapshot(db, id.data, {
+      from: new Date(query.data.from),
+      to: new Date(query.data.to),
+    }));
   });
   app.post('/collect', async (request, reply) => {
     if (!collectionEgressEnabled) {

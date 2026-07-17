@@ -522,3 +522,11 @@ Na Oracle, use os scripts do runbook. Backups não devem permanecer somente no d
 - o deploy foi comprovado em CI, mas ainda não homologado em VPS Oracle real.
 
 Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada.
+
+## Piloto interno controlado
+
+O núcleo do piloto persiste runs, associações, revisões humanas, contatos feitos manualmente fora do sistema, resultados comerciais e métricas agregadas sem PII. Ele não envia mensagens, não abre WhatsApp Web, não cria webhooks e não chama providers externos.
+
+As nove rotas `/pilots` são protegidas por permissões específicas `pilot:*`; somente os três health checks existentes permanecem públicos. O gate `DRAFT -> READY` é fail-closed: exige `SHADOW_MODE_ENABLED=true`, egress de coleta desabilitado e todos os leads elegíveis e aprovados. A elegibilidade é revalidada antes do início, do contato manual e do resultado.
+
+`DO_NOT_CONTACT` grava resultado, opt-out, bloqueio e `NAO_CONTATAR` atomicamente. `INVALID_CONTACT` invalida o contato sem apagar sua origem ou histórico.

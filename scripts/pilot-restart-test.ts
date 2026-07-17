@@ -16,6 +16,9 @@ import {
   leadContacts,
   leadEvidence,
   leads,
+  pilotIdempotencyKeys,
+  pilotRuns,
+  pilotTimelineEvents,
 } from '@lead-finder/database';
 import { buildApp } from '../apps/api/src/app.js';
 
@@ -38,6 +41,9 @@ const snapshotCounts = async () => ({
   campaignRecipients: (await db.select({ value: count() }).from(campaignRecipients))[0]!.value,
   campaignAttempts: (await db.select({ value: count() }).from(campaignAttempts))[0]!.value,
   campaignOutboxEvents: (await db.select({ value: count() }).from(campaignOutbox))[0]!.value,
+  pilotRuns: (await db.select({ value: count() }).from(pilotRuns))[0]!.value,
+  pilotTimelineEvents: (await db.select({ value: count() }).from(pilotTimelineEvents))[0]!.value,
+  pilotIdempotencyKeys: (await db.select({ value: count() }).from(pilotIdempotencyKeys))[0]!.value,
 });
 
 try {
@@ -57,6 +63,9 @@ try {
   assert.ok(before.campaignRecipients > 0);
   assert.ok(before.campaignAttempts > 0);
   assert.ok(before.campaignOutboxEvents > 0);
+  assert.ok(before.pilotRuns > 0);
+  assert.ok(before.pilotTimelineEvents > 0);
+  assert.ok(before.pilotIdempotencyKeys > 0);
 
   const actor = 'crm-integration';
   const opportunity = await createOpportunity(db, lead.id, {

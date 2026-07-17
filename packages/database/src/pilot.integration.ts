@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import {
   addPilotLead, createPilotRun, getPilotSnapshot, recordPilotManualContact, recordPilotResult,
@@ -62,6 +62,7 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     'metric-associated':'+5511999900005',
     concorrente:'+5511999900006',
     rollback:'+5511999900007',
+    'review-race':'+5511999900008',
   } as const;
   const createLead=async(label:keyof typeof fixturePhoneByLabel)=>{
     const phone=fixturePhoneByLabel[label];
@@ -98,13 +99,23 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     const key=`pilot-integration-${suffix}`;
     const input={name:'Synthetic Pilot',region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:3,idempotencyKey:key};
     const created=await createPilotRun(db,input,auth);
+    const expectReviewRejectedWithoutChanges=async(label:string,pilotRunId:string,leadId:string,expectedVersion:number)=>{
+      const idempotencyKey=`${key}-review-${label}`;
+      const reviewCountBefore=(await db.select({value:count()}).from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,pilotRunId),eq(pilotReviews.leadId,leadId))))[0]!.value;
+      const eventCountBefore=(await db.select({value:count()}).from(pilotTimelineEvents).where(and(eq(pilotTimelineEvents.pilotRunId,pilotRunId),eq(pilotTimelineEvents.leadId,leadId),eq(pilotTimelineEvents.eventType,'PILOT_REVIEW_RECORDED'))))[0]!.value;
+      await expectCode(reviewPilotLead(db,pilotRunId,leadId,{decision:'REJECTED',reason:'Revisao sintetica bloqueada',expectedVersion,idempotencyKey},auth),'INVALID_STATE');
+      assert.equal((await db.select({value:count()}).from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,pilotRunId),eq(pilotReviews.leadId,leadId))))[0]!.value,reviewCountBefore);
+      assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(and(eq(pilotTimelineEvents.pilotRunId,pilotRunId),eq(pilotTimelineEvents.leadId,leadId),eq(pilotTimelineEvents.eventType,'PILOT_REVIEW_RECORDED'))))[0]!.value,eventCountBefore);
+      assert.equal((await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`review:${pilotRunId}:${leadId}`),eq(pilotIdempotencyKeys.idempotencyKey,idempotencyKey))))[0]!.value,0);
+    };
     assert.equal((await createPilotRun(db,input,auth)).replayed,true);
     await expectCode(createPilotRun(db,{...input,name:'Divergent Synthetic Pilot'},auth),'IDEMPOTENCY_CONFLICT');
 
     const funnel=await createLead('funil'); const invalid=await createLead('invalido'); const dnc=await createLead('bloqueado');
     for(const [index,item] of [funnel,invalid,dnc].entries()){
       await addPilotLead(db,created.data.id,{leadId:item.lead.id,source:'SYNTHETIC',expectedVersion:index+1,idempotencyKey:`${key}-lead-${index}`},auth);
-      await reviewPilotLead(db,created.data.id,item.lead.id,{decision:'APPROVED',expectedVersion:0,idempotencyKey:`${key}-review-${index}`},auth);
+      const review=await reviewPilotLead(db,created.data.id,item.lead.id,{decision:'APPROVED',expectedVersion:0,idempotencyKey:`${key}-review-${index}`},auth);
+      assert.equal(review.data.decision,'APPROVED','reviews must remain available while the pilot is in draft');
     }
     await expectCode(updatePilotRunStatus(db,created.data.id,{status:'READY',expectedVersion:4,idempotencyKey:`${key}-ready-false`},auth,{shadowModeEnabled:false,realProviderConfigured:false,collectionEgressEnabled:false}),'INVALID_STATE');
     const forgedCampaign=(await db.insert(campaigns).values({name:'Campanha sintetica sem prova',idempotencyKey:`${key}-campaign`,payloadFingerprint:'f'.repeat(64)}).returning())[0]!;
@@ -112,7 +123,9 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     await expectCode(updatePilotRunStatus(db,created.data.id,{status:'READY',expectedVersion:4,idempotencyKey:`${key}-ready-campaign`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false}),'INVALID_STATE');
     await db.update(pilotRuns).set({campaignId:null}).where(eq(pilotRuns.id,created.data.id));
     await updatePilotRunStatus(db,created.data.id,{status:'READY',expectedVersion:4,idempotencyKey:`${key}-ready`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false});
+    await expectReviewRejectedWithoutChanges('ready',created.data.id,dnc.lead.id,1);
     await updatePilotRunStatus(db,created.data.id,{status:'RUNNING',expectedVersion:5,idempotencyKey:`${key}-running`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false});
+    await expectReviewRejectedWithoutChanges('running',created.data.id,dnc.lead.id,1);
 
     for(const result of ['CONTACTED','RESPONDED','INTERESTED','PROPOSAL_REQUESTED'] as const)
       await expectCode(recordPilotResult(db,created.data.id,funnel.lead.id,{result,expectedVersion:0,idempotencyKey:`${key}-blocked-${result}`},auth),'INVALID_STATE');
@@ -206,6 +219,38 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal(race.filter(result=>result.status==='rejected'&&result.reason instanceof Error&&'code' in result.reason&&result.reason.code==='LOGICAL_CONFLICT').length,1,'the losing operation must return a logical conflict');
     assert.equal((await db.select({value:count()}).from(pilotLeads).where(eq(pilotLeads.leadId,raceLead.lead.id)))[0]!.value,1,'the losing operation must not leave a partial association');
 
+    const reviewRaceLead=await createLead('review-race');
+    const reviewRaceRun=await createPilotRun(db,{name:'Review Race Pilot',region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-review-race-run`},auth);
+    await addPilotLead(db,reviewRaceRun.data.id,{leadId:reviewRaceLead.lead.id,source:'SYNTHETIC',expectedVersion:1,idempotencyKey:`${key}-review-race-lead`},auth);
+    await reviewPilotLead(db,reviewRaceRun.data.id,reviewRaceLead.lead.id,{decision:'APPROVED',expectedVersion:0,idempotencyKey:`${key}-review-race-approved`},auth);
+    const reviewRaceReviewsBefore=(await db.select({value:count()}).from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,reviewRaceRun.data.id),eq(pilotReviews.leadId,reviewRaceLead.lead.id))))[0]!.value;
+    const reviewRaceTimelineBefore=(await db.select({value:count()}).from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,reviewRaceRun.data.id)))[0]!.value;
+    const reviewRaceReviewKey=`${key}-review-race-rejected`,reviewRaceStatusKey=`${key}-review-race-ready`;
+    const competingDatabase=createDatabase(databaseUrl);
+    let reviewStatusRace:PromiseSettledResult<unknown>[]=[];
+    try{
+      reviewStatusRace=await Promise.allSettled([
+        reviewPilotLead(db,reviewRaceRun.data.id,reviewRaceLead.lead.id,{decision:'REJECTED',reason:'Revisao sintetica concorrente',expectedVersion:1,idempotencyKey:reviewRaceReviewKey},auth),
+        updatePilotRunStatus(competingDatabase.db,reviewRaceRun.data.id,{status:'READY',expectedVersion:2,idempotencyKey:reviewRaceStatusKey},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false}),
+      ]);
+    }finally{await competingDatabase.close();}
+    assert.equal(reviewStatusRace.filter(result=>result.status==='fulfilled').length,1,'review and READY transition must have exactly one winner');
+    assert.equal(reviewStatusRace.filter(result=>result.status==='rejected'&&result.reason instanceof Error&&'code' in result.reason&&result.reason.code==='INVALID_STATE').length,1,'the losing operation must fail with a logical pilot state error');
+    const reviewRaceFinalRun=(await db.select().from(pilotRuns).where(eq(pilotRuns.id,reviewRaceRun.data.id)).limit(1))[0]!;
+    const reviewRaceFinalReviews=await db.select().from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,reviewRaceRun.data.id),eq(pilotReviews.leadId,reviewRaceLead.lead.id))).orderBy(desc(pilotReviews.version));
+    const reviewRaceReviewKeys=(await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`review:${reviewRaceRun.data.id}:${reviewRaceLead.lead.id}`),eq(pilotIdempotencyKeys.idempotencyKey,reviewRaceReviewKey))))[0]!.value;
+    const reviewRaceStatusKeys=(await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`status:${reviewRaceRun.data.id}`),eq(pilotIdempotencyKeys.idempotencyKey,reviewRaceStatusKey))))[0]!.value;
+    assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,reviewRaceRun.data.id)))[0]!.value,reviewRaceTimelineBefore+1,'the losing operation must not leave a partial timeline event');
+    if(reviewRaceFinalRun.status==='READY'){
+      assert.equal(reviewRaceFinalReviews.length,reviewRaceReviewsBefore);assert.equal(reviewRaceFinalReviews[0]!.decision,'APPROVED');assert.equal(reviewRaceReviewKeys,0);assert.equal(reviewRaceStatusKeys,1);
+      assert.equal((await updatePilotRunStatus(db,reviewRaceRun.data.id,{status:'READY',expectedVersion:2,idempotencyKey:reviewRaceStatusKey},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false})).replayed,true);
+    }else{
+      assert.equal(reviewRaceFinalRun.status,'DRAFT');assert.equal(reviewRaceFinalReviews.length,reviewRaceReviewsBefore+1);assert.equal(reviewRaceFinalReviews[0]!.decision,'REJECTED');assert.equal(reviewRaceReviewKeys,1);assert.equal(reviewRaceStatusKeys,0);
+      assert.equal((await reviewPilotLead(db,reviewRaceRun.data.id,reviewRaceLead.lead.id,{decision:'REJECTED',reason:'Revisao sintetica concorrente',expectedVersion:1,idempotencyKey:reviewRaceReviewKey},auth)).replayed,true);
+    }
+    assert.equal((await db.select({value:count()}).from(pilotReviews).where(and(eq(pilotReviews.pilotRunId,reviewRaceRun.data.id),eq(pilotReviews.leadId,reviewRaceLead.lead.id))))[0]!.value,reviewRaceFinalReviews.length,'replay must not duplicate a review');
+    assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,reviewRaceRun.data.id)))[0]!.value,reviewRaceTimelineBefore+1,'replay must not duplicate a timeline event');
+
     const rollbackRun=await createPilotRun(db,{name:'Rollback Pilot',region:'Regiao Ficticia',category:'Categoria Ficticia',targetLeadCount:1,idempotencyKey:`${key}-rollback-run`},auth);
     const rollbackLead=await createLead('rollback');
     await addPilotLead(db,rollbackRun.data.id,{leadId:rollbackLead.lead.id,source:'SYNTHETIC',expectedVersion:1,idempotencyKey:`${key}-rollback-lead`},auth);
@@ -226,6 +271,9 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal((await db.select({value:count()}).from(pilotResults).where(eq(pilotResults.leadId,rollbackLead.lead.id)))[0]?.value,0);
     assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(and(eq(pilotTimelineEvents.pilotRunId,rollbackRun.data.id),eq(pilotTimelineEvents.leadId,rollbackLead.lead.id),eq(pilotTimelineEvents.eventType,'PILOT_RESULT_RECORDED'))))[0]!.value,0);
     assert.equal((await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`result:${rollbackRun.data.id}`),eq(pilotIdempotencyKeys.idempotencyKey,`rollback-failure-${suffix}`))))[0]!.value,0);
+
+    await updatePilotRunStatus(db,created.data.id,{status:'CANCELLED',expectedVersion:6,idempotencyKey:`${key}-cancelled`},auth,{shadowModeEnabled:true,realProviderConfigured:false,collectionEgressEnabled:false});
+    await expectReviewRejectedWithoutChanges('cancelled',created.data.id,dnc.lead.id,1);
 
     const appendOnlyResult=(await db.select().from(pilotResults).where(eq(pilotResults.id,metricResultIds[0]!)).limit(1))[0]!;
     const appendOnlyContact=(await db.select().from(pilotManualContacts).where(eq(pilotManualContacts.id,metricManualContactId)).limit(1))[0]!;

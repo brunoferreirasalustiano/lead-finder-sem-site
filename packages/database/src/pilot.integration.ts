@@ -19,11 +19,21 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
   const { db, close } = createDatabase(databaseUrl);
   const auth=createAuthorizationContext({principalId:'pilot-integration',permissions:new Set(['pilot:write','pilot:review']),authenticationMethod:'integration'});
   const suffix=crypto.randomUUID();
-  const createLead=async(label:string)=>{
+  const fixturePhoneByLabel={
+    funil:'+5511999900001',
+    invalido:'+5511999900002',
+    bloqueado:'+5511999900003',
+    'metric-funnel':'+5511999900004',
+    'metric-associated':'+5511999900005',
+    concorrente:'+5511999900006',
+    rollback:'+5511999900007',
+  } as const;
+  const createLead=async(label:keyof typeof fixturePhoneByLabel)=>{
+    const phone=fixturePhoneByLabel[label];
     const lead=(await db.insert(leads).values({osmType:'node',osmId:`pilot-${label}-${suffix}`,name:`Empresa Ficticia ${label}`,category:'Categoria Ficticia',city:'Regiao Ficticia',state:'XX',score:1,status:'SEM_SITE_CADASTRADO',qualificationStatus:'SEM_SITE_CONFIRMADO'}).returning())[0]!;
     const contacts=await db.insert(leadContacts).values([
       {leadId:lead.id,type:'EMAIL',originalValue:`${label}@example.invalid`,normalizedValue:`${label}@example.invalid`,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
-      {leadId:lead.id,type:'TELEFONE',originalValue:`+550000000${label.length}01`,normalizedValue:`+550000000${label.length}01`,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
+      {leadId:lead.id,type:'TELEFONE',originalValue:phone,normalizedValue:phone,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
     ]).returning();
     return {lead,email:contacts[0]!,phone:contacts[1]!};
   };

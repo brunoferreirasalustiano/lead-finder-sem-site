@@ -15,7 +15,42 @@ import {
 const expectCode = async (operation: Promise<unknown>, code: string) => assert.rejects(operation, (error: unknown) =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === code);
 
+const isAppendOnlyViolation=(error:unknown):boolean=>{
+  const visited=new Set<object>();
+  let current=error;
+  for(let depth=0;depth<32;depth+=1){
+    if(typeof current!=='object'||current===null||visited.has(current))return false;
+    visited.add(current);
+    let code:unknown,cause:unknown;
+    try{
+      const candidate=current as {code?:unknown;cause?:unknown};
+      code=candidate.code;cause=candidate.cause;
+    }catch{return false;}
+    if(code==='55000')return true;
+    current=cause;
+  }
+  return false;
+};
+
+const assertAppendOnlyViolationRecognition=()=>{
+  const direct={code:'55000'};
+  assert.equal(isAppendOnlyViolation(direct),true);
+  assert.equal(isAppendOnlyViolation({cause:direct}),true);
+  assert.equal(isAppendOnlyViolation({cause:{cause:direct}}),true);
+  assert.equal(isAppendOnlyViolation({message:'append-only'}),false);
+  assert.equal(isAppendOnlyViolation({code:'23505',message:'append-only'}),false);
+  assert.equal(isAppendOnlyViolation(null),false);
+  assert.equal(isAppendOnlyViolation(undefined),false);
+  assert.equal(isAppendOnlyViolation('append-only'),false);
+  assert.equal(isAppendOnlyViolation(55000),false);
+  assert.equal(isAppendOnlyViolation(true),false);
+  assert.equal(isAppendOnlyViolation({cause:55000}),false);
+  const cyclic:{cause?:unknown}={};cyclic.cause=cyclic;
+  assert.equal(isAppendOnlyViolation(cyclic),false);
+};
+
 export async function runPilotPersistenceIntegration(databaseUrl: string) {
+  assertAppendOnlyViolationRecognition();
   const { db, close } = createDatabase(databaseUrl);
   const auth=createAuthorizationContext({principalId:'pilot-integration',permissions:new Set(['pilot:write','pilot:review']),authenticationMethod:'integration'});
   const suffix=crypto.randomUUID();
@@ -55,8 +90,7 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
         ${input.recordedAtText}::timestamptz,${idempotencyKey},${metricFixtureFingerprint(idempotencyKey)}) returning id`);
     const id=rows[0]?.id;if(typeof id!=='string')throw new Error('Metric manual-contact fixture insert did not return an id');return id;
   };
-  const expectAppendOnly=async(operation:Promise<unknown>)=>assert.rejects(operation,(error:unknown)=>
-    typeof error==='object'&&error!==null&&'code' in error&&error.code==='55000');
+  const expectAppendOnly=async(operation:Promise<unknown>)=>assert.rejects(operation,isAppendOnlyViolation);
   try {
     const required=['pilot_runs','pilot_leads','pilot_reviews','pilot_manual_contacts','pilot_results','pilot_timeline_events','pilot_idempotency_keys'];
     for(const table of required){const rows=await db.execute(sql<{present:boolean}[]>`select to_regclass(${`public.${table}`}) is not null present`);assert.equal(rows[0]?.present,true,`missing pilot table: ${table}`);}
@@ -193,6 +227,8 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     assert.equal((await db.select({value:count()}).from(pilotTimelineEvents).where(and(eq(pilotTimelineEvents.pilotRunId,rollbackRun.data.id),eq(pilotTimelineEvents.leadId,rollbackLead.lead.id),eq(pilotTimelineEvents.eventType,'PILOT_RESULT_RECORDED'))))[0]!.value,0);
     assert.equal((await db.select({value:count()}).from(pilotIdempotencyKeys).where(and(eq(pilotIdempotencyKeys.scope,`result:${rollbackRun.data.id}`),eq(pilotIdempotencyKeys.idempotencyKey,`rollback-failure-${suffix}`))))[0]!.value,0);
 
+    const appendOnlyResult=(await db.select().from(pilotResults).where(eq(pilotResults.id,metricResultIds[0]!)).limit(1))[0]!;
+    const appendOnlyContact=(await db.select().from(pilotManualContacts).where(eq(pilotManualContacts.id,metricManualContactId)).limit(1))[0]!;
     const event=(await db.select().from(pilotTimelineEvents).where(eq(pilotTimelineEvents.pilotRunId,created.data.id)).limit(1))[0]!;
     await expectAppendOnly(db.execute(sql`update pilot_results set recorded_at=recorded_at where id=${metricResultIds[0]!}::uuid`));
     await expectAppendOnly(db.execute(sql`delete from pilot_results where id=${metricResultIds[0]!}::uuid`));
@@ -200,6 +236,9 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
     await expectAppendOnly(db.execute(sql`delete from pilot_manual_contacts where id=${metricManualContactId}::uuid`));
     await expectAppendOnly(db.update(pilotTimelineEvents).set({eventType:'FORGED'}).where(eq(pilotTimelineEvents.id,event.id)));
     await expectAppendOnly(db.delete(pilotTimelineEvents).where(eq(pilotTimelineEvents.id,event.id)));
+    assert.deepEqual((await db.select().from(pilotResults).where(eq(pilotResults.id,appendOnlyResult.id)).limit(1))[0],appendOnlyResult);
+    assert.deepEqual((await db.select().from(pilotManualContacts).where(eq(pilotManualContacts.id,appendOnlyContact.id)).limit(1))[0],appendOnlyContact);
+    assert.deepEqual((await db.select().from(pilotTimelineEvents).where(eq(pilotTimelineEvents.id,event.id)).limit(1))[0],event);
     assert.ok((await db.select({value:count()}).from(pilotManualContacts).where(eq(pilotManualContacts.pilotRunId,created.data.id)))[0]!.value>0);
     assert.ok((await db.select({value:count()}).from(pilotIdempotencyKeys).where(eq(pilotIdempotencyKeys.scope,`result:${created.data.id}`)))[0]!.value>0);
   } finally { await close(); }

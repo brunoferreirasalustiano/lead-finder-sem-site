@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 export type LogPrivacyFinding = Readonly<{ kind: string; count: number }>;
 export type LogPrivacyReport = Readonly<{
@@ -35,6 +36,16 @@ export function scanOperationalLogs(content: string): LogPrivacyReport {
   return { status: findings.length === 0 ? 'PASS' : 'FAIL', findings, scannedLines: lines.length };
 }
 
+export async function verifyOperationalLogFile(file: string, output?: string): Promise<LogPrivacyReport> {
+  const report = scanOperationalLogs(await readFile(file, 'utf8'));
+  if (output) {
+    const serialized = `${JSON.stringify(report, null, 2)}\n`;
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, serialized, 'utf8');
+  }
+  return report;
+}
+
 function argumentValue(name: string): string | undefined {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -44,9 +55,8 @@ if (process.argv[1]?.endsWith('pilot-real-log-privacy.ts')) {
   const file = argumentValue('--file');
   const output = argumentValue('--output');
   if (!file) throw new Error('USAGE: npm run pilot:real:log-privacy -- --file <sanitized-log-file> [--output <report.json>]');
-  const report = scanOperationalLogs(await readFile(file, 'utf8'));
+  const report = await verifyOperationalLogFile(file, output);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
-  if (output) await writeFile(output, serialized, 'utf8');
   process.stdout.write(serialized);
   if (report.status === 'FAIL') process.exitCode = 1;
 }

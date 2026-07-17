@@ -45,4 +45,5 @@ services:
       SMS_SENDING_ENABLED: 'false'
       CAMPAIGN_EXTERNAL_CALLS_ENABLED: 'false'
   n8n:
-    profiles: !reset [disabled]
+    profiles:
+      - disabled

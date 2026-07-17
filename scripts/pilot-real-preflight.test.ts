@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { buildPilotRealPreflightReport, parseEnvironmentFile } from './pilot-real-preflight.js';
+
+const execFileAsync = promisify(execFile);
+const dockerComposeAvailable = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0;
 
 const environment = {
   PILOT_HOMOLOGATION: 'true', NODE_ENV: 'homologation', SHADOW_MODE_ENABLED: 'true',
@@ -51,6 +58,45 @@ describe('pilot real preflight report', () => {
       'AUTHENTICATED_COLLECTION_ENABLED', 'AUTOMATED_SENDING_ENABLED', 'WEBHOOKS_ENABLED',
       'WHATSAPP_AUTOMATION_ENABLED', 'EMAIL_SENDING_ENABLED', 'SMS_SENDING_ENABLED', 'CAMPAIGN_EXTERNAL_CALLS_ENABLED',
     ]) expect(compose).toContain(`${capability}: 'false'`);
-    expect(compose).toContain('profiles: !reset [disabled]');
+    expect(compose).toMatch(/profiles:\s*\n\s*- disabled/u);
+    expect(compose).not.toContain('!reset');
+  });
+
+  it('fails closed when n8n is enabled in the pilot environment', () => {
+    const report = buildPilotRealPreflightReport({
+      environment: { ...environment, ENABLE_N8N: 'true' }, shadowIsolation: { status: 'PASS' }, syntheticBatchStatus: 'PASS',
+    });
+    expect(report.gates.GATE_EXTERNAL_SURFACE_DISABLED).toBe('FAIL');
+    expect(report.decision).toBe('PILOT_REAL_NOT_READY');
+  });
+
+  it('keeps n8n outside the default Compose service set in the rendered homologation configuration', async () => {
+    const compose = await readFile('docker-compose.homologation.yml', 'utf8');
+    expect(compose).toMatch(/profiles:\s*\n\s*- disabled/u);
+    expect(compose).not.toContain('!reset');
+    if (!dockerComposeAvailable) return;
+
+    const directory = await mkdtemp(join(tmpdir(), 'pilot-compose-config-'));
+    const environmentFile = join(directory, 'synthetic.env');
+    await writeFile(environmentFile, [
+      'POSTGRES_DB=leadfinder_homologation',
+      'POSTGRES_USER=pilot',
+      'POSTGRES_PASSWORD=synthetic-postgres-password',
+      'API_AUTH_TOKEN=synthetic-homologation-token',
+      'API_AUTH_PERMISSIONS=pilot:read,pilot:write,pilot:review,pilot:record-contact,pilot:record-result',
+      'SHADOW_MODE_ENABLED=true',
+      'PILOT_KILL_SWITCH_ENABLED=false',
+    ].join('\n').concat('\n'), 'utf8');
+    const composeArguments = ['compose', '--env-file', environmentFile, '-f', 'docker-compose.yml', '-f', 'docker-compose.homologation.yml'];
+    try {
+      const rendered = await execFileAsync('docker', [...composeArguments, 'config', '--format', 'json']);
+      const configuration = JSON.parse(rendered.stdout) as { services: Record<string, { profiles?: unknown }> };
+      expect(configuration.services.n8n.profiles).toEqual(expect.arrayContaining(['disabled']));
+
+      const dryRun = await execFileAsync('docker', [...composeArguments, 'up', '--dry-run', '--no-build']);
+      expect(`${dryRun.stdout}\n${dryRun.stderr}`).not.toMatch(/\bn8n\b/u);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

@@ -39,7 +39,10 @@ pilot_safe_absolute_directory() {
 }
 
 pilot_compose() {
-  local file="$1"
+  local file="${1:-}"
+  [[ -n "$file" && -f "$file" && -r "$file" ]] || pilot_die 'Arquivo de homologacao inexistente ou ilegivel.'
+  shift
+  (( $# > 0 )) || pilot_die 'Comando Docker Compose obrigatorio.'
   docker compose --env-file "$file" -f docker-compose.yml -f docker-compose.homologation.yml "$@"
 }
 

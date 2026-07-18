@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -11,6 +12,13 @@ const baseEnvironment = {
 };
 
 describe('API startup kill switch', () => {
+  it('keeps the documented local template explicitly released', () => {
+    const template = readFileSync(join(process.cwd(), '.env.example'), 'utf8');
+    expect(template.match(/^PILOT_KILL_SWITCH_ENABLED=.*$/gmu)).toEqual([
+      'PILOT_KILL_SWITCH_ENABLED=false',
+    ]);
+  });
+
   it.each([
     ['an absent flag', undefined, 'PILOT_KILL_SWITCH_ENGAGED'],
     ['an engaged flag', 'true', 'PILOT_KILL_SWITCH_ENGAGED'],

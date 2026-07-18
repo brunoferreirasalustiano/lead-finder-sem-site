@@ -1,6 +1,6 @@
 import { z } from 'zod';
 export {
-  apiAuthPermissions, parseApiConfig, parseWorkerConfig, type ApiAuthPermission,
+  apiAuthPermissions, assertApiKillSwitchReleased, parseApiConfig, parseWorkerConfig, type ApiAuthPermission,
 } from './config.js';
 export * from './qualification.js';
 export * from './crm.js';

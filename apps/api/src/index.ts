@@ -1,7 +1,23 @@
 import { createDatabase } from '@lead-finder/database';
-import { parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
-const config = parseApiConfig(process.env);
+
+const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
+  console.error('api_startup_blocked', { reason, decision: 'SHUTDOWN_REQUESTED' });
+  process.exit(1);
+};
+
+const config = (() => {
+  try {
+    const parsed = parseApiConfig(process.env);
+    assertApiKillSwitchReleased(parsed.PILOT_KILL_SWITCH_ENABLED);
+    return parsed;
+  } catch (error) {
+    return abortStartup(error instanceof Error && error.message === 'PILOT_KILL_SWITCH_ENGAGED'
+      ? 'PILOT_KILL_SWITCH_ENGAGED'
+      : 'INVALID_CONFIGURATION');
+  }
+})();
 const { db, close } = createDatabase(config.DATABASE_URL);
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,

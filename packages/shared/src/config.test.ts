@@ -12,7 +12,7 @@ describe('environment configuration', () => {
     expect(parseApiConfig(database)).toMatchObject({
       API_PORT: 3000,
       COLLECTION_EGRESS_ENABLED: false,
-      PILOT_KILL_SWITCH_ENABLED: false,
+      PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
     });
     expect(parseWorkerConfig(database)).toMatchObject({
@@ -31,7 +31,7 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_BASE_MS: 1000,
       OUTBOX_RETRY_MAX_MS: 60000,
       SHADOW_MODE_ENABLED: false,
-      PILOT_KILL_SWITCH_ENABLED: false,
+      PILOT_KILL_SWITCH_ENABLED: true,
     });
     expect(parseWorkerConfig(database).OVERPASS_API_URL).toBeUndefined();
     expect(parseWorkerConfig({ ...database, OVERPASS_API_URL: '' }).OVERPASS_API_URL).toBeUndefined();
@@ -118,6 +118,7 @@ describe('environment configuration', () => {
     expect(parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'true' }).PILOT_KILL_SWITCH_ENABLED).toBe(true);
     expect(() => parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'yes' })).toThrow('PILOT_KILL_SWITCH_ENABLED');
     expect(parseApiConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'true' }).PILOT_KILL_SWITCH_ENABLED).toBe(true);
+    expect(parseApiConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'false' }).PILOT_KILL_SWITCH_ENABLED).toBe(false);
     expect(() => parseApiConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'yes' })).toThrow('PILOT_KILL_SWITCH_ENABLED');
     expect(() => assertApiKillSwitchReleased(true)).toThrow('PILOT_KILL_SWITCH_ENGAGED');
     expect(() => assertApiKillSwitchReleased(false)).not.toThrow();

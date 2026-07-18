@@ -32,6 +32,7 @@ jobs:
             echo "POSTGRES_USER=leadfinder"
             echo "POSTGRES_PASSWORD=$PASSWORD"
             echo "SHADOW_MODE_ENABLED=false"
+            echo "PILOT_KILL_SWITCH_ENABLED=false"
             echo "DATABASE_URL=postgresql://leadfinder:$PASSWORD@postgres:5432/leadfinder"
             echo "API_PORT=3000"
             echo "API_AUTH_TOKEN=$API_AUTH_TOKEN"

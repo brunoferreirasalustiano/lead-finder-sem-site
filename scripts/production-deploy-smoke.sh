@@ -33,6 +33,7 @@ POSTGRES_DB=leadfinder
 POSTGRES_USER=leadfinder
 POSTGRES_PASSWORD=smoke-only-password
 SHADOW_MODE_ENABLED=false
+PILOT_KILL_SWITCH_ENABLED=false
 REAL_PROVIDER_CONFIGURED=false
 DATABASE_URL=postgresql://leadfinder:smoke-only-password@postgres:5432/leadfinder
 API_PORT=3000

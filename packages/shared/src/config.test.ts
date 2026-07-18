@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseApiConfig, parseWorkerConfig } from './config.js';
+import { assertApiKillSwitchReleased, parseApiConfig, parseWorkerConfig } from './config.js';
 
 const database = {
   DATABASE_URL: 'postgresql://user:password@localhost:5432/database',
@@ -12,6 +12,7 @@ describe('environment configuration', () => {
     expect(parseApiConfig(database)).toMatchObject({
       API_PORT: 3000,
       COLLECTION_EGRESS_ENABLED: false,
+      PILOT_KILL_SWITCH_ENABLED: false,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
     });
     expect(parseWorkerConfig(database)).toMatchObject({
@@ -116,6 +117,10 @@ describe('environment configuration', () => {
     expect(() => parseWorkerConfig({ ...database, SHADOW_MODE_ENABLED: 'yes' })).toThrow('SHADOW_MODE_ENABLED');
     expect(parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'true' }).PILOT_KILL_SWITCH_ENABLED).toBe(true);
     expect(() => parseWorkerConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'yes' })).toThrow('PILOT_KILL_SWITCH_ENABLED');
+    expect(parseApiConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'true' }).PILOT_KILL_SWITCH_ENABLED).toBe(true);
+    expect(() => parseApiConfig({ ...database, PILOT_KILL_SWITCH_ENABLED: 'yes' })).toThrow('PILOT_KILL_SWITCH_ENABLED');
+    expect(() => assertApiKillSwitchReleased(true)).toThrow('PILOT_KILL_SWITCH_ENGAGED');
+    expect(() => assertApiKillSwitchReleased(false)).not.toThrow();
   });
 
   it('requires an explicit Overpass URL only when collection egress is enabled', () => {

@@ -75,6 +75,7 @@ const requireCollectionEndpoint = (
 
 const apiSchema = commonSchema.extend({
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  PILOT_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   REAL_PROVIDER_CONFIGURED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
@@ -151,6 +152,10 @@ export function parseApiConfig(environment: NodeJS.ProcessEnv) {
   const result = apiSchema.safeParse(environment);
   if (!result.success) throw formatConfigurationError(result.error);
   return result.data;
+}
+
+export function assertApiKillSwitchReleased(enabled: boolean): void {
+  if (enabled) throw new Error('PILOT_KILL_SWITCH_ENGAGED');
 }
 
 export function parseWorkerConfig(environment: NodeJS.ProcessEnv) {

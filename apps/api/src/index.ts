@@ -1,7 +1,8 @@
 import { createDatabase } from '@lead-finder/database';
-import { parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 const config = parseApiConfig(process.env);
+assertApiKillSwitchReleased(config.PILOT_KILL_SWITCH_ENABLED);
 const { db, close } = createDatabase(config.DATABASE_URL);
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,

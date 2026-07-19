@@ -49,7 +49,7 @@ export async function getOperationalSnapshot(db: Database, now = new Date()): Pr
 export async function verifyMigrationsCompatible(db: Database): Promise<void> {
   const rows = await db.execute<{ missing: number }>(sql`
     SELECT count(*)::int AS missing FROM (VALUES
-      ('0001_initial'), ('0010_campaign_outbox_max_attempts_snapshot')
+      ('0001_initial'), ('0010_campaign_outbox_max_attempts_snapshot'), ('0012_pilot_referential_integrity')
     ) AS required(version) WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = required.version)
   `);
   if ((rows[0]?.missing ?? 0) !== 0) throw new Error('MIGRATIONS_INCOMPATIBLE');

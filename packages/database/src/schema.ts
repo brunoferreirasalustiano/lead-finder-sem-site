@@ -117,6 +117,7 @@ export const leadContacts = pgTable(
   },
   (table) => [
     uniqueIndex('lead_contacts_identity_uidx').on(table.leadId, table.type, table.normalizedValue),
+    uniqueIndex('lead_contacts_id_lead_id_uidx').on(table.id, table.leadId),
     index('lead_contacts_lead_idx').on(table.leadId, table.updatedAt),
   ],
 );
@@ -425,6 +426,7 @@ export const pilotManualContacts = pgTable('pilot_manual_contacts', {
   idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
 }, (table) => [
   foreignKey({ columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),
+  foreignKey({ name: 'pilot_manual_contacts_contact_lead_fk', columns: [table.contactId, table.leadId], foreignColumns: [leadContacts.id, leadContacts.leadId] }).onDelete('restrict'),
   uniqueIndex('pilot_manual_contacts_idempotency_uidx').on(table.pilotRunId, table.idempotencyKey), index('pilot_manual_contacts_snapshot_idx').on(table.pilotRunId, table.recordedAt),
 ]);
 export const pilotResults = pgTable('pilot_results', {
@@ -443,7 +445,10 @@ export const pilotTimelineEvents = pgTable('pilot_timeline_events', {
   leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'restrict' }), eventType: text('event_type').notNull(),
   principalId: text('principal_id').notNull(), previousValue: jsonb('previous_value'), newValue: jsonb('new_value').notNull(), metadata: jsonb('metadata').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [index('pilot_timeline_run_created_idx').on(table.pilotRunId, table.createdAt, table.id)]);
+}, (table) => [
+  foreignKey({ name: 'pilot_timeline_events_pilot_lead_fk', columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),
+  index('pilot_timeline_run_created_idx').on(table.pilotRunId, table.createdAt, table.id),
+]);
 export const pilotIdempotencyKeys = pgTable('pilot_idempotency_keys', {
   scope: text('scope').notNull(), idempotencyKey: text('idempotency_key').notNull(), payloadFingerprint: text('payload_fingerprint').notNull(),
   resourceType: text('resource_type').notNull(), resourceId: uuid('resource_id').notNull(), result: jsonb('result').notNull(),

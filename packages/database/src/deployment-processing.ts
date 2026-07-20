@@ -52,10 +52,19 @@ export async function reserveDailyLeadAllocation(db: Database, claim: OutboxClai
   const now = input.now ?? new Date();
   const limit = Math.min(60, Math.max(1, Math.trunc(input.configuredLimit)));
   return db.transaction(async (tx) => {
-    const replay = await tx.execute<{ found: boolean }>(sql`SELECT true AS found FROM deployment_daily_lead_allocations
-      WHERE outbox_id = ${claim.id}::uuid AND dead_letter_cycle = ${claim.deadLetterCycle}`);
-    if (replay[0]) return 'REPLAY';
     const day = now.toISOString().slice(0, 10);
+    const allocation = await tx.execute<{ quota_day: Date | string; execution_started: boolean }>(sql`
+      SELECT a.quota_day,
+        EXISTS (SELECT 1 FROM campaign_execution_starts s
+          WHERE s.outbox_id = a.outbox_id AND s.cycle = a.dead_letter_cycle) AS execution_started
+      FROM deployment_daily_lead_allocations a
+      WHERE a.outbox_id = ${claim.id}::uuid AND a.dead_letter_cycle = ${claim.deadLetterCycle}
+      FOR UPDATE OF a
+    `);
+    const allocatedDay = allocation[0]?.quota_day instanceof Date
+      ? allocation[0].quota_day.toISOString().slice(0, 10)
+      : String(allocation[0]?.quota_day ?? '');
+    if (allocatedDay === day || allocation[0]?.execution_started) return 'REPLAY';
     await tx.execute(sql`INSERT INTO deployment_daily_lead_counters (quota_day) VALUES (${day}::date)
       ON CONFLICT (quota_day) DO NOTHING`);
     const counter = await tx.execute<{ count: number }>(sql`SELECT count FROM deployment_daily_lead_counters
@@ -63,14 +72,26 @@ export async function reserveDailyLeadAllocation(db: Database, claim: OutboxClai
     if ((counter[0]?.count ?? 60) >= limit) {
       const nextUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
       await tx.execute(sql`UPDATE campaign_outbox SET available_at = ${nextUtcDay.toISOString()}::timestamptz,
+        attempts = greatest(attempts - 1, 0),
         claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
-        WHERE id = ${claim.id}::uuid AND claim_worker_id = ${claim.workerId}
-          AND claim_token = ${claim.token}::uuid AND claim_generation = ${claim.generation}`);
+        WHERE id = ${claim.id}::uuid AND status = 'PENDING' AND claim_worker_id = ${claim.workerId}
+          AND claim_token = ${claim.token}::uuid AND claim_generation = ${claim.generation}
+          AND claim_expires_at > ${now.toISOString()}::timestamptz`);
       return 'LIMIT_REACHED';
     }
-    await tx.execute(sql`INSERT INTO deployment_daily_lead_allocations
-      (outbox_id, dead_letter_cycle, quota_day, execution_source)
-      VALUES (${claim.id}::uuid, ${claim.deadLetterCycle}, ${day}::date, ${input.source})`);
+    if (allocation[0]) {
+      await tx.execute(sql`UPDATE deployment_daily_lead_allocations
+        SET quota_day = ${day}::date, execution_source = ${input.source}
+        WHERE outbox_id = ${claim.id}::uuid AND dead_letter_cycle = ${claim.deadLetterCycle}`);
+      await tx.execute(sql`UPDATE deployment_daily_lead_counters SET count = greatest(count - 1, 0),
+        updated_at = ${now.toISOString()}::timestamptz WHERE quota_day = ${allocatedDay}::date`);
+    } else {
+      const inserted = await tx.execute<{ outbox_id: string }>(sql`INSERT INTO deployment_daily_lead_allocations
+        (outbox_id, dead_letter_cycle, quota_day, execution_source)
+        VALUES (${claim.id}::uuid, ${claim.deadLetterCycle}, ${day}::date, ${input.source})
+        ON CONFLICT (outbox_id, dead_letter_cycle) DO NOTHING RETURNING outbox_id`);
+      if (!inserted[0]) return 'REPLAY';
+    }
     await tx.execute(sql`UPDATE deployment_daily_lead_counters SET count = count + 1,
       updated_at = ${now.toISOString()}::timestamptz WHERE quota_day = ${day}::date`);
     return 'RESERVED';

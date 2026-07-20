@@ -545,6 +545,7 @@ await import('../packages/database/src/campaign.integration.js');
 await import('../packages/database/src/campaign-outbox.integration.js');
 await import('../packages/database/src/campaign-outbox.extreme.integration.js');
 await import('../packages/database/src/campaign-outbox.endurance.integration.js');
+await import('../packages/database/src/deployment-processing.integration.js');
 const { runPilotPersistenceIntegration } = await import('../packages/database/src/pilot.integration.js');
 await runPilotPersistenceIntegration(databaseUrl);
 

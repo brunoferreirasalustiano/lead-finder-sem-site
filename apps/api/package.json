@@ -9,6 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@lead-finder/batch-processor": "*",
     "@lead-finder/database": "*",
     "@lead-finder/shared": "*",
     "fastify": "^5.4.0",

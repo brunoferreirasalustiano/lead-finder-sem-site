@@ -1,13 +1,12 @@
 import { createDatabase } from '@lead-finder/database';
+import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
 import { createCollectionProcessor } from './collection-egress.js';
-import { processNextOutbox } from './process-outbox.js';
-import { SimulatedOutboxAdapter } from './simulated-outbox-adapter.js';
 import { hostname } from 'node:os';
 import { createGracefulStop } from './graceful-stop.js';
-import { createConsoleOperationalLogger, OperationalMetrics } from './operational-observability.js';
+import { createConsoleOperationalLogger } from './operational-observability.js';
 const config = parseWorkerConfig(process.env);
-const { db, close } = createDatabase(config.DATABASE_URL);
+const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const operationalLogger = createConsoleOperationalLogger();
 const processCollection = createCollectionProcessor(db, {
   enabled: config.COLLECTION_EGRESS_ENABLED && !config.PILOT_KILL_SWITCH_ENABLED,
@@ -15,7 +14,6 @@ const processCollection = createCollectionProcessor(db, {
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
 }, operationalLogger);
-const outboxAdapter = new SimulatedOutboxAdapter(db);
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
   dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
@@ -27,7 +25,6 @@ const executionPolicy = {
   retryBaseMs: config.OUTBOX_RETRY_BASE_MS,
   retryMaxMs: config.OUTBOX_RETRY_MAX_MS,
 };
-const operationalMetrics = new OperationalMetrics();
 const shadowGuard = new ShadowModeGuard(config.SHADOW_MODE_ENABLED, { info: (event, metadata) => operationalLogger.info({ correlationId: String(metadata.runId), event, outcome: 'INELIGIBLE', reason: 'UNKNOWN', durationMs: Number(metadata.durationMs ?? 0) }) });
 const gracefulStop = createGracefulStop();
 let shutdownPromise: Promise<void> | undefined;
@@ -52,12 +49,15 @@ process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error))
 process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
   const collected = await processCollection();
-  const consumedOutbox = gracefulStop.running
-    ? await processNextOutbox(db, outboxAdapter, {
-      workerId, leaseMs: config.OUTBOX_LEASE_MS, policy: executionPolicy, shadowGuard,
-      killSwitchEnabled: config.PILOT_KILL_SWITCH_ENABLED,
-    }, operationalLogger, operationalMetrics)
-    : false;
+  const report = gracefulStop.running && !config.PILOT_KILL_SWITCH_ENABLED && !shadowGuard.block()
+    ? await processLeadBatch({ db, batchSize: config.LEAD_BATCH_SIZE,
+      timeBudgetMs: config.PROCESSING_TIME_BUDGET_MS, dailyLimit: config.DAILY_LEAD_LIMIT,
+      dryRun: true, executionSource: 'oracle-vps', executorId: workerId,
+      processorRole: config.PROCESSOR_ROLE, leadershipLeaseMs: config.PROCESSOR_LEASE_MS,
+      processOne: createDryRunItemProcessor({ db, workerId, leaseMs: config.OUTBOX_LEASE_MS,
+        dailyLimit: config.DAILY_LEAD_LIMIT, executionSource: 'oracle-vps', policy: executionPolicy }),
+    }) : { processed: 0 };
+  const consumedOutbox = report.processed > 0;
   if (!collected && !consumedOutbox && gracefulStop.running) {
     await gracefulStop.wait(config.WORKER_POLL_INTERVAL_MS);
   }

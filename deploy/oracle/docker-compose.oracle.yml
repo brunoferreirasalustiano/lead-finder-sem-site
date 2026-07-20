@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: [local-database]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-leadfinder}
+      POSTGRES_USER: ${POSTGRES_USER:-leadfinder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD externally}
+    volumes: [oracle_postgres_data:/var/lib/postgresql/data]
+    networks: [internal]
+    healthcheck: { test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 10s, timeout: 5s, retries: 10 }
+  migrate:
+    build: { context: ../.., dockerfile: apps/api/Dockerfile }
+    command: [npm, run, db:migrate]
+    environment: &runtime
+      DEPLOYMENT_PROFILE: oracle-vps
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL externally}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      DRY_RUN: 'true'
+      REAL_SEND_ENABLED: 'false'
+      REAL_PROVIDERS_ENABLED: 'false'
+      COLLECTION_EGRESS_ENABLED: 'false'
+      SHADOW_MODE_ENABLED: 'true'
+    networks: [internal]
+    restart: 'no'
+  api:
+    build: { context: ../.., dockerfile: apps/api/Dockerfile }
+    restart: unless-stopped
+    environment:
+      <<: *runtime
+      API_PORT: 3000
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN externally}
+      API_AUTH_PERMISSIONS: ${API_AUTH_PERMISSIONS:?set API_AUTH_PERMISSIONS externally}
+      PILOT_KILL_SWITCH_ENABLED: ${PILOT_KILL_SWITCH_ENABLED:-true}
+    ports: [127.0.0.1:3000:3000]
+    networks: [internal]
+    healthcheck: { test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})"], interval: 15s, timeout: 5s, retries: 5 }
+  worker:
+    build: { context: ../.., dockerfile: apps/worker/Dockerfile }
+    restart: unless-stopped
+    environment:
+      <<: *runtime
+      PROCESSOR_ROLE: ${PROCESSOR_ROLE:-standby}
+      PILOT_KILL_SWITCH_ENABLED: ${PILOT_KILL_SWITCH_ENABLED:-true}
+    networks: [internal]
+    healthcheck: { test: [CMD, node, -e, "process.kill(1,0)"], interval: 30s, timeout: 5s, retries: 3 }
+networks: { internal: { internal: true } }
+volumes: { oracle_postgres_data: {} }

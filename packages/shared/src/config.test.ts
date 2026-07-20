@@ -20,7 +20,7 @@ describe('environment configuration', () => {
       OVERPASS_TIMEOUT_MS: 30000,
       OVERPASS_MAX_RETRIES: 3,
       WORKER_POLL_INTERVAL_MS: 60000,
-      DAILY_LEAD_LIMIT: 50,
+      DAILY_LEAD_LIMIT: 60,
       OUTBOX_LEASE_MS: 30000,
       CAMPAIGN_DAILY_LIMIT_EMAIL: 50,
       CAMPAIGN_DAILY_LIMIT_WHATSAPP: 50,
@@ -155,5 +155,24 @@ describe('environment configuration', () => {
       OUTBOX_RETRY_BASE_MS: '2000',
       OUTBOX_RETRY_MAX_MS: '1000',
     })).toThrow('OUTBOX_RETRY_MAX_MS');
+  });
+
+  it('accepts both profiles and fails closed for unsafe Plan B values', () => {
+    expect(parseApiConfig(database).DEPLOYMENT_PROFILE).toBe('oracle-vps');
+    const planB = { ...database, DEPLOYMENT_PROFILE: 'supabase-render', SHADOW_MODE_ENABLED: 'true',
+      INTERNAL_CRON_SECRET: 'synthetic-internal-cron-secret-0001' };
+    expect(parseApiConfig(planB)).toMatchObject({ DEPLOYMENT_PROFILE: 'supabase-render', DRY_RUN: true,
+      REAL_SEND_ENABLED: false, REAL_PROVIDERS_ENABLED: false, COLLECTION_EGRESS_ENABLED: false });
+    expect(() => parseApiConfig({ ...planB, REAL_SEND_ENABLED: 'true' })).toThrow('supabase-render requires');
+    expect(() => parseApiConfig({ ...planB, DAILY_LEAD_LIMIT: '61' })).toThrow('DAILY_LEAD_LIMIT');
+    expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('bounded API batch endpoint');
+  });
+
+  it('accepts Render PORT and validates an explicit CORS allowlist', () => {
+    expect(parseApiConfig({ ...database, PORT: '10000' }).API_PORT).toBe(10000);
+    expect(parseApiConfig({ ...database, CORS_ALLOWED_ORIGINS: 'https://app.example.test,https://fallback.example.test' }).CORS_ALLOWED_ORIGINS).toEqual([
+      'https://app.example.test', 'https://fallback.example.test',
+    ]);
+    expect(() => parseApiConfig({ ...database, CORS_ALLOWED_ORIGINS: '*' })).toThrow('CORS_ALLOWED_ORIGINS');
   });
 });

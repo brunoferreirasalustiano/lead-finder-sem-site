@@ -1,0 +1,9 @@
+-- EXAMPLE ONLY. Do not apply automatically. Store tokens in Vault and substitute project values manually.
+-- Six UTC invocations; LEAD_BATCH_SIZE must remain <= 10 and the database hard ceiling remains 60/day.
+-- select cron.schedule('lead-finder-00', '0 0 * * *', $$ select net.http_post(...) $$);
+-- select cron.schedule('lead-finder-04', '0 4 * * *', $$ select net.http_post(...) $$);
+-- select cron.schedule('lead-finder-08', '0 8 * * *', $$ select net.http_post(...) $$);
+-- select cron.schedule('lead-finder-12', '0 12 * * *', $$ select net.http_post(...) $$);
+-- select cron.schedule('lead-finder-16', '0 16 * * *', $$ select net.http_post(...) $$);
+-- select cron.schedule('lead-finder-20', '0 20 * * *', $$ select net.http_post(...) $$);
+-- Pause/remove: select cron.unschedule('<job-name>');

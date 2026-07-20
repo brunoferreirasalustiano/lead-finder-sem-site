@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: lead-finder-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/api/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - { key: DEPLOYMENT_PROFILE, value: supabase-render }
+      - { key: NODE_ENV, value: production }
+      - { key: DRY_RUN, value: 'true' }
+      - { key: SHADOW_MODE_ENABLED, value: 'true' }
+      - { key: REAL_SEND_ENABLED, value: 'false' }
+      - { key: REAL_PROVIDERS_ENABLED, value: 'false' }
+      - { key: COLLECTION_EGRESS_ENABLED, value: 'false' }
+      - { key: DAILY_LEAD_LIMIT, value: '60' }
+      - { key: LEAD_BATCH_SIZE, value: '5' }
+      - { key: PROCESSING_TIME_BUDGET_MS, value: '45000' }
+      - { key: DATABASE_POOL_MAX, value: '3' }
+      - { key: DATABASE_SSL_MODE, value: require }
+      - { key: PROCESSOR_ROLE, value: primary }
+      - { key: DATABASE_URL, sync: false }
+      - { key: API_AUTH_TOKEN, sync: false }
+      - { key: API_AUTH_PERMISSIONS, sync: false }
+      - { key: INTERNAL_CRON_SECRET, sync: false }
+      - { key: CORS_ALLOWED_ORIGINS, sync: false }
+      - { key: PILOT_KILL_SWITCH_ENABLED, value: 'false' }

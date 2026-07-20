@@ -16,9 +16,11 @@ COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /app/packages/database/dist ./packages/database/dist
+COPY --from=build --chown=node:node /app/packages/batch-processor/package.json ./packages/batch-processor/package.json
+COPY --from=build --chown=node:node /app/packages/batch-processor/dist ./packages/batch-processor/dist
 COPY --from=build --chown=node:node /app/packages/lead-scoring/package.json ./packages/lead-scoring/package.json
 COPY --from=build --chown=node:node /app/packages/lead-scoring/dist ./packages/lead-scoring/dist
 COPY --from=build --chown=node:node /app/packages/overpass-client/package.json ./packages/overpass-client/package.json
 COPY --from=build --chown=node:node /app/packages/overpass-client/dist ./packages/overpass-client/dist
-RUN test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/lead-scoring/dist/index.js && test -f packages/overpass-client/dist/index.js && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/database'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
+RUN test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f packages/lead-scoring/dist/index.js && test -f packages/overpass-client/dist/index.js && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/database'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
 CMD ["node","apps/worker/dist/index.js"]

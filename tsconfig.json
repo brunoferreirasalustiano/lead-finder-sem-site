@@ -5,6 +5,7 @@
     { "path": "packages/lead-scoring" },
     { "path": "packages/overpass-client" },
     { "path": "packages/database" },
+    { "path": "packages/batch-processor" },
     { "path": "apps/api" },
     { "path": "apps/worker" }
   ]

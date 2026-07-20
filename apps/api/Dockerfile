@@ -20,5 +20,7 @@ COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /app/packages/database/dist ./packages/database/dist
-RUN test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f database/migrations/0001_initial.sql && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/database')"
+COPY --from=build --chown=node:node /app/packages/batch-processor/package.json ./packages/batch-processor/package.json
+COPY --from=build --chown=node:node /app/packages/batch-processor/dist ./packages/batch-processor/dist
+RUN test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f database/migrations/0001_initial.sql && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/database'); await import('@lead-finder/batch-processor')"
 CMD ["node","apps/api/dist/index.js"]

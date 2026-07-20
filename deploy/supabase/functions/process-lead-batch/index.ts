@@ -2,13 +2,27 @@ const json = (status: number, body: Record<string, unknown>) => new Response(JSO
   status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
 });
 
+const secureEqual = async (left: string, right: string) => {
+  const encoder = new TextEncoder();
+  const [leftHash, rightHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(left)),
+    crypto.subtle.digest('SHA-256', encoder.encode(right)),
+  ]);
+  const leftBytes = new Uint8Array(leftHash);
+  const rightBytes = new Uint8Array(rightHash);
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) difference |= leftBytes[index]! ^ rightBytes[index]!;
+  return difference === 0;
+};
+
 Deno.serve(async (request) => {
   if (request.method !== 'POST') return json(405, { error: 'Method not allowed' });
   const expected = Deno.env.get('CRON_INVOKE_SECRET');
   const apiSecret = Deno.env.get('INTERNAL_CRON_SECRET');
   const apiUrl = Deno.env.get('RENDER_INTERNAL_BATCH_URL');
   const authorization = request.headers.get('authorization');
-  if (!expected || !apiSecret || !apiUrl || authorization !== `Bearer ${expected}`) {
+  if (!expected || !apiSecret || !apiUrl || !authorization
+    || !await secureEqual(authorization, `Bearer ${expected}`)) {
     return json(401, { error: 'Unauthorized' });
   }
   const idempotencyKey = request.headers.get('idempotency-key') ?? crypto.randomUUID().replaceAll('-', '');

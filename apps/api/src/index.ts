@@ -1,4 +1,4 @@
-import { beginBatchInvocation, createDatabase } from '@lead-finder/database';
+import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
 import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
@@ -37,6 +37,8 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
   cronAuthAudience: config.CRON_AUTH_AUDIENCE,
   beginBatchInvocation: (key) => beginBatchInvocation(db, key, 'supabase-render'),
+  completeBatchInvocation: (key) => completeBatchInvocation(db, key),
+  abandonBatchInvocation: (key) => abandonBatchInvocation(db, key),
   processLeadBatch: () => processLeadBatch({ db, batchSize: config.LEAD_BATCH_SIZE,
     timeBudgetMs: config.PROCESSING_TIME_BUDGET_MS, dailyLimit: config.DAILY_LEAD_LIMIT,
     dryRun: true, executionSource: 'supabase-render', executorId,

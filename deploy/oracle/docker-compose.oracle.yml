@@ -46,5 +46,5 @@ services:
       PILOT_KILL_SWITCH_ENABLED: ${PILOT_KILL_SWITCH_ENABLED:-true}
     networks: [internal]
     healthcheck: { test: [CMD, node, -e, "process.kill(1,0)"], interval: 30s, timeout: 5s, retries: 3 }
-networks: { internal: { internal: true } }
+networks: { internal: {} }
 volumes: { oracle_postgres_data: {} }

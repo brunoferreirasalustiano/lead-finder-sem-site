@@ -4,7 +4,7 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./apps/api/Dockerfile
-    healthCheckPath: /health
+    healthCheckPath: /health/ready
     envVars:
       - { key: DEPLOYMENT_PROFILE, value: supabase-render }
       - { key: NODE_ENV, value: production }

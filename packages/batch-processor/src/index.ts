@@ -1,7 +1,7 @@
 import {
   acquireProcessorLeadership, authorizeCampaignExecution, claimCampaignOutbox,
   completeCampaignOutbox, confirmSimulatedCampaignExecution, failCampaignOutbox,
-  reserveDailyLeadAllocation, type CampaignExecutionPolicy, type Database, type ExecutionSource,
+  renewProcessorLeadership, reserveDailyLeadAllocation, type CampaignExecutionPolicy, type Database, type ExecutionSource,
 } from '@lead-finder/database';
 
 export interface LeadBatchReport {
@@ -57,6 +57,7 @@ export async function processLeadBatch(input: {
   leadershipLeaseMs: number;
   processOne: () => Promise<boolean>;
   acquireLeadership?: typeof acquireProcessorLeadership;
+  renewLeadership?: typeof renewProcessorLeadership;
   now?: () => number;
 }): Promise<LeadBatchReport> {
   const startedAt = (input.now ?? Date.now)();
@@ -69,6 +70,10 @@ export async function processLeadBatch(input: {
   let processed = 0;
   while (attempted < Math.min(input.batchSize, 10)) {
     if ((input.now ?? Date.now)() - startedAt >= input.timeBudgetMs) break;
+    if (!leadership.token || leadership.generation === undefined || !await (input.renewLeadership ?? renewProcessorLeadership)(input.db, {
+      source: input.executionSource, executorId: input.executorId, token: leadership.token,
+      generation: leadership.generation, leaseMs: input.leadershipLeaseMs,
+    })) break;
     attempted += 1;
     if (!await input.processOne()) break;
     processed += 1;

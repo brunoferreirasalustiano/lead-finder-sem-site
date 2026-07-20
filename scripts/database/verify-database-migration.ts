@@ -5,7 +5,7 @@ if (!url) throw new Error('VERIFY_DATABASE_URL is required');
 const sql = postgres(url, { max: 1, connect_timeout: 10 });
 try {
   const migrations = await sql<{ version: string }[]>`select version from schema_migrations order by version`;
-  const required = ['0012_pilot_referential_integrity', '0013_dual_deployment_processing'];
+  const required = ['0012_pilot_referential_integrity', '0013_dual_deployment_processing', '0014_batch_invocation_recovery'];
   for (const version of required) if (!migrations.some((row) => row.version === version)) throw new Error(`missing migration ${version}`);
   const integrity = await sql<{ invalid: number }[]>`
     select (select count(*)::int from deployment_daily_lead_counters where count < 0 or count > 60)

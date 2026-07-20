@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { eq, sql } from 'drizzle-orm';
 import { claimCampaignOutbox, failCampaignOutbox, type CampaignExecutionPolicy } from './campaign-outbox.js';
 import { createDatabase } from './index.js';
-import { reserveDailyLeadAllocation } from './deployment-processing.js';
+import { acquireProcessorLeadership, beginBatchInvocation, completeBatchInvocation,
+  renewProcessorLeadership, reserveDailyLeadAllocation } from './deployment-processing.js';
 import { campaignOutbox } from './schema.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -42,6 +43,31 @@ const counter = async (day: string) => (await primary.db.execute<{ count: number
 `))[0]?.count ?? 0;
 
 try {
+  const invocationKey = `deployment_invocation_${crypto.randomUUID().replaceAll('-', '')}`;
+  const invocationStart = new Date('2098-12-31T00:00:00.000Z');
+  assert.equal(await beginBatchInvocation(primary.db, invocationKey, 'supabase-render', invocationStart), true);
+  assert.equal(await beginBatchInvocation(secondary.db, invocationKey, 'supabase-render', invocationStart), false,
+    'an active invocation lease must reject concurrent replay');
+  assert.equal(await beginBatchInvocation(secondary.db, invocationKey, 'supabase-render', new Date('2098-12-31T00:02:01.000Z')), true,
+    'an expired invocation lease must be recoverable after restart');
+  await completeBatchInvocation(secondary.db, invocationKey);
+  assert.equal(await beginBatchInvocation(primary.db, invocationKey, 'supabase-render', new Date('2098-12-31T00:04:02.000Z')), false,
+    'a completed invocation must remain idempotent');
+
+  const firstLeadership = await acquireProcessorLeadership(primary.db, {
+    source: 'supabase-render', executorId: 'same-executor', leaseMs: 60_000, now: invocationStart,
+  });
+  const replacementLeadership = await acquireProcessorLeadership(secondary.db, {
+    source: 'supabase-render', executorId: 'same-executor', leaseMs: 60_000, now: invocationStart,
+  });
+  assert.equal(firstLeadership.acquired, true);
+  assert.equal(replacementLeadership.acquired, true);
+  assert.equal(await renewProcessorLeadership(primary.db, { source: 'supabase-render', executorId: 'same-executor',
+    token: firstLeadership.token!, generation: firstLeadership.generation!, leaseMs: 60_000, now: invocationStart }), false,
+  'a superseded leadership generation must be fenced');
+  assert.equal(await renewProcessorLeadership(secondary.db, { source: 'supabase-render', executorId: 'same-executor',
+    token: replacementLeadership.token!, generation: replacementLeadership.generation!, leaseMs: 60_000, now: invocationStart }), true);
+
   const dayOne = new Date('2099-01-01T23:59:00.000Z');
   const dayTwo = new Date('2099-01-02T00:01:00.000Z');
   const carry = await insertItem(dayOne);

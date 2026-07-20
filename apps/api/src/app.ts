@@ -162,6 +162,8 @@ export function buildApp(db: Database, options: {
   cronAuthAudience?: string;
   processLeadBatch?: () => Promise<LeadBatchReport>;
   beginBatchInvocation?: (key: string) => Promise<boolean>;
+  completeBatchInvocation?: (key: string) => Promise<void>;
+  abandonBatchInvocation?: (key: string) => Promise<void>;
   corsAllowedOrigins?: readonly string[];
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
@@ -182,6 +184,13 @@ export function buildApp(db: Database, options: {
       return;
     }
     if (origin) reply.header('access-control-allow-origin', origin).header('vary', 'Origin');
+    if (request.method === 'OPTIONS') {
+      reply.header('access-control-allow-methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS')
+        .header('access-control-allow-headers', 'Authorization,Content-Type,Idempotency-Key')
+        .header('access-control-max-age', '600');
+      void reply.status(204).send();
+      return;
+    }
     reply.header('x-content-type-options', 'nosniff').header('x-frame-options', 'DENY')
       .header('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
       .header('referrer-policy', 'no-referrer');
@@ -232,13 +241,19 @@ export function buildApp(db: Database, options: {
     if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(idempotencyKey)) {
       return reply.status(400).send({ error: 'Invalid request', code: 'INVALID_IDEMPOTENCY_KEY' });
     }
+    if (!options.processLeadBatch) return reply.status(503).send({ error: 'Service unavailable', code: 'BATCH_DISABLED' });
     if (!options.beginBatchInvocation || !await options.beginBatchInvocation(idempotencyKey)) {
       return reply.status(409).send({ error: 'Duplicate invocation', code: 'IDEMPOTENCY_REPLAY' });
     }
-    if (!options.processLeadBatch) return reply.status(503).send({ error: 'Service unavailable', code: 'BATCH_DISABLED' });
-    const report = await options.processLeadBatch();
-    return { outcome: report.outcome, attempted: report.attempted, processed: report.processed,
-      durationMs: report.durationMs, executionSource: report.executionSource };
+    try {
+      const report = await options.processLeadBatch();
+      await options.completeBatchInvocation?.(idempotencyKey);
+      return { outcome: report.outcome, attempted: report.attempted, processed: report.processed,
+        durationMs: report.durationMs, executionSource: report.executionSource };
+    } catch (error) {
+      await options.abandonBatchInvocation?.(idempotencyKey);
+      throw error;
+    }
   });
   app.get('/internal/operational-snapshot', async (_request, reply) => {
     try { return await getOperationalSnapshot(db); }

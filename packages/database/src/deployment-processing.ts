@@ -5,12 +5,25 @@ import type { OutboxClaim } from './campaign-outbox.js';
 
 export type ExecutionSource = 'oracle-vps' | 'supabase-render';
 
-export async function beginBatchInvocation(db: Database, key: string, source: ExecutionSource): Promise<boolean> {
+export async function beginBatchInvocation(db: Database, key: string, source: ExecutionSource, now = new Date()): Promise<boolean> {
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(key)) throw new RangeError('invalid idempotency key');
+  const leaseExpiresAt = new Date(now.getTime() + 120_000);
   const rows = await db.execute<{ idempotency_key: string }>(sql`INSERT INTO batch_invocations
-    (idempotency_key, execution_source) VALUES (${key}, ${source})
-    ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key`);
+    (idempotency_key, execution_source, lease_expires_at) VALUES (${key}, ${source}, ${leaseExpiresAt.toISOString()}::timestamptz)
+    ON CONFLICT (idempotency_key) DO UPDATE SET execution_source = EXCLUDED.execution_source,
+      lease_expires_at = EXCLUDED.lease_expires_at
+    WHERE batch_invocations.completed_at IS NULL AND batch_invocations.lease_expires_at <= ${now.toISOString()}::timestamptz
+    RETURNING idempotency_key`);
   return rows.length === 1;
+}
+
+export async function completeBatchInvocation(db: Database, key: string): Promise<void> {
+  await db.execute(sql`UPDATE batch_invocations SET completed_at = now()
+    WHERE idempotency_key = ${key} AND completed_at IS NULL`);
+}
+
+export async function abandonBatchInvocation(db: Database, key: string): Promise<void> {
+  await db.execute(sql`DELETE FROM batch_invocations WHERE idempotency_key = ${key} AND completed_at IS NULL`);
 }
 
 const assertExecutor = (value: string) => {
@@ -44,6 +57,21 @@ export async function acquireProcessorLeadership(db: Database, input: {
     VALUES ('campaign-outbox', ${input.source}, ${createHash('sha256').update(executorId).digest('hex').slice(0, 16)},
       ${acquired.generation}, 'ACQUIRED', ${now.toISOString()}::timestamptz)`);
   return { acquired: true, token: acquired.lease_token, generation: acquired.generation };
+}
+
+export async function renewProcessorLeadership(db: Database, input: {
+  source: ExecutionSource; executorId: string; token: string; generation: number; leaseMs: number; now?: Date;
+}): Promise<boolean> {
+  const executorId = assertExecutor(input.executorId);
+  const now = input.now ?? new Date();
+  const expiresAt = new Date(now.getTime() + input.leaseMs);
+  const rows = await db.execute<{ lease_token: string }>(sql`UPDATE processor_leadership
+    SET lease_expires_at = ${expiresAt.toISOString()}::timestamptz, updated_at = ${now.toISOString()}::timestamptz
+    WHERE queue_name = 'campaign-outbox' AND active_source = ${input.source} AND executor_id = ${executorId}
+      AND lease_token = ${input.token}::uuid AND generation = ${input.generation}
+      AND lease_expires_at > ${now.toISOString()}::timestamptz
+    RETURNING lease_token`);
+  return rows.length === 1;
 }
 
 export async function reserveDailyLeadAllocation(db: Database, claim: OutboxClaim, input: {

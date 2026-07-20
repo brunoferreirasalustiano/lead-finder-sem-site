@@ -63,6 +63,11 @@ const inject = (options: InjectOptions) => app.inject({
 try {
   await db.execute(sql`
     truncate table
+      deployment_daily_lead_allocations,
+      deployment_daily_lead_counters,
+      batch_invocations,
+      processor_leadership_audit,
+      processor_leadership,
       pilot_timeline_events,
       pilot_idempotency_keys,
       pilot_results,

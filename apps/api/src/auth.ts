@@ -31,7 +31,8 @@ declare module 'fastify' {
 type RoutePolicy = Readonly<{ method: string; path: string; permission: Permission }>;
 const policy = (method: string, path: string, permission: Permission): RoutePolicy => ({ method, path, permission });
 
-export const publicRoutes = new Set(['GET /health/live', 'GET /health', 'GET /health/ready']);
+export const publicRoutes = new Set(['GET /health/live', 'GET /health', 'GET /ready', 'GET /health/ready']);
+const internallyAuthenticatedRoutes = new Set(['POST /internal/jobs/process-lead-batch']);
 export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/internal/operational-snapshot', 'operations:read'),
   policy('GET', '/leads', 'leads:read'),
@@ -154,12 +155,13 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     for (const method of methods) if (method !== 'HEAD') registeredRoutes.add(`${method} ${route.url}`);
   });
   app.addHook('onReady', () => {
-    const unclassified = [...registeredRoutes].filter((route) => !publicRoutes.has(route) && !policiesByRoute.has(route));
+    const unclassified = [...registeredRoutes].filter((route) => !publicRoutes.has(route)
+      && !internallyAuthenticatedRoutes.has(route) && !policiesByRoute.has(route));
     if (unclassified.length > 0) throw new Error(`API routes require an explicit authorization policy: ${unclassified.join(', ')}`);
   });
   app.addHook('onRequest', async (request, reply) => {
     const routeKey = `${request.method} ${request.routeOptions.url ?? ''}`;
-    if (publicRoutes.has(routeKey)) return;
+    if (publicRoutes.has(routeKey) || internallyAuthenticatedRoutes.has(routeKey)) return;
 
     let principal: OperationalPrincipal | undefined;
     try {

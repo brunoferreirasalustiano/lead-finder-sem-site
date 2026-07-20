@@ -10,6 +10,8 @@ export default tseslint.config(
       '**/coverage/**',
       'eslint.config.js',
       'scripts/*.ts',
+      'scripts/database/*.ts',
+      'deploy/supabase/functions/**/*.ts',
     ],
   },
   js.configs.recommended,

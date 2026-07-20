@@ -15,6 +15,7 @@ export * from './campaign.js';
 export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
+export * from './deployment-processing.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed
@@ -26,13 +27,18 @@ export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
         : 'PROVAVELMENTE_SEM_SITE';
 export const uniqueByOsm = <T extends Pick<NormalizedLead, 'osmType' | 'osmId'>>(items: T[]): T[] =>
   Array.from(new Map(items.map((item) => [`${item.osmType}:${item.osmId}`, item])).values());
-export function createDatabase(databaseUrl: string) {
-  const client = postgres(databaseUrl, { max: 10, idle_timeout: 20 });
+export function createDatabase(databaseUrl: string, options: { max?: number; ssl?: 'disable' | 'require' | 'verify-full' } = {}) {
+  const ssl = options.ssl === 'disable' ? false : options.ssl === 'require' ? 'require' : options.ssl === 'verify-full' ? 'verify-full' : undefined;
+  const client = postgres(databaseUrl, { max: options.max ?? 10, idle_timeout: 20, connect_timeout: 10, ...(ssl === undefined ? {} : { ssl }) });
   return { db: drizzle(client), close: () => client.end() };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
+}
+export async function checkExpectedMigration(db: Database, version = '0013_dual_deployment_processing'): Promise<void> {
+  const rows = await db.execute<{ version: string }>(sql`SELECT version FROM schema_migrations WHERE version = ${version}`);
+  if (rows.length !== 1) throw new Error('EXPECTED_MIGRATION_MISSING');
 }
 export async function insertLeads(
   db: Database,

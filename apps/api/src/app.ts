@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import {
   getOperationalSnapshot,
   getReadiness,
+  checkExpectedMigration,
   enqueueCollection,
   getLead,
   listLeads,
@@ -102,6 +103,8 @@ import {
   pilotMetricPeriodSchema,
 } from '@lead-finder/shared';
 import { z } from 'zod';
+import { timingSafeEqual } from 'node:crypto';
+import type { LeadBatchReport } from '@lead-finder/batch-processor';
 import { simulateCampaignMessage } from './campaign-simulation.js';
 import {
   authorizationContextFor, installAuthorization, requirePermission, serializeRequestForLog,
@@ -155,6 +158,13 @@ export function buildApp(db: Database, options: {
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
   enqueueCollection?: typeof enqueueCollection;
+  internalCronSecret?: string;
+  cronAuthAudience?: string;
+  processLeadBatch?: () => Promise<LeadBatchReport>;
+  beginBatchInvocation?: (key: string) => Promise<boolean>;
+  completeBatchInvocation?: (key: string) => Promise<void>;
+  abandonBatchInvocation?: (key: string) => Promise<void>;
+  corsAllowedOrigins?: readonly string[];
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const collectionEgressEnabled = options.collectionEgressEnabled ?? false;
@@ -166,6 +176,26 @@ export function buildApp(db: Database, options: {
     bodyLimit: 16_384,
     requestTimeout: 15_000,
   });
+  const allowedOrigins = new Set(options.corsAllowedOrigins ?? ['http://127.0.0.1:3000']);
+  app.addHook('onRequest', (request, reply, done) => {
+    const origin = request.headers.origin;
+    if (origin && !allowedOrigins.has(origin)) {
+      void reply.status(403).send({ error: 'Access denied', code: 'CORS_ORIGIN_DENIED' });
+      return;
+    }
+    if (origin) reply.header('access-control-allow-origin', origin).header('vary', 'Origin');
+    if (request.method === 'OPTIONS') {
+      reply.header('access-control-allow-methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS')
+        .header('access-control-allow-headers', 'Authorization,Content-Type,Idempotency-Key')
+        .header('access-control-max-age', '600');
+      void reply.status(204).send();
+      return;
+    }
+    reply.header('x-content-type-options', 'nosniff').header('x-frame-options', 'DENY')
+      .header('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
+      .header('referrer-policy', 'no-referrer');
+    done();
+  });
   app.setErrorHandler((error, request, reply) => {
     const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
       && typeof error.statusCode === 'number' ? error.statusCode : undefined;
@@ -176,24 +206,55 @@ export function buildApp(db: Database, options: {
     return reply.status(500).send({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
   });
   installAuthorization(app, options.authentication);
-  app.get('/health/live', () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+  app.get('/health', () => ({ status: 'ok' }));
+  app.get('/health/live', () => ({ status: 'ok' }));
   const ready = async (
     _request: unknown,
     reply: { status: (code: number) => { send: (body: object) => unknown } },
   ) => {
     try {
-      const readiness = await getReadiness(db, {
+      const timeout = () => new Promise<never>((_, reject) => setTimeout(() => reject(new Error('READINESS_TIMEOUT')), 3_000));
+      const readiness = await Promise.race([getReadiness(db, {
         backlogCount: options.operationalBacklogDegradedCount ?? 100,
         oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
-      });
+      }), timeout()]);
+      await Promise.race([checkExpectedMigration(db), timeout()]);
       if (readiness.status === 'unhealthy') return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
       return { status: readiness.status, timestamp: new Date().toISOString() };
     } catch {
       return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
     }
   };
-  app.get('/health', ready);
+  app.get('/ready', ready);
   app.get('/health/ready', ready);
+  app.post('/internal/jobs/process-lead-batch', async (request, reply) => {
+    const authorization = request.headers.authorization;
+    const audience = request.headers['x-cron-audience'];
+    const idempotencyKey = request.headers['idempotency-key'];
+    const supplied = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+    const expected = options.internalCronSecret ?? '';
+    const authenticated = supplied.length === expected.length && supplied.length > 0
+      && timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+    if (!authenticated || audience !== (options.cronAuthAudience ?? 'lead-finder-batch')) {
+      return reply.status(401).send({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+    }
+    if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(idempotencyKey)) {
+      return reply.status(400).send({ error: 'Invalid request', code: 'INVALID_IDEMPOTENCY_KEY' });
+    }
+    if (!options.processLeadBatch) return reply.status(503).send({ error: 'Service unavailable', code: 'BATCH_DISABLED' });
+    if (!options.beginBatchInvocation || !await options.beginBatchInvocation(idempotencyKey)) {
+      return reply.status(409).send({ error: 'Duplicate invocation', code: 'IDEMPOTENCY_REPLAY' });
+    }
+    try {
+      const report = await options.processLeadBatch();
+      await options.completeBatchInvocation?.(idempotencyKey);
+      return { outcome: report.outcome, attempted: report.attempted, processed: report.processed,
+        durationMs: report.durationMs, executionSource: report.executionSource };
+    } catch (error) {
+      await options.abandonBatchInvocation?.(idempotencyKey);
+      throw error;
+    }
+  });
   app.get('/internal/operational-snapshot', async (_request, reply) => {
     try { return await getOperationalSnapshot(db); }
     catch { return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' }); }

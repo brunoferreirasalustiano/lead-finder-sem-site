@@ -3,6 +3,7 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../../packages/batch-processor" },
     { "path": "../../packages/shared" },
     { "path": "../../packages/database" },
     { "path": "../../packages/lead-scoring" },

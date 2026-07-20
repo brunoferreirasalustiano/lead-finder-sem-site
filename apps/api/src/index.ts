@@ -1,6 +1,8 @@
-import { createDatabase } from '@lead-finder/database';
+import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
 import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
+import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
+import { hostname } from 'node:os';
 
 const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
   console.error('api_startup_blocked', { reason, decision: 'SHUTDOWN_REQUESTED' });
@@ -18,7 +20,13 @@ const config = (() => {
       : 'INVALID_CONFIGURATION');
   }
 })();
-const { db, close } = createDatabase(config.DATABASE_URL);
+const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
+const executorId = `api:${hostname()}:${process.pid}`;
+const policy = { dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
+  dailyLimitWhatsapp: config.CAMPAIGN_DAILY_LIMIT_WHATSAPP,
+  windowStartUtc: config.CAMPAIGN_WINDOW_START_UTC, windowEndUtc: config.CAMPAIGN_WINDOW_END_UTC,
+  minSpacingMs: config.CAMPAIGN_MIN_SPACING_MS, maxAttempts: config.OUTBOX_RETRY_MAX_ATTEMPTS,
+  retryBaseMs: config.OUTBOX_RETRY_BASE_MS, retryMaxMs: config.OUTBOX_RETRY_MAX_MS };
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
@@ -26,6 +34,19 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
   authentication: { token: config.API_AUTH_TOKEN, principalPermissions: config.API_AUTH_PERMISSIONS },
+  ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
+  cronAuthAudience: config.CRON_AUTH_AUDIENCE,
+  beginBatchInvocation: (key) => beginBatchInvocation(db, key, 'supabase-render'),
+  completeBatchInvocation: (key) => completeBatchInvocation(db, key),
+  abandonBatchInvocation: (key) => abandonBatchInvocation(db, key),
+  processLeadBatch: () => processLeadBatch({ db, batchSize: config.LEAD_BATCH_SIZE,
+    timeBudgetMs: config.PROCESSING_TIME_BUDGET_MS, dailyLimit: config.DAILY_LEAD_LIMIT,
+    dryRun: true, executionSource: 'supabase-render', executorId,
+    processorRole: config.PROCESSOR_ROLE, leadershipLeaseMs: config.PROCESSOR_LEASE_MS,
+    processOne: createDryRunItemProcessor({ db, workerId: executorId, leaseMs: config.OUTBOX_LEASE_MS,
+      dailyLimit: config.DAILY_LEAD_LIMIT, executionSource: 'supabase-render', policy }),
+  }),
+  corsAllowedOrigins: config.CORS_ALLOWED_ORIGINS,
 });
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {

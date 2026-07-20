@@ -48,8 +48,12 @@ const integerFromEnvironment = (name: string, minimum: number, maximum: number, 
     .pipe(z.number().int().min(minimum).max(maximum));
 
 const commonSchema = z.object({
+  DEPLOYMENT_PROFILE: z.enum(['oracle-vps', 'supabase-render']).default('oracle-vps'),
   DATABASE_URL: z.string().url().startsWith('postgresql://'),
-  DAILY_LEAD_LIMIT: integerFromEnvironment('DAILY_LEAD_LIMIT', 1, 10_000, 50),
+  DAILY_LEAD_LIMIT: integerFromEnvironment('DAILY_LEAD_LIMIT', 1, 60, 60),
+  DATABASE_SSL_MODE: z.enum(['disable', 'require', 'verify-full']).default('disable'),
+  DATABASE_POOL_MAX: integerFromEnvironment('DATABASE_POOL_MAX', 1, 20, 10),
+  CORS_ALLOWED_ORIGINS: z.string().trim().default('http://127.0.0.1:3000').transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean)).pipe(z.array(z.string().url()).min(1).max(20)),
   COLLECTION_EGRESS_ENABLED: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.enum(['true', 'false']).default('false'),
@@ -74,6 +78,24 @@ const requireCollectionEndpoint = (
 };
 
 const apiSchema = commonSchema.extend({
+  DRY_RUN: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  REAL_SEND_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  REAL_PROVIDERS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  INTERNAL_CRON_SECRET: z.string().min(32).max(512).optional(),
+  CRON_AUTH_AUDIENCE: z.string().trim().min(1).max(200).default('lead-finder-batch'),
+  LEAD_BATCH_SIZE: integerFromEnvironment('LEAD_BATCH_SIZE', 1, 10, 5),
+  PROCESSING_TIME_BUDGET_MS: integerFromEnvironment('PROCESSING_TIME_BUDGET_MS', 1_000, 50_000, 45_000),
+  PROCESSOR_ROLE: z.enum(['primary', 'standby']).default('standby'),
+  PROCESSOR_LEASE_MS: integerFromEnvironment('PROCESSOR_LEASE_MS', 5_000, 300_000, 60_000),
+  OUTBOX_LEASE_MS: integerFromEnvironment('OUTBOX_LEASE_MS', 1_000, 3_600_000, 30_000),
+  OUTBOX_RETRY_MAX_ATTEMPTS: integerFromEnvironment('OUTBOX_RETRY_MAX_ATTEMPTS', 1, 100, 5),
+  OUTBOX_RETRY_BASE_MS: integerFromEnvironment('OUTBOX_RETRY_BASE_MS', 1, 604_800_000, 1_000),
+  OUTBOX_RETRY_MAX_MS: integerFromEnvironment('OUTBOX_RETRY_MAX_MS', 1, 604_800_000, 60_000),
+  CAMPAIGN_DAILY_LIMIT_EMAIL: integerFromEnvironment('CAMPAIGN_DAILY_LIMIT_EMAIL', 1, 60, 60),
+  CAMPAIGN_DAILY_LIMIT_WHATSAPP: integerFromEnvironment('CAMPAIGN_DAILY_LIMIT_WHATSAPP', 1, 60, 60),
+  CAMPAIGN_WINDOW_START_UTC: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).default('08:00'),
+  CAMPAIGN_WINDOW_END_UTC: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).default('18:00'),
+  CAMPAIGN_MIN_SPACING_MS: integerFromEnvironment('CAMPAIGN_MIN_SPACING_MS', 0, 86_400_000, 0),
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   PILOT_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   REAL_PROVIDER_CONFIGURED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
@@ -82,9 +104,25 @@ const apiSchema = commonSchema.extend({
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
   OPERATIONAL_BACKLOG_DEGRADED_COUNT: integerFromEnvironment('OPERATIONAL_BACKLOG_DEGRADED_COUNT', 1, 1_000_000, 100),
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
-}).superRefine(requireCollectionEndpoint);
+}).superRefine((configuration, context) => {
+  requireCollectionEndpoint(configuration, context);
+  if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
+    const unsafe = !configuration.DRY_RUN || configuration.REAL_SEND_ENABLED
+      || configuration.REAL_PROVIDERS_ENABLED || configuration.COLLECTION_EGRESS_ENABLED
+      || !configuration.SHADOW_MODE_ENABLED;
+    if (unsafe) context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render requires dry-run, shadow mode, disabled providers, sends, and collection egress' });
+    if (!configuration.INTERNAL_CRON_SECRET) context.addIssue({ code: 'custom', path: ['INTERNAL_CRON_SECRET'], message: 'INTERNAL_CRON_SECRET is required for supabase-render' });
+  }
+});
 
 const workerSchema = commonSchema.extend({
+  DRY_RUN: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  REAL_SEND_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  REAL_PROVIDERS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  LEAD_BATCH_SIZE: integerFromEnvironment('LEAD_BATCH_SIZE', 1, 10, 5),
+  PROCESSING_TIME_BUDGET_MS: integerFromEnvironment('PROCESSING_TIME_BUDGET_MS', 1_000, 50_000, 45_000),
+  PROCESSOR_ROLE: z.enum(['primary', 'standby']).default('standby'),
+  PROCESSOR_LEASE_MS: integerFromEnvironment('PROCESSOR_LEASE_MS', 5_000, 300_000, 60_000),
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   PILOT_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   WORKER_ID: z.string().trim().min(1).max(200).optional(),
@@ -125,6 +163,12 @@ const workerSchema = commonSchema.extend({
   ),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
+    context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render must use the bounded API batch endpoint, not the continuous worker' });
+  }
+  if (!configuration.DRY_RUN || configuration.REAL_SEND_ENABLED || configuration.REAL_PROVIDERS_ENABLED) {
+    context.addIssue({ code: 'custom', path: ['DRY_RUN'], message: 'real providers and sends are not implemented; DRY_RUN must remain true' });
+  }
   if (configuration.CAMPAIGN_WINDOW_START_UTC >= configuration.CAMPAIGN_WINDOW_END_UTC) {
     context.addIssue({
       code: 'custom',
@@ -149,7 +193,7 @@ function formatConfigurationError(error: z.ZodError): Error {
 }
 
 export function parseApiConfig(environment: NodeJS.ProcessEnv) {
-  const result = apiSchema.safeParse(environment);
+  const result = apiSchema.safeParse({ ...environment, API_PORT: environment.API_PORT ?? environment.PORT });
   if (!result.success) throw formatConfigurationError(result.error);
   return result.data;
 }

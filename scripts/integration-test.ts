@@ -63,6 +63,11 @@ const inject = (options: InjectOptions) => app.inject({
 try {
   await db.execute(sql`
     truncate table
+      deployment_daily_lead_allocations,
+      deployment_daily_lead_counters,
+      batch_invocations,
+      processor_leadership_audit,
+      processor_leadership,
       pilot_timeline_events,
       pilot_idempotency_keys,
       pilot_results,
@@ -540,6 +545,7 @@ await import('../packages/database/src/campaign.integration.js');
 await import('../packages/database/src/campaign-outbox.integration.js');
 await import('../packages/database/src/campaign-outbox.extreme.integration.js');
 await import('../packages/database/src/campaign-outbox.endurance.integration.js');
+await import('../packages/database/src/deployment-processing.integration.js');
 const { runPilotPersistenceIntegration } = await import('../packages/database/src/pilot.integration.js');
 await runPilotPersistenceIntegration(databaseUrl);
 

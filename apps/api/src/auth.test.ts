@@ -12,10 +12,10 @@ const minimalPermissions = ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:
 describe('API authentication boundary', () => {
   it('keeps only the three exact health routes public', async () => {
     const app = buildApp({} as Database);
-    for (const url of ['/health/live', '/health', '/health/ready']) {
+    for (const url of ['/health/live', '/health', '/ready', '/health/ready']) {
       expect((await app.inject({ method: 'GET', url })).statusCode).not.toBe(401);
     }
-    expect(publicRoutes).toEqual(new Set(['GET /health/live', 'GET /health', 'GET /health/ready']));
+    expect(publicRoutes).toEqual(new Set(['GET /health/live', 'GET /health', 'GET /ready', 'GET /health/ready']));
     expect((await app.inject({ method: 'GET', url: '/health/live/' })).statusCode).toBe(401);
     await app.close();
   });

@@ -59,6 +59,10 @@ try {
   }), 'RESERVED', 'unstarted carry-over must reserve quota on its effective execution day');
   assert.equal(await counter('2099-01-01'), 0, 'stale unexecuted reservation must leave its old day');
   assert.equal(await counter('2099-01-02'), 1, 'carry-over must consume current-day quota');
+  await primary.db.execute(sql`UPDATE campaign_outbox SET status = 'PUBLISHED',
+    published_at = ${dayTwo.toISOString()}::timestamptz,
+    claim_worker_id = NULL, claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL
+    WHERE id = ${carry.id}::uuid`);
 
   const fullDay = new Date('2099-01-03T12:00:00.000Z');
   await primary.db.execute(sql`INSERT INTO deployment_daily_lead_counters (quota_day, count)

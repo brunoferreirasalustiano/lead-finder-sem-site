@@ -49,8 +49,8 @@ Estado: `BLOCKED` até migration incremental, auditoria de registros existentes 
 - [ ] categoria única definida.
 - [ ] mensagem manual aprovada e versionada.
 - [ ] responsável operacional definido.
-- [ ] e-mail dedicado configurado.
-- [ ] número exclusivo e WhatsApp Business configurados antes de contato real.
+- [ ] e-mail dedicado configurado fora do versionamento.
+- [x] número exclusivo e WhatsApp Business configurados fora do versionamento; consulte `docs/commercial-channel-config.md`.
 - [ ] critérios de opt-out e `NAO_CONTATAR` revisados.
 - [ ] nenhum segundo contato permitido após opt-out.
 
@@ -86,6 +86,6 @@ O primeiro piloto real controlado só pode começar quando:
 - a integridade referencial estiver garantida pelo PostgreSQL;
 - todas as dez gates do preflight estiverem em `PASS`;
 - o kill switch tiver sido comprovado;
-- os canais comerciais dedicados estiverem configurados;
+- os canais comerciais dedicados estiverem configurados fora do Git;
 - a mensagem manual estiver aprovada;
 - não houver provider real, automação de WhatsApp ou egress externo habilitado.

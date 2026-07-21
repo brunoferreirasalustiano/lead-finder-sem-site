@@ -15,6 +15,11 @@ const successKey = `batch_gate_success_${suffix}`;
 const failureKey = `batch_gate_failure_${suffix}`;
 const secret = `batch_gate_secret_${suffix}`;
 const executorId = `batch-gate-${suffix}`;
+const current = new Date();
+const gateNow = new Date(Date.UTC(
+  current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate() - 1, 12, 0, 0,
+));
+const gateAvailableAt = new Date(gateNow.getTime() - 1_000);
 const requestHeaders = (key: string) => ({ authorization: `Bearer ${secret}`,
   'x-cron-audience': 'lead-finder-batch', 'idempotency-key': key });
 type Fixture = { lead_id: string; contact_id: string; campaign_id: string; version_id: string;
@@ -31,7 +36,7 @@ async function createFixture(database: Database): Promise<Fixture> {
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence,
         verified_at, is_valid, possible_whatsapp)
       SELECT id, 'EMAIL', ${`gate-${suffix}@example.invalid`}, ${`gate-${suffix}@example.invalid`},
-        ${ORIGIN}, 1, transaction_timestamp(), true, false FROM lead RETURNING id, lead_id
+        ${ORIGIN}, 1, ${gateNow.toISOString()}::timestamptz, true, false FROM lead RETURNING id, lead_id
     ), campaign AS (
       INSERT INTO campaigns (name, idempotency_key, payload_fingerprint, state)
       VALUES (${ORIGIN}, ${`campaign-${suffix}`}, ${`fingerprint-${suffix}`}, 'ATIVA') RETURNING id
@@ -43,20 +48,20 @@ async function createFixture(database: Database): Promise<Fixture> {
         recipient_snapshot, idempotency_key, payload_fingerprint, available_at)
       SELECT c.id, v.id, l.id, 'EMAIL', 'ELEGIVEL',
         jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text), ${`recipient-${suffix}`},
-        ${`fingerprint-${suffix}`}, transaction_timestamp() - interval '1 second'
+        ${`fingerprint-${suffix}`}, ${gateAvailableAt.toISOString()}::timestamptz
       FROM campaign c CROSS JOIN version v CROSS JOIN lead l RETURNING id
     ), attempt AS (
       INSERT INTO campaign_attempts (recipient_id, state, payload_snapshot, idempotency_key,
         payload_fingerprint, available_at)
       SELECT id, 'APROVADA', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text),
-        ${`attempt-${suffix}`}, ${`fingerprint-${suffix}`}, transaction_timestamp() - interval '1 second'
+        ${`attempt-${suffix}`}, ${`fingerprint-${suffix}`}, ${gateAvailableAt.toISOString()}::timestamptz
       FROM recipient RETURNING id
     ), outbox AS (
       INSERT INTO campaign_outbox (aggregate_type, aggregate_id, event_type, payload, idempotency_key,
         payload_fingerprint, status, attempts, available_at)
       SELECT 'attempt', id, 'ATTEMPT_CREATED', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text),
         ${`outbox-${suffix}`}, ${`fingerprint-${suffix}`}, 'PENDING', 0,
-        transaction_timestamp() - interval '1 second' FROM attempt RETURNING id
+        ${gateAvailableAt.toISOString()}::timestamptz FROM attempt RETURNING id
     )
     SELECT l.id lead_id, ct.id contact_id, c.id campaign_id, v.id version_id,
       r.id recipient_id, a.id attempt_id, o.id outbox_id
@@ -121,10 +126,10 @@ async function run(): Promise<void> {
     jsonObjects: before.json_objects }, { total: 1, pending: 1, claimable: 1, attempts: 0,
     starts: 0, confirmations: 0, allocations: 0, providers: 0, invocations: 0, jsonObjects: true });
 
-  const policy = { dailyLimitEmail: 60, dailyLimitWhatsapp: 60, windowStartUtc: '00:00',
-    windowEndUtc: '23:59', minSpacingMs: 0, maxAttempts: 3, retryBaseMs: 1_000, retryMaxMs: 60_000 };
+  const policy = { dailyLimitEmail: 60, dailyLimitWhatsapp: 60, windowStartUtc: '11:00',
+    windowEndUtc: '13:00', minSpacingMs: 0, maxAttempts: 3, retryBaseMs: 1_000, retryMaxMs: 60_000 };
   const processOne = createDryRunItemProcessor({ db, workerId: executorId, leaseMs: 30_000,
-    dailyLimit: 60, executionSource: 'supabase-render', policy });
+    dailyLimit: 60, executionSource: 'supabase-render', policy, now: () => new Date(gateNow) });
   const app = buildApp(db, { ...invocationOptions,
     processLeadBatch: () => processLeadBatch({ db, batchSize: 5, timeBudgetMs: 45_000, dailyLimit: 60,
       dryRun: true, executionSource: 'supabase-render', executorId, processorRole: 'primary',

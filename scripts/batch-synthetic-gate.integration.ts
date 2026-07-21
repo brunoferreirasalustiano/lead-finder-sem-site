@@ -42,19 +42,19 @@ async function createFixture(database: Database): Promise<Fixture> {
       INSERT INTO campaign_recipients (campaign_id, campaign_version_id, lead_id, channel, state,
         recipient_snapshot, idempotency_key, payload_fingerprint, available_at)
       SELECT c.id, v.id, l.id, 'EMAIL', 'ELEGIVEL',
-        jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}), ${`recipient-${suffix}`},
+        jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text), ${`recipient-${suffix}`},
         ${`fingerprint-${suffix}`}, transaction_timestamp() - interval '1 second'
       FROM campaign c CROSS JOIN version v CROSS JOIN lead l RETURNING id
     ), attempt AS (
       INSERT INTO campaign_attempts (recipient_id, state, payload_snapshot, idempotency_key,
         payload_fingerprint, available_at)
-      SELECT id, 'APROVADA', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}),
+      SELECT id, 'APROVADA', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text),
         ${`attempt-${suffix}`}, ${`fingerprint-${suffix}`}, transaction_timestamp() - interval '1 second'
       FROM recipient RETURNING id
     ), outbox AS (
       INSERT INTO campaign_outbox (aggregate_type, aggregate_id, event_type, payload, idempotency_key,
         payload_fingerprint, status, attempts, available_at)
-      SELECT 'attempt', id, 'ATTEMPT_CREATED', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}),
+      SELECT 'attempt', id, 'ATTEMPT_CREATED', jsonb_build_object('synthetic', true, 'origin', ${ORIGIN}::text),
         ${`outbox-${suffix}`}, ${`fingerprint-${suffix}`}, 'PENDING', 0,
         transaction_timestamp() - interval '1 second' FROM attempt RETURNING id
     )
@@ -168,4 +168,11 @@ async function run(): Promise<void> {
     providerEvents: 0, externalEffects: 0, result: 'PASS' }));
 }
 
-try { await run(); } finally { await close(); }
+try {
+  await run();
+} catch {
+  process.exitCode = 1;
+  console.error(JSON.stringify({ gate: ORIGIN, result: 'FAIL', code: 'BATCH_GATE_ASSERTION_FAILED' }));
+} finally {
+  await close();
+}

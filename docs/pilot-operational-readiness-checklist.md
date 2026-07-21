@@ -1,6 +1,6 @@
 # Checklist de prontidão operacional do piloto
 
-Base de referência: `main` em `5051d54dd18689794732c2cec312da42d3f620b8`.
+Base de referência: `main` em `88f8ea6e2a6431b4ba75446e115a8a1ae7c5e5a4`.
 
 Este documento organiza o trabalho restante para transformar as validações de CI em evidência operacional de homologação. Ele não autoriza coleta externa, scraping, envio, provider, webhook, SDK de mensageria, WhatsApp Web, n8n, dados reais ou deploy produtivo.
 

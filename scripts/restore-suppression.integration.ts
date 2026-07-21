@@ -21,7 +21,7 @@ try{
   await run('pg_dump',['--format=custom','--no-owner','--no-acl','--file',dump,url]);
   await sql`UPDATE leads SET is_blocked=true,do_not_contact=true,crm_stage='NAO_CONTATAR' WHERE id=${leadId}::uuid`;
   await sql`INSERT INTO campaign_opt_outs(lead_id,channel,reason,source) VALUES(${leadId}::uuid,NULL,'RESTORE_TEST_GLOBAL','SYNTHETIC_TEST'),(${leadId}::uuid,'EMAIL','RESTORE_TEST_EMAIL','SYNTHETIC_TEST')`;
-  const manifest=await exportManifest(manifestPath,url); assert.equal(manifest.entries.length,5);assert.doesNotMatch(await readFile(manifestPath,'utf8'),/Synthetic|example\.invalid|phone|address|cnpj|payload|message|token|secret|connection.?string/iu);
+  const manifest=await exportManifest(manifestPath,url); assert.equal(manifest.entries.length,5);const serializedManifest=await readFile(manifestPath,'utf8');assert.doesNotMatch(serializedManifest,/Synthetic example\.invalid|phone|address|cnpj|payload|message|token|secret|connection.?string/iu);
   await sql.end();
   await run('pg_restore',['--clean','--if-exists','--exit-on-error','--no-owner','--no-acl','--dbname',url,dump]);
   const restored=postgres(url,{max:1}); const old=await restored<{is_blocked:boolean;do_not_contact:boolean;crm_stage:string}[]>`SELECT is_blocked,do_not_contact,crm_stage FROM leads WHERE id=${leadId}::uuid`;assert.deepEqual(old[0],{is_blocked:false,do_not_contact:false,crm_stage:'NOVO'});await restored.end();

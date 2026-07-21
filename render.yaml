@@ -1,9 +1,16 @@
 services:
   - type: web
-    name: lead-finder-api
+    name: lead-finder-api-hml
     runtime: docker
     plan: free
+    region: virginia
+    repo: https://github.com/brunoferreirasalustiano/lead-finder-sem-site
+    branch: hml/render-supabase-plan-b
+    autoDeployTrigger: off
+    numInstances: 1
     dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    dockerCommand: node apps/api/dist/index.js
     healthCheckPath: /health/ready
     envVars:
       - { key: DEPLOYMENT_PROFILE, value: supabase-render }
@@ -12,6 +19,7 @@ services:
       - { key: SHADOW_MODE_ENABLED, value: 'true' }
       - { key: REAL_SEND_ENABLED, value: 'false' }
       - { key: REAL_PROVIDERS_ENABLED, value: 'false' }
+      - { key: REAL_PROVIDER_CONFIGURED, value: 'false' }
       - { key: COLLECTION_EGRESS_ENABLED, value: 'false' }
       - { key: DAILY_LEAD_LIMIT, value: '60' }
       - { key: LEAD_BATCH_SIZE, value: '5' }

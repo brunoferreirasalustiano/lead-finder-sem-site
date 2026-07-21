@@ -9,7 +9,7 @@ on:
       - .github/workflows/npm-audit-diagnostic.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: npm-audit-diagnostic-${{ github.event.pull_request.number || github.ref }}
@@ -102,7 +102,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Enforce high-severity gate after proposed lockfile fix
-        if: always()
         shell: bash
         run: |
           node <<'NODE'
@@ -114,3 +113,20 @@ jobs:
           console.log(JSON.stringify({ high, critical }));
           if (high > 0 || critical > 0) process.exit(1);
           NODE
+      - name: Publish isolated lockfile fix branch
+        shell: bash
+        run: |
+          cp package-lock.after.json /tmp/package-lock.fixed.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          git switch -C fix/fast-uri-audit-advisory origin/main
+          cp /tmp/package-lock.fixed.json package-lock.json
+          git add package-lock.json
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No lockfile change to publish.'
+            exit 0
+          fi
+          git commit -m 'fix: update vulnerable fast-uri lockfile versions'
+          git push --force-with-lease origin HEAD:refs/heads/fix/fast-uri-audit-advisory

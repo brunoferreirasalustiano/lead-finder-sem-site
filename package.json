@@ -28,6 +28,11 @@
     "pilot:real:preflight": "tsx scripts/pilot-real-preflight.ts",
     "pilot:real:fixture": "tsx scripts/pilot-real-synthetic-batch.ts",
     "pilot:real:log-privacy": "tsx scripts/pilot-real-log-privacy.ts"
+    ,"restore:suppression:export": "tsx scripts/restore-suppression/cli.ts export"
+    ,"restore:suppression:validate": "tsx scripts/restore-suppression/cli.ts validate"
+    ,"restore:suppression:apply": "tsx scripts/restore-suppression/cli.ts apply"
+    ,"restore:suppression:verify": "tsx scripts/restore-suppression/cli.ts verify"
+    ,"test:restore-suppression": "tsx scripts/restore-suppression.integration.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
@@ -40,5 +45,6 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.35.0",
     "vitest": "^3.2.4"
+    ,"zod": "^3.25.67"
   }
 }

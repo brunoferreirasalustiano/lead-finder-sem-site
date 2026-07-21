@@ -20,5 +20,6 @@ fi
 trap 'status=$?; if (( status != 0 )); then pilot_write_evidence "$evidence_dir" rollback.json GATE_ROLLBACK FAIL; fi; exit "$status"' ERR
 pilot_set_env_value "$config_file" PILOT_KILL_SWITCH_ENABLED true
 pilot_compose "$config_file" stop api worker
+printf '%s\n' '[pilot-homologation] antes de qualquer restore: exporte e valide o manifesto; depois execute dry-run, apply, verify e preflight. Nao retome sem RESTORE_SUPPRESSION_SAFE.'
 pilot_write_evidence "$evidence_dir" rollback.json GATE_ROLLBACK PASS
 printf '%s\n' '[pilot-homologation] rollback preparado: processamento congelado; valide backup/restore separado antes de qualquer restauracao autorizada.'

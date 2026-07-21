@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import postgres from 'postgres';
+import { exportManifest } from './restore-suppression/export.js';
+import { reconcile } from './restore-suppression/apply.js';
+import { loadManifest, validateManifestValue } from './restore-suppression/validate.js';
+import { verifyReconciliation } from './restore-suppression/verify.js';
+import { sha256 } from './restore-suppression/canonical.js';
+
+const url=process.env['DATABASE_URL']; if(!url)throw new Error('DATABASE_URL_REQUIRED');
+const run=(command:string,args:string[])=>new Promise<void>((resolve,reject)=>{const child=spawn(command,args,{stdio:['ignore','ignore','pipe'],env:process.env});let error='';child.stderr.on('data',(data)=>error+=String(data).replace(/postgres(?:ql)?:\/\/[^\s]+/giu,'postgresql://***'));child.on('exit',(code)=>code===0?resolve():reject(new Error(`${command}_FAILED:${code}:${error.slice(0,300)}`)));});
+const temp=await mkdtemp(join(tmpdir(),'restore-suppression-')); const dump=join(temp,'old.dump'); const manifestPath=join(temp,'manifest.json');
+const sql=postgres(url,{max:1});
+try{
+  await sql`TRUNCATE campaign_provider_events,campaign_attempts,campaign_recipients,campaign_opt_outs,crm_timeline_events,restore_suppression_runs,leads CASCADE`;
+  const inserted=await sql<{id:string}[]>`INSERT INTO leads(osm_type,osm_id,name,category,score,status,qualification_status,is_blocked,do_not_contact,crm_stage) VALUES('node','restore-synthetic-68','Synthetic example.invalid','synthetic',90,'SEM_SITE_CADASTRADO','SEM_SITE_CONFIRMADO',false,false,'NOVO') RETURNING id::text`;
+  const leadId=inserted[0]!.id;
+  await run('pg_dump',['--format=custom','--no-owner','--no-acl','--file',dump,url]);
+  await sql`UPDATE leads SET is_blocked=true,do_not_contact=true,crm_stage='NAO_CONTATAR' WHERE id=${leadId}::uuid`;
+  await sql`INSERT INTO campaign_opt_outs(lead_id,channel,reason,source) VALUES(${leadId}::uuid,NULL,'RESTORE_TEST_GLOBAL','SYNTHETIC_TEST'),(${leadId}::uuid,'EMAIL','RESTORE_TEST_EMAIL','SYNTHETIC_TEST')`;
+  const manifest=await exportManifest(manifestPath,url); assert.equal(manifest.entries.length,5);assert.doesNotMatch(await readFile(manifestPath,'utf8'),/Synthetic|example\.invalid|phone|address|cnpj|payload|message|token|secret|connection.?string/iu);
+  await sql.end();
+  await run('pg_restore',['--clean','--if-exists','--exit-on-error','--no-owner','--no-acl','--dbname',url,dump]);
+  const restored=postgres(url,{max:1}); const old=await restored<{is_blocked:boolean;do_not_contact:boolean;crm_stage:string}[]>`SELECT is_blocked,do_not_contact,crm_stage FROM leads WHERE id=${leadId}::uuid`;assert.deepEqual(old[0],{is_blocked:false,do_not_contact:false,crm_stage:'NOVO'});await restored.end();
+  const dry=await reconcile(manifest,false,'ci-restore-test',url);assert.equal(dry.result,'SAFE');assert.equal(dry.requiringChange,5);
+  const unchanged=postgres(url,{max:1});assert.equal((await unchanged`SELECT is_blocked FROM leads WHERE id=${leadId}::uuid`)[0]!.is_blocked,false);await unchanged.end();
+  process.env['RESTORE_SUPPRESSION_TEST_FAIL_AFTER_MUTATION']='true';await assert.rejects(reconcile(manifest,true,'ci-restore-test',url),/INJECTED_TRANSACTION_FAILURE/);delete process.env['RESTORE_SUPPRESSION_TEST_FAIL_AFTER_MUTATION'];
+  const rolled=postgres(url,{max:1});assert.equal((await rolled`SELECT is_blocked FROM leads WHERE id=${leadId}::uuid`)[0]!.is_blocked,false);assert.equal((await rolled`SELECT count(*)::int count FROM restore_suppression_runs`)[0]!.count,0);await rolled.end();
+  await reconcile(manifest,true,'ci-restore-test',url);assert.equal(await verifyReconciliation(manifest,url),'RESTORE_SUPPRESSION_SAFE');
+  const second=await reconcile(manifest,true,'ci-restore-test',url);assert.equal(second.alreadyApplied,5);assert.equal(second.requiringChange,0);assert.equal(await verifyReconciliation(manifest,url),'RESTORE_SUPPRESSION_SAFE');
+  const restart=postgres(url,{max:1});const proof=await restart`SELECT is_blocked,do_not_contact,crm_stage,(SELECT count(*)::int FROM campaign_opt_outs WHERE lead_id=${leadId}::uuid) opt_outs FROM leads WHERE id=${leadId}::uuid`;assert.deepEqual(proof[0],{is_blocked:true,do_not_contact:true,crm_stage:'NAO_CONTATAR',opt_outs:2});await restart.end();
+  const raw=JSON.parse(await readFile(manifestPath,'utf8')) as Record<string,unknown>; const tampered={...raw,digest:'0'.repeat(64)};assert.throws(()=>validateManifestValue(tampered),/MANIFEST_DIGEST_MISMATCH/);
+  const incompatible={...raw,schemaVersion:'2.0'};assert.throws(()=>validateManifestValue(incompatible));
+  const pii={...raw,email:'synthetic@example.invalid'};assert.throws(()=>validateManifestValue(pii),/FORBIDDEN_PII_FIELD/);
+  const entries=raw['entries'] as Record<string,unknown>[];const conflictContent:Record<string,unknown>={...raw,entries:[...entries,{...entries[0],reasonCode:'CONFLICT'}]};delete conflictContent['digest'];conflictContent['counts']={...(raw['counts'] as {total:number;byType:Record<string,number>}),total:entries.length+1,byType:{...(raw['counts'] as {byType:Record<string,number>}).byType,IS_BLOCKED:2}};conflictContent['digest']=sha256(conflictContent);assert.throws(()=>validateManifestValue(conflictContent),/CONFLICTING_DUPLICATE/);
+  const missing={...manifest,runId:'00000000-0000-4000-8000-000000000068',entries:manifest.entries.map((entry)=>({...entry,leadId:'00000000-0000-4000-8000-000000000068',stableIdentity:{osmType:'node' as const,osmId:'missing-target'}}))};const {digest:_,...missingContent}=missing;const missingValid={...missingContent,digest:sha256(missingContent)};const blocked=await reconcile(missingValid,false,'ci-restore-test',url);assert.equal(blocked.reason,'UNRESOLVED_SUPPRESSION_TARGETS');
+  await assert.rejects(loadManifest(join(temp,'absent.json')));
+  await writeFile(join(temp,'invalid.json'),'{');await assert.rejects(loadManifest(join(temp,'invalid.json')),/INVALID_MANIFEST_JSON/);
+  process.stdout.write(JSON.stringify({gate:'RESTORE_SUPPRESSION',result:'RESTORE_SUPPRESSION_SAFE',piiLogged:false,externalEffects:0,idempotent:true,rollback:true})+'\n');
+}finally{await sql.end().catch(()=>undefined);await rm(temp,{recursive:true,force:true});}

@@ -14,7 +14,9 @@ O job `integration` da CI provisiona PostgreSQL 16, aplica as migrations e execu
 
 ## Estados verificados
 
-A fixture atômica contém exatamente um lead, contato verificado, campanha ativa, versão aprovada, destinatário elegível, tentativa aprovada e outbox `ATTEMPT_CREATED`. Os três snapshots são objetos JSONB e todos os registros usam o marcador `SYNTHETIC_AUTOMATED_BATCH_GATE`. A elegibilidade temporal vem de `transaction_timestamp() - interval '1 second'` no PostgreSQL.
+A fixture atômica contém exatamente um lead, contato verificado, campanha ativa, versão aprovada, destinatário elegível, tentativa aprovada e outbox `ATTEMPT_CREATED`. Os três snapshots são objetos JSONB e todos os registros usam o marcador `SYNTHETIC_AUTOMATED_BATCH_GATE`.
+
+O Gate usa um relógio sintético controlado, fixado ao meio-dia UTC do dia anterior, e uma janela explícita de 11:00–13:00 UTC. A fixture recebe `available_at` um segundo antes desse relógio. Isso mantém a execução determinística em qualquer horário do dia, inclusive durante a virada UTC, sem alterar o relógio de produção; o processador usa o relógio injetado somente no teste e mantém `new Date()` como comportamento padrão.
 
 Antes da chamada existe uma única outbox pendente e reclamável, sem tentativa, execução, confirmação, alocação, provider event ou invocação. Depois da primeira chamada, o Gate exige HTTP 200, um item processado, outbox publicada com uma tentativa, claims limpos, uma execução, uma confirmação simulada, uma alocação, contador diário igual a um e uma invocação concluída. Também exige zero provider events e zero duplicidades.
 

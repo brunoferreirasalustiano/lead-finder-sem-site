@@ -1,0 +1,91 @@
+name: NPM Audit Diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/npm-audit-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-audit-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture structured audit report
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit.json
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const vulnerabilities = report.metadata?.vulnerabilities ?? {};
+          const summary = {
+            auditReportVersion: report.auditReportVersion ?? null,
+            vulnerabilities,
+            packages: Object.entries(report.vulnerabilities ?? {}).map(([name, details]) => ({
+              name,
+              severity: details.severity,
+              direct: details.isDirect,
+              via: Array.isArray(details.via)
+                ? details.via.map((entry) => typeof entry === 'string'
+                  ? { dependency: entry }
+                  : {
+                      source: entry.source,
+                      name: entry.name,
+                      dependency: entry.dependency,
+                      title: entry.title,
+                      url: entry.url,
+                      severity: entry.severity,
+                      range: entry.range,
+                    })
+                : [],
+              effects: details.effects ?? [],
+              range: details.range,
+              nodes: details.nodes ?? [],
+              fixAvailable: details.fixAvailable ?? false,
+            })),
+          };
+          fs.writeFileSync('npm-audit-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
+          NODE
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.sha }}
+          path: |
+            npm-audit.json
+            npm-audit-summary.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce high-severity gate
+        if: always()
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const vulnerabilities = report.metadata?.vulnerabilities ?? {};
+          const high = Number(vulnerabilities.high ?? 0);
+          const critical = Number(vulnerabilities.critical ?? 0);
+          console.log(JSON.stringify({ high, critical }));
+          if (high > 0 || critical > 0) process.exit(1);
+          NODE

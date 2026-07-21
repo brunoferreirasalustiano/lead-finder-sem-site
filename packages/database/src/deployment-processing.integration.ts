@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { eq, sql } from 'drizzle-orm';
-import { claimCampaignOutbox, failCampaignOutbox, type CampaignExecutionPolicy } from './campaign-outbox.js';
+import { authorizeCampaignExecution, claimCampaignOutbox, completeCampaignOutbox,
+  failCampaignOutbox, type CampaignExecutionPolicy } from './campaign-outbox.js';
 import { createDatabase } from './index.js';
 import { acquireProcessorLeadership, beginBatchInvocation, completeBatchInvocation,
   renewProcessorLeadership, reserveDailyLeadAllocation } from './deployment-processing.js';
@@ -43,6 +44,34 @@ const counter = async (day: string) => (await primary.db.execute<{ count: number
 `))[0]?.count ?? 0;
 
 try {
+  const runtimeCapturedAt = new Date();
+  await primary.db.execute(sql`SELECT pg_sleep(0.05)`);
+  const runtimeItem = await insertItem(runtimeCapturedAt);
+  const runtimeClaim = await claimAt(runtimeCapturedAt, 'runtime-clock-regression');
+  assert.equal(runtimeClaim.id, runtimeItem.id);
+  assert.equal(await reserveDailyLeadAllocation(primary.db, runtimeClaim, {
+    source: 'supabase-render', configuredLimit: 60, now: runtimeCapturedAt,
+  }), 'RESERVED', 'a client timestamp captured before PostgreSQL creates the counter must remain valid');
+  const runtimeDay = runtimeCapturedAt.toISOString().slice(0, 10);
+  const runtimeCounter = (await primary.db.execute<{ count: number; timestamps_valid: boolean }>(sql`
+    SELECT count, updated_at >= created_at AS timestamps_valid
+    FROM deployment_daily_lead_counters
+    WHERE quota_day = ${runtimeDay}::date
+  `))[0];
+  assert.equal(runtimeCounter?.count, 1);
+  assert.equal(runtimeCounter?.timestamps_valid, true, 'the database counter timestamps must remain monotonic');
+  assert.equal((await primary.db.execute<{ count: number }>(sql`
+    SELECT count(*)::int AS count FROM deployment_daily_lead_allocations
+    WHERE outbox_id = ${runtimeClaim.id}::uuid AND dead_letter_cycle = ${runtimeClaim.deadLetterCycle}
+  `))[0]?.count, 1, 'the runtime reservation must create exactly one allocation');
+  assert.deepEqual(await authorizeCampaignExecution(primary.db, runtimeClaim, policy, runtimeCapturedAt),
+    { decision: 'ADMINISTRATIVE' }, 'processing must continue to authorization after reserving quota');
+  assert.equal(await completeCampaignOutbox(primary.db, runtimeClaim, runtimeCapturedAt), true);
+  const completedRuntimeItem = (await primary.db.select().from(campaignOutbox)
+    .where(eq(campaignOutbox.id, runtimeItem.id)))[0]!;
+  assert.equal(completedRuntimeItem.status, 'PUBLISHED');
+  assert.equal(completedRuntimeItem.claimToken, null, 'successful processing must release the outbox claim');
+
   const invocationKey = `deployment_invocation_${crypto.randomUUID().replaceAll('-', '')}`;
   const invocationStart = new Date('2098-12-31T00:00:00.000Z');
   assert.equal(await beginBatchInvocation(primary.db, invocationKey, 'supabase-render', invocationStart), true);

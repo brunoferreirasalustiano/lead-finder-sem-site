@@ -112,7 +112,7 @@ export async function reserveDailyLeadAllocation(db: Database, claim: OutboxClai
         SET quota_day = ${day}::date, execution_source = ${input.source}
         WHERE outbox_id = ${claim.id}::uuid AND dead_letter_cycle = ${claim.deadLetterCycle}`);
       await tx.execute(sql`UPDATE deployment_daily_lead_counters SET count = greatest(count - 1, 0),
-        updated_at = ${now.toISOString()}::timestamptz WHERE quota_day = ${allocatedDay}::date`);
+        updated_at = GREATEST(updated_at, transaction_timestamp()) WHERE quota_day = ${allocatedDay}::date`);
     } else {
       const inserted = await tx.execute<{ outbox_id: string }>(sql`INSERT INTO deployment_daily_lead_allocations
         (outbox_id, dead_letter_cycle, quota_day, execution_source)
@@ -121,7 +121,7 @@ export async function reserveDailyLeadAllocation(db: Database, claim: OutboxClai
       if (!inserted[0]) return 'REPLAY';
     }
     await tx.execute(sql`UPDATE deployment_daily_lead_counters SET count = count + 1,
-      updated_at = ${now.toISOString()}::timestamptz WHERE quota_day = ${day}::date`);
+      updated_at = GREATEST(updated_at, transaction_timestamp()) WHERE quota_day = ${day}::date`);
     return 'RESERVED';
   });
 }

@@ -1,6 +1,6 @@
 # Mensagem comercial manual — piloto real controlado v1
 
-**Estado:** template para aprovação humana; não aprovado, não enviado e sem automação.
+**Estado:** template aprovado para uso manual controlado; nenhum envio automático autorizado.
 
 ## Texto-base
 
@@ -14,13 +14,13 @@ Regras do texto: manter a identificação do remetente; explicar o motivo sem al
 |---|---|
 | Segmento | `[PREENCHER]` |
 | Região | `[PREENCHER]` |
-| Canal manual | `[PREENCHER: telefone, e-mail manual ou WhatsApp manual]` |
-| Responsável pela aprovação | `[PREENCHER]` |
+| Canal manual | `WhatsApp Business oficial configurado fora do repositório` |
+| Responsável pela aprovação | `[CONFIGURADO FORA DO REPOSITÓRIO]` |
 | Versão | `v1` |
-| Data/hora UTC de aprovação | `[PREENCHER]` |
+| Data/hora UTC de aprovação | `[PREENCHER POR LOTE]` |
 | Texto aprovado | `[PREENCHER: copiar a versão final]` |
 | Critérios de suspensão | `opt-out, NAO_CONTATAR, bloqueio, contato inválido, incidente, dúvida sobre elegibilidade` |
 | Confirmação de revisão humana individual | `[PREENCHER]` |
 | Confirmação de nenhum envio automático | `[PREENCHER]` |
 
-Não armazene token, telefone, e-mail, payload ou mensagem efetivamente enviada na evidência técnica. Use identificador técnico do lead e o registro auditável já protegido pela aplicação.
+Não armazene nome do responsável, token, telefone, e-mail, payload ou mensagem efetivamente enviada na evidência técnica. Use identificador técnico do operador, identificador técnico do lead e o registro auditável já protegido pela aplicação.

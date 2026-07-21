@@ -443,7 +443,12 @@ Mutações registram a timeline na mesma transação e usam chave de idempotênc
 
 O núcleo de campanhas permanece sem envio externo: preview e simulação produzem snapshots, tentativas e outbox auditáveis, mas não chamam provedores. O próximo passo técnico é o worker seguro da issue #19, com limites distribuídos, retry controlado, dead-letter e observação de bloqueios antes da execução.
 
-A API ainda não possui autenticação/autorização. Os endpoints CRM devem permanecer atrás do perímetro privado até a implementação desses controles.
+A API usa Bearer token e uma matriz explícita de permissões, mas permanece single-operator.
+Antes de atender múltiplos clientes, ainda são necessários OIDC, isolamento multi-tenant e
+autorização por objeto. Até lá, os endpoints CRM devem permanecer atrás do perímetro privado.
+
+O fluxo interno do batch possui um [Gate sintético automatizado](docs/infrastructure/synthetic-batch-gate.md)
+executado exclusivamente contra PostgreSQL descartável.
 
 Exemplo:
 

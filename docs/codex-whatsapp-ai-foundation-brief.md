@@ -88,7 +88,8 @@ A implementação deve partir da `main` após a integração da PR documental qu
 ## Entrega
 
 - branch nova;
-- PR Ready for Review;
+- abrir e manter a PR como Draft;
+- não marcar Ready for Review sem autorização externa após revisão completa dos gates;
 - sem merge;
 - relatório de arquivos, decisões, testes e riscos;
 - indicar claramente `WHATSAPP_AI_FOUNDATION_READY` ou bloqueio objetivo.

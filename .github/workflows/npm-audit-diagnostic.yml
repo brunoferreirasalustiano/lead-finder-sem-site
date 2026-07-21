@@ -25,22 +25,33 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Capture structured audit report
-        id: audit
+      - name: Capture dependency and audit evidence
         shell: bash
         run: |
+          cp package-lock.json package-lock.before.json
+          npm ls fast-uri --all --json > fast-uri-tree.json
           set +e
-          npm audit --json > npm-audit.json
-          status=$?
+          npm audit --json > npm-audit-before.json
+          before_status=$?
+          npm audit fix --package-lock-only --ignore-scripts
+          fix_status=$?
+          npm audit --json > npm-audit-after.json
+          after_status=$?
           set -e
-          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cp package-lock.json package-lock.after.json
+          printf '%s\n' "$before_status" > npm-audit-before-status.txt
+          printf '%s\n' "$fix_status" > npm-audit-fix-status.txt
+          printf '%s\n' "$after_status" > npm-audit-after-status.txt
           node <<'NODE'
           const fs = require('node:fs');
-          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
-          const vulnerabilities = report.metadata?.vulnerabilities ?? {};
-          const summary = {
+          const before = JSON.parse(fs.readFileSync('npm-audit-before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('npm-audit-after.json', 'utf8'));
+          const tree = JSON.parse(fs.readFileSync('fast-uri-tree.json', 'utf8'));
+          const beforeLock = fs.readFileSync('package-lock.before.json', 'utf8');
+          const afterLock = fs.readFileSync('package-lock.after.json', 'utf8');
+          const summarize = (report) => ({
             auditReportVersion: report.auditReportVersion ?? null,
-            vulnerabilities,
+            vulnerabilities: report.metadata?.vulnerabilities ?? {},
             packages: Object.entries(report.vulnerabilities ?? {}).map(([name, details]) => ({
               name,
               severity: details.severity,
@@ -63,8 +74,15 @@ jobs:
               nodes: details.nodes ?? [],
               fixAvailable: details.fixAvailable ?? false,
             })),
+          });
+          const summary = {
+            before: summarize(before),
+            after: summarize(after),
+            auditFixExitCode: Number(fs.readFileSync('npm-audit-fix-status.txt', 'utf8').trim()),
+            packageLockChanged: beforeLock !== afterLock,
+            dependencyTree: tree,
           };
-          fs.writeFileSync('npm-audit-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
+          fs.writeFileSync('npm-audit-diagnostic-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
           NODE
       - name: Upload audit evidence
         if: always()
@@ -72,17 +90,24 @@ jobs:
         with:
           name: npm-audit-${{ github.sha }}
           path: |
-            npm-audit.json
-            npm-audit-summary.json
+            npm-audit-before.json
+            npm-audit-after.json
+            npm-audit-diagnostic-summary.json
+            fast-uri-tree.json
+            package-lock.before.json
+            package-lock.after.json
+            npm-audit-before-status.txt
+            npm-audit-fix-status.txt
+            npm-audit-after-status.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Enforce high-severity gate
+      - name: Enforce high-severity gate after proposed lockfile fix
         if: always()
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const report = JSON.parse(fs.readFileSync('npm-audit-after.json', 'utf8'));
           const vulnerabilities = report.metadata?.vulnerabilities ?? {};
           const high = Number(vulnerabilities.high ?? 0);
           const critical = Number(vulnerabilities.critical ?? 0);

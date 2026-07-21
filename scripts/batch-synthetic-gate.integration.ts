@@ -26,7 +26,7 @@ async function createFixture(database: Database): Promise<Fixture> {
       INSERT INTO leads (osm_type, osm_id, name, category, email, score, status, normalized_name,
         normalized_address, is_closed, is_blocked, do_not_contact)
       VALUES ('node', ${`gate-${suffix}`}, ${ORIGIN}, 'synthetic', ${`gate-${suffix}@example.invalid`},
-        100, 'SEM_SITE_CONFIRMADO', ${ORIGIN}, ${`synthetic-${suffix}`}, false, false, false) RETURNING id
+        100, 'SEM_SITE_CADASTRADO', ${ORIGIN}, ${`synthetic-${suffix}`}, false, false, false) RETURNING id
     ), contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence,
         verified_at, is_valid, possible_whatsapp)

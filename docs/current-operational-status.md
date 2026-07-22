@@ -1,243 +1,280 @@
 # Estado operacional consolidado
 
-## Revogação no fluxo manual assistido
+**Última revisão:** 22 de julho de 2026  
+**Baseline integrada:** `main` em `2b3fa8a9f51549db8a40975083b388c58c6cefe2`  
+**Validação externa em revisão:** PR #99, head `a97f9c4bbb9b429c18e2abc06ee17c9a86fbb698`
 
-`contact_channel_authorizations` registra evidência histórica imutável. Revogações são
-representadas exclusivamente por `campaign_opt_outs`, com prioridade absoluta na preparação e
-na confirmação. Uma autorização posterior não reativa opt-out global ou de canal,
-`NAO_CONTATAR`, `do_not_contact` nem bloqueio administrativo. Qualquer reativação exige fluxo
-separado, explícito e permissionado, fora deste piloto.
+Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O código, as migrations e os gates executados no SHA citado são a autoridade técnica. Issues e PRs registram o histórico e as decisões detalhadas.
 
-## Concorrência de evidência empresarial
+## Veredito executivo
 
-Alterações em `contact_email_business_evidence` compartilham o lock transacional
-`manual-messaging:<lead_id>` usado por preparação, replay e confirmação. A ordem de aquisição é
-fixa: primeiro o lock do lead e depois `email-business-evidence:<contact_id>`, responsável pelo
-versionamento sequencial do contato. Assim, uma decisão `PERSONAL`, `UNKNOWN` ou `REJECTED`
-commitada antes da conclusão da operação sempre vence e impede reconstrução de link ou registro
-de confirmação. A suíte PostgreSQL da PR #84 mantém a transação da evidência aberta por latch,
-comprova que replay e confirmação aguardam o lock e exige término fail-closed após o commit.
+- a fundação de mensageria manual assistida está integrada na `main`;
+- a homologação Supabase está provisionada e com migrations `0001` até `0020` aplicadas;
+- a Data API permanece deny-all;
+- o site e as demonstrações estão publicados no GitHub Pages;
+- o aviso público de privacidade está servido e verificado;
+- a API de homologação no Render está viva e pronta segundo os endpoints públicos;
+- o endpoint operacional interno rejeita acesso sem autenticação;
+- nenhum provider real, envio automático, webhook externo ou integração OpenAI/Meta está ativo;
+- não há lead aprovado para contato no primeiro lote;
+- o envio real continua não autorizado.
 
-**Última revisão documental:** 2026-07-22  
-**Baseline revisada:** PR #84 — branch `feat/manual-assisted-messaging-foundation`
+**Estado atual:** `PILOT_SEND_NOT_AUTHORIZED`.
 
-Este documento é a fonte resumida do estado atual do Lead Finder Brasil. Ele registra o que está implementado, o que está somente preparado, quais integrações permanecem desligadas e quais bloqueios impedem o piloto real.
+## Evidência externa reproduzível
 
-O histórico detalhado continua nas issues, pull requests, runbooks e evidências da CI. Quando houver divergência, o código e a CI do commit citado são a autoridade técnica; este documento deve ser atualizado na mesma PR que alterar o estado operacional.
+A PR #99 adiciona um probe somente leitura, executado pelo GitHub Actions e sem credenciais. O probe consulta exclusivamente recursos públicos e produz JSON sanitizado.
 
-## Estado executivo
+Evidência do run verde no head `a97f9c4bbb9b429c18e2abc06ee17c9a86fbb698`:
 
-- o núcleo de descoberta, qualificação, CRM, campanhas simuladas, outbox, limites, retry, dead-letter, piloto interno e processamento em lote está implementado;
-- a aplicação continua sem envio real de e-mail ou WhatsApp;
-- a coleta externa permanece desabilitada por padrão;
-- a homologação usa dados sintéticos e operação fail-closed;
-- o piloto manual possui runbook, template, registro de riscos e critérios de revisão humana;
-- a WhatsApp Cloud API e a OpenAI ainda não estão integradas ao runtime;
-- a reconciliação segura de supressões após restore foi implementada e validada na PR #69, sem autorizar restore real, retomada automática ou piloto;
-- as Fases A/B de mensageria manual assistida estão em revisão na PR #84, sem provider, egress ou envio real;
-- nenhum resultado comercial real foi produzido pelo sistema.
+### GitHub Pages
 
-## Perfis de implantação
+- home: HTTP 200;
+- `/privacidade/`: HTTP 200;
+- `/barbearia/`: HTTP 200;
+- aviso de privacidade: conteúdo obrigatório verificado;
+- formulário próprio: ausente;
+- Google Analytics, Tag Manager, Meta Pixel, Hotjar e Clarity: ausentes;
+- nenhuma mensagem ou dado foi enviado durante o probe.
 
-### `supabase-render`
+Estado: `SERVED`.
 
-Perfil de homologação e Plano B versionado no repositório:
+### Render
 
-- API Node.js no Render;
-- PostgreSQL no Supabase;
-- conexão server-side por `DATABASE_URL` com TLS;
-- Edge Function e Cron opcionais, desabilitados até configuração explícita;
-- processamento limitado, idempotente e coordenado pelo banco;
-- `DRY_RUN=true` e capacidades externas desligadas.
+- serviço público: `lead-finder-api-hml`;
+- `/health/live`: HTTP 200, `status=ok`;
+- `/health/ready`: HTTP 200, `status=ready`;
+- `/internal/operational-snapshot` sem token: HTTP 401;
+- nenhuma rota de escrita foi chamada;
+- nenhum provider, webhook ou envio foi acionado.
 
-Estado verificado em 2026-07-22:
+Estado: `OPERABLE` para disponibilidade e banco.
 
-- projeto Supabase `lead-finder-brasil-homologacao` em `ACTIVE_HEALTHY`;
-- região `sa-east-1`;
-- PostgreSQL 17.6;
-- migrations `0001` até `0016` aplicadas;
-- incidente de grants/RLS nos objetos da `0016` remediado emergencialmente na homologação, sem nova alteração do projeto durante a PR #82;
-- migration corretiva `0017_restore_suppression_security_hardening.sql` em validação na PR #82 para tornar o deny-all reproduzível e proteger objetos futuros;
-- nenhuma Edge Function implantada;
-- somente pequeno estado sintético de homologação.
+O probe não lê variáveis privadas do Render. A matriz efetiva de flags, o SHA implantado, logs, restart e kill switch ainda precisam de evidência autenticada ou do conector Render.
 
-Referências:
+## Perfil `supabase-render`
 
-- [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md)
-- [Runbook de implantação Supabase + Render](runbooks/supabase-render-deployment.md)
-- [Operação com dois perfis](runbooks/dual-deployment-operations.md)
-- [Variáveis de ambiente](infrastructure/environment-variables.md)
-
-### `oracle-vps`
-
-Perfil self-hosted completo e ainda suportado:
-
-- Ubuntu;
-- Docker Compose;
-- PostgreSQL, API e worker em rede privada;
-- Caddy como entrada pública;
-- n8n opcional;
-- backup, restore, rollback e observabilidade locais.
-
-A validação operacional em VPS Oracle real continua pendente. A indisponibilidade da VPS não reduz os gates de segurança e não autoriza substituir o perfil por automação não oficial.
-
-Referência: [Runbook Oracle](ORACLE_DEPLOY.md).
-
-## Segurança ativa
-
-Os defaults seguros permanecem:
+Configuração versionada em `render.yaml`:
 
 ```text
-COLLECTION_EGRESS_ENABLED=false
+DEPLOYMENT_PROFILE=supabase-render
 DRY_RUN=true
+SHADOW_MODE_ENABLED=true
 REAL_SEND_ENABLED=false
 REAL_PROVIDERS_ENABLED=false
 REAL_PROVIDER_CONFIGURED=false
+COLLECTION_EGRESS_ENABLED=false
+PILOT_KILL_SWITCH_ENABLED=false
 ```
 
-`SHADOW_MODE_ENABLED` e `PILOT_KILL_SWITCH_ENABLED` dependem do ambiente e do estágio operacional. A configuração de homologação deve manter shadow ativo e efeitos externos desligados. O kill switch precisa ser engatado durante incidentes e comprovado antes de qualquer piloto.
+Características:
 
-A existência futura de token, chave ou provider configurado não será suficiente para liberar envio. A execução real exige simultaneamente elegibilidade, revisão humana, opt-out íntegro, idempotência, limites, janela, provider aprovado e flags explícitas.
+- API Node.js no Render;
+- PostgreSQL no Supabase;
+- conexão server-side com TLS;
+- plano free e região Virginia;
+- branch `hml/render-supabase-plan-b`;
+- auto-deploy desligado;
+- health check em `/health/ready`;
+- processamento limitado e idempotente;
+- secrets fora do Git.
 
-## Supabase Data API
+A configuração declarada é fail-closed. A PR #99 comprova disponibilidade pública, readiness do banco e proteção do endpoint interno, mas não substitui a inspeção efetiva do ambiente Render.
 
-A Data API permanece deliberadamente deny-all:
+## Supabase de homologação
 
-- 39 de 39 tabelas públicas com RLS;
-- zero policies;
-- zero grants de tabela para `PUBLIC`, `anon` ou `authenticated`;
-- zero grants de função para essas roles;
+Projeto: `lead-finder-brasil-homologacao`.
+
+Estado consolidado:
+
+- PostgreSQL em `ACTIVE_HEALTHY`;
+- migrations `0001` a `0020` aplicadas;
+- RLS habilitada nas tabelas públicas;
+- zero policies permissivas;
+- zero grants para `PUBLIC`, `anon` e `authenticated`;
 - `CREATE` no schema público revogado;
-- backend conectado diretamente ao PostgreSQL;
-- nenhum cliente `supabase-js` ou `/rest/v1` no runtime.
+- backend usa conexão PostgreSQL direta;
+- nenhuma Edge Function ativa para envio;
+- dados reais de lead não foram inseridos durante as validações.
 
-Em 2026-07-22, a aplicação da `0016` revelou que a `0015` protegia os objetos existentes, mas não os criados posteriormente pelo role efetivo das migrations. A correção emergencial de homologação restaurou o deny-all. A PR #82 versiona a correção por meio da `0017` e adiciona um gate PostgreSQL descartável; nenhum acesso adicional ao Supabase real faz parte dessa validação.
+As tabelas append-only de mensageria permitem ao `service_role` somente `SELECT` e `INSERT`. `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` e `TRIGGER` foram revogados pela migration `0020` e possuem gate de regressão PostgreSQL.
 
-O gate da PR #82 inspeciona ACLs efetivas em `pg_class.relacl` e `pg_proc.proacl`, incluindo o grantee interno `0` que representa `PUBLIC`; ele não usa views `information_schema.role_*_grants` para concluir ausência de grants públicos. O teste negativo concede exposições sintéticas a `PUBLIC` e às roles da Data API, comprova que o detector falha, remove os grants e comprova a restauração do deny-all. Quando `service_role` existe, seu contrato fica limitado aos acessos server-side explícitos de tabela, sequence e função; a role não é criada pela migration.
+## Mensageria manual assistida
 
-O advisor `RLS Enabled No Policy` é informativo neste desenho. Não criar policies permissivas apenas para remover o aviso.
+A PR #84 integrou as Fases A/B sem provider e sem rede externa de mensageria.
 
-Referência: [Segurança da Data API Supabase](supabase-data-api-security.md).
+Implementado:
 
-## Campanhas e processamento
-
-Implementado em modo simulado e sem provider real:
-
-- campanhas e versões;
+- contratos discriminados por canal;
+- WhatsApp somente com opt-in explícito;
+- e-mail somente com evidência `BUSINESS` e decisão humana `APPROVED`;
 - templates versionados;
-- seleção elegível;
-- revisão humana;
-- destinatários, tentativas, eventos e outbox;
-- leasing, concorrência e liderança entre processadores;
-- limites diários, janela e espaçamento;
-- retry limitado e dead-letter;
-- recuperação auditável;
-- pausa, cancelamento, opt-out e bloqueios antes da execução;
-- gate sintético determinístico em PostgreSQL.
+- normalização E.164;
+- principal autenticado e permissões por ação;
+- idempotência vinculada ao principal;
+- replay fail-closed usando o contato persistido;
+- snapshot minimizado sem telefone, e-mail, mensagem renderizada ou URL completa;
+- estados `PREPARED`, `OPENED`, `CONTACT_CONFIRMED` e `RESPONSE_RECORDED`;
+- transições protegidas no serviço e no PostgreSQL;
+- concorrência serializada por lead e preparação;
+- opt-out, `do_not_contact`, `NAO_CONTATAR` e bloqueio administrativo prioritários;
+- zero outbox, attempt e provider event no fluxo manual.
 
-Pendente:
+Abrir um link não afirma envio. `CONTACT_CONFIRMED` depende de confirmação humana explícita.
 
-- adaptador oficial de e-mail;
-- WhatsApp Cloud API;
-- webhooks assinados e reconciliação de eventos externos;
-- testes sandbox com contatos próprios autorizados;
-- qualquer envio real.
+## Concorrência de evidência empresarial
 
-## Piloto manual
+Alterações em `contact_email_business_evidence` compartilham o lock `manual-messaging:<lead_id>` usado por preparação, replay e confirmação.
 
-A fundação documental está pronta, mas a execução continua bloqueada até todas as pré-condições passarem.
+Ordem fixa:
 
-O primeiro lote deve ter no máximo cinco negócios, uma categoria e uma região, com seleção e contato individualmente revisados. Não existe autorização para scraping, importação em massa, automação de WhatsApp Web, follow-up automático ou disparo em lote.
+1. lock do lead;
+2. lock `email-business-evidence:<contact_id>`.
 
-Pré-condições principais:
+Uma decisão `PERSONAL`, `UNKNOWN` ou `REJECTED` commitada antes da conclusão da operação vence e bloqueia reconstrução de link ou confirmação. A suíte PostgreSQL comprova replay, confirmação e versionamento concorrentes.
 
-1. PR #69 integrada na `main` e CI pós-merge verde no SHA exato;
-2. migration `0016` aplicada e verificada na homologação antes de qualquer restore operacional;
-3. homologação em dry-run e shadow mode;
-4. coleta externa e providers reais desligados;
-5. kill switch testado;
-6. WhatsApp Business configurado fora do Git;
-7. mensagem manual aprovada;
-8. opt-out e `NAO_CONTATAR` revisados;
-9. operador identificado e evidências sem PII pública;
-10. backup, restore e rollback aplicáveis comprovados no ambiente-alvo.
+## Revogação e supressões
 
-Referências:
+`contact_channel_authorizations` é histórico append-only. Revogações são representadas por `campaign_opt_outs`.
 
-- [Pacote operacional do piloto manual](pilot-manual-operations-pack.md)
-- [Template manual versionado](pilot-real-manual-message-v1.md)
-- [Runbook do ciclo controlado](pilot-real-controlled-runbook.md)
+Prioridade absoluta:
 
-## WhatsApp e IA
+1. opt-out global;
+2. opt-out por canal;
+3. `do_not_contact`;
+4. `NAO_CONTATAR`;
+5. bloqueio administrativo;
+6. elegibilidade do contato;
+7. autorização do canal.
 
-As Fases A/B possuem agora uma fundação local em revisão: contratos tipados, providers fake sem rede, normalização E.164 e fluxo manual assistido com estados `PREPARED`, `OPENED`, `CONTACT_CONFIRMED` e `RESPONSE_RECORDED`. A preparação, o replay e a confirmação reavaliam PostgreSQL de forma fail-closed; abrir um link não registra envio.
-
-Evidências empresariais de e-mail são append-only e serializadas pelo mesmo lock do lead usado pelas operações de mensageria. A ordem de locks é sempre lead e depois contato. Os testes concorrentes mantêm uma decisão desfavorável sem commit, comprovam que replay e confirmação permanecem aguardando e exigem `INELIGIBLE` após o commit. O snapshot persistido não contém telefone, e-mail, mensagem renderizada ou URL completa.
-
-Esta implementação não libera o piloto, provider, egress ou envio real enquanto a PR #84 e todos os gates não forem aprovados.
-
-A arquitetura e os controles estão documentados, mas integrações externas não estão implementadas no runtime.
-
-- IA poderá gerar rascunhos e classificações em shadow mode;
-- IA nunca recebe capacidade de envio;
-- falha, recusa, baixa confiança ou saída inválida resulta em revisão humana;
-- prompts devem usar dados minimizados e `store=false` quando a integração OpenAI existir;
-- WhatsApp real será somente pela Cloud API oficial;
-- WhatsApp Web, QR Code, Baileys, Evolution API e equivalentes são proibidos;
-- webhook deverá validar assinatura antes do parse e persistência;
-- sandbox usará apenas allowlist de números próprios.
-
-Referências:
-
-- [Arquitetura de mensageria WhatsApp + IA](whatsapp-ai-messaging-architecture.md)
-- [Checklist de implementação](whatsapp-ai-implementation-checklist.md)
-- [Registro de riscos](whatsapp-ai-risk-register.md)
-- [Issue #79 — onboarding Meta e OpenAI](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/79)
-
-## Reconciliação segura após restore
-
-A PR #69 implementa e comprova o gate `RESTORE_SUPPRESSION_SAFE`:
-
-- exportação, validação, dry-run, aplicação, verificação e preflight em runner one-shot dentro da rede privada do Compose;
-- PostgreSQL sem porta publicada;
-- API e worker parados durante todo o fluxo e mantidos parados por padrão após sucesso;
-- manifesto estrito, versionado, limitado, validado por SHA-256 e armazenado fora do Git;
-- aplicação transacional, idempotente, monotônica e fail-closed;
-- relacionamento correto `outbox -> attempt -> recipient -> lead` para `ATTEMPT_CREATED`;
-- opt-out por canal restrito a EMAIL ou WHATSAPP e supressões globais aplicadas ao lead inteiro;
-- alvos ausentes, contraditórios ou divergentes bloqueiam a retomada;
-- evidência PostgreSQL sanitizada, sem conteúdo do manifesto, PII ou segredos;
-- replay, concorrência, rollback, reinício e detecção de outbox reclamável cobertos em PostgreSQL 16;
-- CI, Compose privado, deployment smoke e multiarch AMD64/ARM64 verdes no head revisado.
-
-O veredito da branch é `RESTORE_SUPPRESSION_READY_FOR_MERGE`. O piloto continua bloqueado até integração na `main`, CI pós-merge, aplicação controlada da migration `0016` em homologação e conclusão dos demais gates operacionais.
+Uma autorização posterior não reativa automaticamente um bloqueio. Reativação exige fluxo separado, explícito, auditado e permissionado, fora do piloto atual.
 
 ## Site comercial e demonstrações
 
-O catálogo público está no repositório `lead-finder-demos` e é independente do runtime de campanhas. Sua evolução, SEO, imagens e publicação são conduzidos separadamente do núcleo operacional descrito neste documento.
+O catálogo público está no repositório `lead-finder-demos` e é independente do runtime de campanhas.
 
-O botão comercial do site não significa que a aplicação principal possua provider WhatsApp. Ele apenas abre uma conversa manual no aplicativo do visitante.
+Comprovado pelo probe externo:
+
+- home publicada;
+- demonstração de barbearia publicada;
+- aviso de privacidade publicado;
+- contato oficial por WhatsApp e e-mail;
+- nenhum formulário interno;
+- nenhum tracking próprio;
+- nenhum provider de envio;
+- botão de WhatsApp apenas abre o aplicativo do visitante.
+
+O site não confirma que uma mensagem foi enviada e não acessa conversas.
+
+## Primeiro lote manual
+
+Escopo fixo:
+
+- até cinco negócios;
+- uma categoria e uma região;
+- contato individual;
+- revisão humana por lead;
+- WhatsApp somente com opt-in explícito;
+- lead frio somente por e-mail empresarial pertinente e aprovado;
+- primeiro contato sem link, imagem, PDF, proposta ou preço;
+- opt-out imediato;
+- nenhum follow-up automático.
+
+Estado da triagem privada em 22 de julho de 2026:
+
+- 18 negócios pesquisados;
+- 6 excluídos por possuírem site próprio;
+- 11 em revisão;
+- 1 rejeitado por inconsistência;
+- 0 canais de e-mail `BUSINESS/APPROVED`;
+- 0 opt-ins válidos de WhatsApp;
+- 0 leads aprovados para contato.
+
+Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Telefone público ou botão de WhatsApp não é opt-in.
+
+## Gates concluídos
+
+- fundação manual assistida integrada;
+- migrations `0019` e `0020` aplicadas em homologação;
+- ACL append-only reconciliada;
+- governança do primeiro contato integrada;
+- templates por canal alinhados;
+- ensaio sintético e pacote de controle integrados;
+- runbooks de prontidão integrados;
+- aviso público de privacidade servido;
+- Render live e ready em HTTP 200;
+- snapshot interno protegido por autenticação.
+
+## Bloqueios restantes
+
+### Homologação autenticada
+
+- confirmar o SHA efetivamente implantado no Render;
+- confirmar as variáveis efetivas sem expor valores secretos;
+- revisar logs sanitizados;
+- comprovar restart lógico;
+- testar kill switch de forma controlada;
+- comprovar ausência de egress Meta, SMTP, OpenAI e webhooks;
+- registrar service ID e workspace quando o conector Render voltar a funcionar.
+
+### Leads
+
+- completar o gate de viabilidade do segmento;
+- localizar canais publicados pelo próprio negócio;
+- classificar propriedade do e-mail;
+- registrar decisão humana por contato;
+- consultar opt-outs e supressões;
+- reduzir para no máximo cinco fichas completas;
+- obter aprovação explícita de Bruno por lead.
+
+### Execução
+
+- personalizar mensagem sem link;
+- validar a demonstração escolhida;
+- registrar estado inicial `NOT_SENT`;
+- realizar contato exclusivamente de forma manual;
+- registrar envio somente após confirmação humana.
+
+## Integrações futuras
+
+Continuam desligadas e fora do piloto atual:
+
+- WhatsApp Cloud API;
+- SMTP ou provider oficial de e-mail;
+- OpenAI para rascunhos em shadow mode;
+- webhooks assinados;
+- follow-ups automáticos;
+- recuperação inteligente de leads;
+- n8n para campanhas reais.
+
+WhatsApp Web, Baileys, Evolution API e sessões não oficiais permanecem proibidos.
+
+## Perfil `oracle-vps`
+
+O perfil self-hosted continua suportado, mas a validação em VPS Oracle real está bloqueada pela indisponibilidade de região/capacidade. Isso não bloqueia o perfil atual `supabase-render` e não reduz os gates de segurança.
 
 ## Pendências priorizadas
 
-1. integrar a PR #69 com proteção pelo head esperado e validar CI/Deployment smoke na `main`;
-2. aplicar e verificar a migration `0016` no Supabase de homologação por procedimento controlado;
-3. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
-4. concluir a revisão e integrar a fundação segura e o fluxo manual assistido da issue #71;
-5. preparar OpenAI em shadow mode e Meta em sandbox pela issue #79;
-6. executar o primeiro lote manual somente após todos os gates;
-7. implementar propostas, dashboard e automações posteriores;
-8. validar o perfil Oracle quando uma VPS adequada estiver disponível.
+1. integrar e manter o probe externo da PR #99;
+2. recuperar o conector Render e concluir a inspeção autenticada;
+3. testar restart, logs, kill switch e ausência de egress;
+4. completar a amostra de viabilidade da issue #98;
+5. qualificar canais da issue #93;
+6. montar até cinco fichas para aprovação;
+7. executar qualquer contato somente após autorização individual;
+8. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
+9. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
+10. validar o perfil Oracle quando houver infraestrutura adequada.
 
 ## Regra de manutenção documental
 
 Toda PR que alterar arquitetura, flags, ambiente, segurança, provider, piloto ou estado de uma fase deve atualizar:
 
-1. este documento, quando o estado consolidado mudar;
+1. este documento;
 2. o `README.md`, quando a visão pública mudar;
-3. o índice `docs/README.md`, quando um documento for criado ou removido;
+3. `docs/README.md`, quando documentos forem criados ou removidos;
 4. o runbook específico;
 5. a issue e o registro de riscos correspondentes;
-6. evidências de CI, ambiente e risco residual.
+6. as evidências de CI e ambiente.
 
 Não registrar em documentação pública: tokens, senhas, connection strings, telefone de lead, e-mail de lead, mensagens integrais, payload bruto ou prints com PII.

@@ -1,5 +1,7 @@
 # Threat model operacional
 
+Restore antigo é tratado como ameaça de reativação de contato. Schema Zod estrito, JSON canônico SHA-256, aplicação monotônica transacional e evidência PostgreSQL verificada bloqueiam manifesto adulterado, incompatível, stale ou com alvo ausente. O risco residual é o armazenamento operacional do manifesto, que deve ficar fora do Git e com acesso mínimo.
+
 ## Ativos e atores
 
 Ativos: PII de leads/contatos, opt-outs, evidência agregada, credenciais de banco, leases, idempotência e decisão de não envio. Atores: operador autorizado, serviço API, worker, PostgreSQL, Overpass e agente externo não autenticado quando um modo público é ativado.

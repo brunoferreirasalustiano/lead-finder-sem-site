@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import postgres from 'postgres';
+import { exportManifest } from './restore-suppression/export.js';
+import { reconcile } from './restore-suppression/apply.js';
+import { loadManifest, validateManifestValue } from './restore-suppression/validate.js';
+import { verifyReconciliation } from './restore-suppression/verify.js';
+import { sha256 } from './restore-suppression/canonical.js';
+
+const url=process.env['DATABASE_URL']; if(!url)throw new Error('DATABASE_URL_REQUIRED');
+const run=(command:string,args:string[])=>new Promise<void>((resolve,reject)=>{const child=spawn(command,args,{stdio:['ignore','ignore','pipe'],env:process.env});let error='';child.stderr.on('data',(data)=>error+=String(data).replace(/postgres(?:ql)?:\/\/[^\s]+/giu,'postgresql://***'));child.on('exit',(code)=>code===0?resolve():reject(new Error(`${command}_FAILED:${code}:${error.slice(0,300)}`)));});
+const temp=await mkdtemp(join(tmpdir(),'restore-suppression-')); const dump=join(temp,'old.dump'); const manifestPath=join(temp,'manifest.json');
+const sql=postgres(url,{max:1});
+try{
+  await sql`TRUNCATE campaign_provider_events,campaign_outbox,campaign_attempts,campaign_recipients,campaign_opt_outs,crm_timeline_events,restore_suppression_runs,campaigns,leads CASCADE`;
+  const campaign=await sql<{campaign_id:string;version_id:string}[]>`WITH c AS (INSERT INTO campaigns(name,idempotency_key,payload_fingerprint,state) VALUES('Restore fixture','restore-fixture',${'1'.repeat(64)},'ATIVA') RETURNING id),v AS (INSERT INTO campaign_versions(campaign_id,version_number,state) SELECT id,1,'APROVADA' FROM c RETURNING id,campaign_id) SELECT campaign_id::text, id::text version_id FROM v`;
+  const createLead=async(osmId:string)=>{
+    const inserted=await sql<{id:string}[]>`INSERT INTO leads(osm_type,osm_id,name,category,score,status,qualification_status,is_blocked,do_not_contact,crm_stage) VALUES('node',${osmId},'Synthetic fixture','synthetic',90,'SEM_SITE_CADASTRADO','SEM_SITE_CONFIRMADO',false,false,'NOVO') RETURNING id::text`;
+    const leadId=inserted[0]!.id;
+    const rows=await sql<{channel:'EMAIL'|'WHATSAPP';recipient_id:string;attempt_id:string;outbox_id:string}[]>`WITH recipients AS (INSERT INTO campaign_recipients(campaign_id,campaign_version_id,lead_id,channel,state,recipient_snapshot,idempotency_key,payload_fingerprint) VALUES(${campaign[0]!.campaign_id}::uuid,${campaign[0]!.version_id}::uuid,${leadId}::uuid,'EMAIL','PENDENTE','{}'::jsonb,${`${osmId}-email`},${'2'.repeat(64)}),(${campaign[0]!.campaign_id}::uuid,${campaign[0]!.version_id}::uuid,${leadId}::uuid,'WHATSAPP','PENDENTE','{}'::jsonb,${`${osmId}-whatsapp`},${'3'.repeat(64)}) RETURNING id,channel),attempts AS (INSERT INTO campaign_attempts(recipient_id,state,payload_snapshot,idempotency_key,payload_fingerprint) SELECT id,'PENDENTE','{}'::jsonb,${`${osmId}-attempt-`}||lower(channel),${'4'.repeat(64)} FROM recipients RETURNING id,recipient_id),outbox AS (INSERT INTO campaign_outbox(aggregate_type,aggregate_id,event_type,payload,idempotency_key,payload_fingerprint,status,available_at) SELECT 'attempt',id,'ATTEMPT_CREATED','{}'::jsonb,${`${osmId}-outbox-`}||id::text,${'5'.repeat(64)},'PENDING',now() FROM attempts RETURNING id,aggregate_id) SELECT r.channel,r.id::text recipient_id,a.id::text attempt_id,o.id::text outbox_id FROM recipients r JOIN attempts a ON a.recipient_id=r.id JOIN outbox o ON o.aggregate_id=a.id ORDER BY r.channel`;
+    return {leadId,rows};
+  };
+  const blockedGlobal=await createLead('restore-blocked');
+  const doNotContactGlobal=await createLead('restore-do-not-contact');
+  const crmGlobal=await createLead('restore-crm');
+  const optOutGlobal=await createLead('restore-opt-out-global');
+  const emailOnly=await createLead('restore-email');
+  const whatsappOnly=await createLead('restore-whatsapp');
+  await run('pg_dump',['--format=custom','--no-owner','--no-acl','--file',dump,url]);
+  await sql`UPDATE leads SET is_blocked=true WHERE id=${blockedGlobal.leadId}::uuid`;
+  await sql`UPDATE leads SET do_not_contact=true WHERE id=${doNotContactGlobal.leadId}::uuid`;
+  await sql`UPDATE leads SET crm_stage='NAO_CONTATAR' WHERE id=${crmGlobal.leadId}::uuid`;
+  await sql`INSERT INTO campaign_opt_outs(lead_id,channel,reason,source) VALUES(${optOutGlobal.leadId}::uuid,NULL,'RESTORE_TEST_GLOBAL','SYNTHETIC_TEST'),(${emailOnly.leadId}::uuid,'EMAIL','RESTORE_TEST_EMAIL','SYNTHETIC_TEST'),(${whatsappOnly.leadId}::uuid,'WHATSAPP','RESTORE_TEST_WHATSAPP','SYNTHETIC_TEST')`;
+  const manifest=await exportManifest(manifestPath,url); assert.equal(manifest.entries.length,6);const serializedManifest=await readFile(manifestPath,'utf8');assert.doesNotMatch(serializedManifest,/Synthetic fixture|phone|address|cnpj|payload|message|token|secret|connection.?string/iu);
+  const immutableCounts=await sql<{attempts:number;providers:number}[]>`SELECT (SELECT count(*)::int FROM campaign_attempts) attempts,(SELECT count(*)::int FROM campaign_provider_events) providers`;
+  await sql.end();
+  await run('pg_restore',['--clean','--if-exists','--exit-on-error','--no-owner','--no-acl','--dbname',url,dump]);
+  const restored=postgres(url,{max:1}); const old=await restored<{is_blocked:boolean;do_not_contact:boolean;crm_stage:string}[]>`SELECT is_blocked,do_not_contact,crm_stage FROM leads WHERE id=${blockedGlobal.leadId}::uuid`;assert.deepEqual(old[0],{is_blocked:false,do_not_contact:false,crm_stage:'NOVO'});await restored.end();
+  const dry=await reconcile(manifest,false,'ci-restore-test',url);assert.equal(dry.result,'SAFE');assert.equal(dry.requiringChange,6);
+  const unchanged=postgres(url,{max:1});assert.equal((await unchanged`SELECT is_blocked FROM leads WHERE id=${blockedGlobal.leadId}::uuid`)[0]!.is_blocked,false);await unchanged.end();
+  process.env['RESTORE_SUPPRESSION_TEST_FAIL_AFTER_MUTATION']='true';await assert.rejects(reconcile(manifest,true,'ci-restore-test',url),/INJECTED_TRANSACTION_FAILURE/);delete process.env['RESTORE_SUPPRESSION_TEST_FAIL_AFTER_MUTATION'];
+  const rolled=postgres(url,{max:1});assert.equal((await rolled`SELECT is_blocked FROM leads WHERE id=${blockedGlobal.leadId}::uuid`)[0]!.is_blocked,false);assert.equal((await rolled`SELECT count(*)::int count FROM restore_suppression_runs`)[0]!.count,0);await rolled.end();
+  await reconcile(manifest,true,'ci-restore-test',url);assert.equal(await verifyReconciliation(manifest,url),'RESTORE_SUPPRESSION_SAFE');
+  const stateSql=postgres(url,{max:1});
+  const assertChannelScope=async(fixture:typeof emailOnly,blocked:'EMAIL'|'WHATSAPP')=>{const preserved=blocked==='EMAIL'?'WHATSAPP':'EMAIL';const states=await stateSql<{channel:string;recipient_state:string;attempt_state:string;outbox_status:string}[]>`SELECT r.channel,r.state recipient_state,a.state attempt_state,o.status outbox_status FROM campaign_recipients r JOIN campaign_attempts a ON a.recipient_id=r.id JOIN campaign_outbox o ON o.aggregate_type='attempt' AND o.aggregate_id=a.id AND o.event_type='ATTEMPT_CREATED' WHERE r.lead_id=${fixture.leadId}::uuid ORDER BY r.channel`;const blockedRow=states.find((row)=>row.channel===blocked)!;const preservedRow=states.find((row)=>row.channel===preserved)!;assert.deepEqual([blockedRow.recipient_state,blockedRow.attempt_state,blockedRow.outbox_status],['OPT_OUT','BLOQUEADA','BLOCKED']);assert.deepEqual([preservedRow.recipient_state,preservedRow.attempt_state,preservedRow.outbox_status],['PENDENTE','PENDENTE','PENDING']);};
+  await assertChannelScope(emailOnly,'EMAIL');await assertChannelScope(whatsappOnly,'WHATSAPP');
+  for(const fixture of [blockedGlobal,doNotContactGlobal,crmGlobal,optOutGlobal]){const globalStates=await stateSql<{count:number}[]>`SELECT count(*)::int count FROM campaign_recipients r JOIN campaign_attempts a ON a.recipient_id=r.id JOIN campaign_outbox o ON o.aggregate_type='attempt' AND o.aggregate_id=a.id AND o.event_type='ATTEMPT_CREATED' WHERE r.lead_id=${fixture.leadId}::uuid AND r.state IN ('BLOQUEADO','OPT_OUT') AND a.state='BLOQUEADA' AND o.status='BLOCKED'`;assert.equal(globalStates[0]!.count,2);}
+  const emailOutbox=emailOnly.rows.find((row)=>row.channel==='EMAIL')!.outbox_id;await stateSql`UPDATE campaign_outbox SET status='PENDING',available_at=now() WHERE id=${emailOutbox}::uuid`;await assert.rejects(verifyReconciliation(manifest,url),/POST_APPLY_SUPPRESSION_REGRESSION/);await stateSql`UPDATE campaign_outbox SET status='BLOCKED' WHERE id=${emailOutbox}::uuid`;
+  const divergentContent={...manifest,entries:manifest.entries.map((entry,index)=>index===0?{...entry,reasonCode:'DIVERGENT_MANIFEST'}:entry)};const {digest:divergentDigest,...divergentWithoutDigest}=divergentContent;void divergentDigest;const divergent=validateManifestValue({...divergentWithoutDigest,digest:sha256(divergentWithoutDigest)});await assert.rejects(reconcile(divergent,true,'ci-restore-test',url),/MANIFEST_IDENTITY_CONFLICT/);
+  const concurrent=await Promise.all([reconcile(manifest,true,'ci-restore-test',url),reconcile(manifest,true,'ci-restore-test',url)]);assert.ok(concurrent.every((item)=>item.alreadyApplied===6&&item.requiringChange===0));assert.equal(await verifyReconciliation(manifest,url),'RESTORE_SUPPRESSION_SAFE');
+  const finalCounts=await stateSql<{attempts:number;providers:number}[]>`SELECT (SELECT count(*)::int FROM campaign_attempts) attempts,(SELECT count(*)::int FROM campaign_provider_events) providers`;assert.deepEqual(finalCounts[0],immutableCounts[0]);
+  await stateSql.end();
+  const restart=postgres(url,{max:1});const proof=await restart<{blocked:boolean;do_not_contact:boolean;crm_stage:string;global_opt_outs:number}[]>`SELECT (SELECT is_blocked FROM leads WHERE id=${blockedGlobal.leadId}::uuid) blocked,(SELECT do_not_contact FROM leads WHERE id=${doNotContactGlobal.leadId}::uuid) do_not_contact,(SELECT crm_stage FROM leads WHERE id=${crmGlobal.leadId}::uuid) crm_stage,(SELECT count(*)::int FROM campaign_opt_outs WHERE lead_id=${optOutGlobal.leadId}::uuid AND channel IS NULL) global_opt_outs`;assert.deepEqual(proof[0],{blocked:true,do_not_contact:true,crm_stage:'NAO_CONTATAR',global_opt_outs:1});await restart.end();
+  const raw=JSON.parse(await readFile(manifestPath,'utf8')) as Record<string,unknown>; const tampered={...raw,digest:'0'.repeat(64)};assert.throws(()=>validateManifestValue(tampered),/MANIFEST_DIGEST_MISMATCH/);
+  const incompatible={...raw,schemaVersion:'2.0'};assert.throws(()=>validateManifestValue(incompatible));
+  const pii={...raw,email:'synthetic@example.invalid'};assert.throws(()=>validateManifestValue(pii),/FORBIDDEN_PII_FIELD/);
+  const entries=raw['entries'] as Record<string,unknown>[];const duplicatedType=String(entries[0]!['suppressionType']);const originalCounts=raw['counts'] as {total:number;byType:Record<string,number>};const conflictContent:Record<string,unknown>={...raw,entries:[...entries,{...entries[0],reasonCode:'CONFLICT'}]};delete conflictContent['digest'];conflictContent['counts']={...originalCounts,total:entries.length+1,byType:{...originalCounts.byType,[duplicatedType]:originalCounts.byType[duplicatedType]!+1}};conflictContent['digest']=sha256(conflictContent);assert.throws(()=>validateManifestValue(conflictContent),/CONFLICTING_DUPLICATE/);
+  const missing={...manifest,runId:'00000000-0000-4000-8000-000000000068',entries:manifest.entries.map((entry)=>({...entry,leadId:'00000000-0000-4000-8000-000000000068',stableIdentity:{osmType:'node' as const,osmId:'missing-target'}}))};const {digest:_,...missingContent}=missing;const missingValid={...missingContent,digest:sha256(missingContent)};const blocked=await reconcile(missingValid,false,'ci-restore-test',url);assert.equal(blocked.reason,'UNRESOLVED_SUPPRESSION_TARGETS');
+  const blockedEntry=manifest.entries.find((entry)=>entry.suppressionType==='IS_BLOCKED')!;const contradictoryContent={...manifest,runId:'00000000-0000-4000-8000-000000000069',entries:[{...blockedEntry,stableIdentity:{osmType:'node' as const,osmId:'contradictory-target'}}],counts:{total:1,byType:{IS_BLOCKED:1,DO_NOT_CONTACT:0,CRM_NAO_CONTATAR:0,OPT_OUT_GLOBAL:0,OPT_OUT_CHANNEL:0}}};const {digest:contradictoryDigest,...contradictoryWithoutDigest}=contradictoryContent;void contradictoryDigest;const contradictory=validateManifestValue({...contradictoryWithoutDigest,digest:sha256(contradictoryWithoutDigest)});const contradictoryResult=await reconcile(contradictory,false,'ci-restore-test',url);assert.equal(contradictoryResult.reason,'UNRESOLVED_SUPPRESSION_TARGETS');
+  await assert.rejects(loadManifest(join(temp,'absent.json')));
+  await writeFile(join(temp,'invalid.json'),'{');await assert.rejects(loadManifest(join(temp,'invalid.json')),/INVALID_MANIFEST_JSON/);
+  process.stdout.write(JSON.stringify({gate:'RESTORE_SUPPRESSION',result:'RESTORE_SUPPRESSION_SAFE',piiLogged:false,externalEffects:0,idempotent:true,rollback:true})+'\n');
+}finally{await sql.end().catch(()=>undefined);await rm(temp,{recursive:true,force:true});}

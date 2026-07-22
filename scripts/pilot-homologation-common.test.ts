@@ -69,6 +69,12 @@ printf '1\\n'
   return { capture, path };
 }
 
+async function writeFakeNpm(directory: string): Promise<void> {
+  const path = join(directory, 'npm');
+  await writeFile(path, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await chmod(path, 0o700);
+}
+
 async function writeHomologationEnvironment(directory: string): Promise<string> {
   const path = join(directory, 'pilot configuration.env');
   const backup = join(directory, 'backups').replaceAll('\\', '/');
@@ -162,12 +168,16 @@ describe.skipIf(!bashAvailable)('pilot homologation Compose helper', () => {
     const directory = await makeTemporaryDirectory();
     const environmentFile = await writeHomologationEnvironment(directory);
     const { capture } = await writeFakeDocker(directory);
+    await writeFakeNpm(directory);
+    const manifest = join(directory, 'synthetic.suppression-manifest.json');
+    await writeFile(manifest, '{}\n', 'utf8');
     const environment = {
       ARG_CAPTURE: capture,
       PATH: `${directory}:${process.env.PATH ?? ''}`,
       PILOT_HOMOLOGATION_ENV_FILE: environmentFile,
       PILOT_BACKUP_RESTORE_CONFIRMATION: 'RESTORE_SYNTHETIC_HOMOLOGATION',
       PILOT_ROLLBACK_CONFIRMATION: 'PREPARE_HOMOLOGATION_ROLLBACK',
+      RESTORE_SUPPRESSION_MANIFEST: manifest,
     };
 
     expect((await runBash('"$1" --execute', [backupRestoreScript], environment)).code).toBe(0);

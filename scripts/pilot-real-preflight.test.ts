@@ -34,7 +34,7 @@ describe('pilot real preflight report', () => {
   it('emits ready only with complete, independent evidence for every gate', () => {
     const evidence = (gate: 'GATE_BACKUP_RESTORE' | 'GATE_ROLLBACK' | 'GATE_KILL_SWITCH') => ({ gate, status: 'PASS' as const });
     const report = buildPilotRealPreflightReport({
-      environment, shadowIsolation: { status: 'PASS' }, backupRestore: evidence('GATE_BACKUP_RESTORE'),
+      environment, shadowIsolation: { status: 'PASS' }, backupRestore: evidence('GATE_BACKUP_RESTORE'), restoreSuppressionStatus: 'PASS',
       rollback: evidence('GATE_ROLLBACK'), killSwitch: evidence('GATE_KILL_SWITCH'), logPrivacy: { status: 'PASS' },
       manualApproval: {
         status: 'APPROVED', segment: 'synthetic', region: 'Campinas/SP', channel: 'manual', responsible: 'synthetic-operator',
@@ -42,7 +42,7 @@ describe('pilot real preflight report', () => {
       }, syntheticBatchStatus: 'PASS',
     });
     expect(report.decision).toBe('PILOT_REAL_READY');
-    expect(Object.values(report.gates)).toEqual(Array(10).fill('PASS'));
+    expect(Object.values(report.gates)).toEqual(Array(11).fill('PASS'));
   });
 
   it('parses env files without evaluating values and rejects duplicate keys', () => {

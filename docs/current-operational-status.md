@@ -1,7 +1,7 @@
 # Estado operacional consolidado
 
 **Última revisão documental:** 2026-07-22  
-**Baseline revisada:** `7affb578cfbd4efbf761e0c2c1450780d3a251e6`
+**Baseline revisada:** `38f5810d2fc959261ba3d5d858c3a4d6fa001eed`
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. Ele registra o que está implementado, o que está somente preparado, quais integrações permanecem desligadas e quais bloqueios impedem o piloto real.
 
@@ -15,7 +15,7 @@ O histórico detalhado continua nas issues, pull requests, runbooks e evidência
 - a homologação usa dados sintéticos e operação fail-closed;
 - o piloto manual possui runbook, template, registro de riscos e critérios de revisão humana;
 - a WhatsApp Cloud API e a OpenAI ainda não estão integradas ao runtime;
-- a reconciliação segura de supressões após restore permanece bloqueada na PR #69;
+- a reconciliação segura de supressões após restore foi implementada e validada na PR #69, sem autorizar restore real, retomada automática ou piloto;
 - nenhum resultado comercial real foi produzido pelo sistema.
 
 ## Perfis de implantação
@@ -37,6 +37,7 @@ Estado verificado em 2026-07-22:
 - região `sa-east-1`;
 - PostgreSQL 17.6;
 - migrations `0001` até `0015` aplicadas;
+- migration `0016_restore_suppression_reconciliation.sql` versionada na PR #69 e ainda dependente de aplicação controlada após integração;
 - nenhuma Edge Function implantada;
 - somente pequeno estado sintético de homologação.
 
@@ -126,14 +127,16 @@ O primeiro lote deve ter no máximo cinco negócios, uma categoria e uma região
 
 Pré-condições principais:
 
-1. PR #69 integrada e comprovada;
-2. CI da `main` verde;
-3. homologação em dry-run;
-4. kill switch testado;
-5. WhatsApp Business configurado fora do Git;
-6. mensagem manual aprovada;
-7. opt-out e `NAO_CONTATAR` revisados;
-8. operador e evidências sem PII pública.
+1. PR #69 integrada na `main` e CI pós-merge verde no SHA exato;
+2. migration `0016` aplicada e verificada na homologação antes de qualquer restore operacional;
+3. homologação em dry-run e shadow mode;
+4. coleta externa e providers reais desligados;
+5. kill switch testado;
+6. WhatsApp Business configurado fora do Git;
+7. mensagem manual aprovada;
+8. opt-out e `NAO_CONTATAR` revisados;
+9. operador identificado e evidências sem PII pública;
+10. backup, restore e rollback aplicáveis comprovados no ambiente-alvo.
 
 Referências:
 
@@ -161,45 +164,40 @@ Referências:
 - [Registro de riscos](whatsapp-ai-risk-register.md)
 - [Issue #79 — onboarding Meta e OpenAI](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/79)
 
-## Bloqueio técnico principal
+## Reconciliação segura após restore
 
-A [PR #69](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/pull/69) permanece Draft e não pode ser integrada enquanto houver:
+A PR #69 implementa e comprova o gate `RESTORE_SUPPRESSION_SAFE`:
 
-1. comandos de reconciliação executados fora da rede Compose;
-2. relacionamento incorreto entre outbox, attempt, recipient e lead;
-3. opt-out de canal aplicado indevidamente a outros canais;
-4. branch desatualizada em relação à `main`;
-5. findings P1/P2 ou CI PostgreSQL incompleta.
+- exportação, validação, dry-run, aplicação, verificação e preflight em runner one-shot dentro da rede privada do Compose;
+- PostgreSQL sem porta publicada;
+- API e worker parados durante todo o fluxo e mantidos parados por padrão após sucesso;
+- manifesto estrito, versionado, limitado, validado por SHA-256 e armazenado fora do Git;
+- aplicação transacional, idempotente, monotônica e fail-closed;
+- relacionamento correto `outbox -> attempt -> recipient -> lead` para `ATTEMPT_CREATED`;
+- opt-out por canal restrito a EMAIL ou WHATSAPP e supressões globais aplicadas ao lead inteiro;
+- alvos ausentes, contraditórios ou divergentes bloqueiam a retomada;
+- evidência PostgreSQL sanitizada, sem conteúdo do manifesto, PII ou segredos;
+- replay, concorrência, rollback, reinício e detecção de outbox reclamável cobertos em PostgreSQL 16;
+- CI, Compose privado, deployment smoke e multiarch AMD64/ARM64 verdes no head revisado.
 
-Modelo recomendado para essa correção: **Codex Sol**, devido ao risco de reativar jobs suprimidos após restore e à necessidade de revisão estrutural com PostgreSQL e Compose.
-
-Veredito exigido antes do merge: `RESTORE_SUPPRESSION_READY_FOR_MERGE`.
+O veredito da branch é `RESTORE_SUPPRESSION_READY_FOR_MERGE`. O piloto continua bloqueado até integração na `main`, CI pós-merge, aplicação controlada da migration `0016` em homologação e conclusão dos demais gates operacionais.
 
 ## Site comercial e demonstrações
 
-O catálogo público está no repositório `lead-finder-demos` e é independente do runtime de campanhas.
-
-Estado documentado:
-
-- quatro demonstrações: barbearia, oficina, restaurante e prestador de serviços;
-- oferta Landing Page Essencial por R$ 650;
-- WhatsApp comercial aberto por link seguro e ação humana;
-- nenhum formulário, analytics, tracking ou armazenamento;
-- empresas e dados das demonstrações são fictícios;
-- métricas, avaliações e antiguidade inventadas foram removidas;
-- imagens continuam por hotlink do Unsplash e aguardam substituição local com verificação de direitos e otimização.
+O catálogo público está no repositório `lead-finder-demos` e é independente do runtime de campanhas. Sua evolução, SEO, imagens e publicação são conduzidos separadamente do núcleo operacional descrito neste documento.
 
 O botão comercial do site não significa que a aplicação principal possua provider WhatsApp. Ele apenas abre uma conversa manual no aplicativo do visitante.
 
 ## Pendências priorizadas
 
-1. corrigir e integrar a PR #69;
-2. executar a fundação segura e o fluxo manual assistido da issue #71;
-3. preparar OpenAI em shadow mode e Meta em sandbox pela issue #79;
-4. substituir hotlinks das demonstrações por imagens locais verificadas;
-5. executar primeiro lote manual somente após todos os gates;
-6. implementar propostas, dashboard e automações posteriores;
-7. validar o perfil Oracle quando uma VPS adequada estiver disponível.
+1. integrar a PR #69 com proteção pelo head esperado e validar CI/Deployment smoke na `main`;
+2. aplicar e verificar a migration `0016` no Supabase de homologação por procedimento controlado;
+3. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
+4. executar a fundação segura e o fluxo manual assistido da issue #71;
+5. preparar OpenAI em shadow mode e Meta em sandbox pela issue #79;
+6. executar o primeiro lote manual somente após todos os gates;
+7. implementar propostas, dashboard e automações posteriores;
+8. validar o perfil Oracle quando uma VPS adequada estiver disponível.
 
 ## Regra de manutenção documental
 

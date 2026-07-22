@@ -28,13 +28,13 @@ END $$;
 
 -- Prevent future objects created by the migration owner from inheriting
 -- Supabase Data API grants before a later hardening pass can run.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON TABLES FROM PUBLIC;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON SEQUENCES FROM PUBLIC;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 
 DO $$
@@ -43,9 +43,9 @@ DECLARE
 BEGIN
   FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', role_name);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', role_name);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM %I', role_name);
     END IF;
   END LOOP;
 
@@ -56,13 +56,13 @@ BEGIN
   END IF;
 END $$;
 
--- A GRANT can materialize PostgreSQL's built-in default ACL (including
--- PUBLIC EXECUTE on functions). Keep deny-all revocations as the final word.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+-- Per-schema defaults cannot remove privileges inherited from global defaults.
+-- Keep global deny-all revocations as the final word for the migration role.
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON TABLES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON SEQUENCES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
   REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 
 DO $$
@@ -71,9 +71,9 @@ DECLARE
 BEGIN
   FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', role_name);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', role_name);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM %I', role_name);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM %I', role_name);
     END IF;
   END LOOP;
 END $$;

@@ -69,6 +69,12 @@ try {
       WHERE table_schema = 'public' AND grantee IN ('PUBLIC', 'anon', 'authenticated')`;
     assert.equal(exposedTables[0]?.count, 0, 'Data API roles must have zero table grants');
 
+    const tablesWithoutRls = await db<{ name: string }[]>`
+      SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
+      ORDER BY c.relname`;
+    assert.deepEqual(tablesWithoutRls, [], 'every table created by repository migrations must enable RLS');
+
     const routine = await db<{ searchPath: string[] | null; exposed: number }[]>`
       SELECT p.proconfig AS "searchPath",
         (SELECT count(*)::int FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
@@ -84,18 +90,19 @@ try {
       CREATE SEQUENCE public.security_future_sequence;
       CREATE FUNCTION public.security_future_function() RETURNS integer LANGUAGE sql AS 'SELECT 1';
     `);
-    const exposedFutureObjects = await db<{ count: number }[]>`
-      SELECT count(*)::int AS count FROM (
-        SELECT 1 FROM information_schema.role_table_grants
+    const exposedFutureObjects = await db<{ kind: string; objectName: string; grantee: string; privilege: string }[]>`
+      SELECT kind, object_name AS "objectName", grantee, privilege FROM (
+        SELECT 'table' AS kind, table_name AS object_name, grantee, privilege_type AS privilege
+        FROM information_schema.role_table_grants
         WHERE table_schema = 'public' AND table_name = 'security_future_table' AND grantee IN ('PUBLIC', 'anon', 'authenticated')
         UNION ALL
-        SELECT 1 FROM information_schema.role_usage_grants
+        SELECT 'sequence', object_name, grantee, privilege_type FROM information_schema.role_usage_grants
         WHERE object_schema = 'public' AND object_name IN ('security_future_sequence', 'security_future_table_id_seq') AND grantee IN ('PUBLIC', 'anon', 'authenticated')
         UNION ALL
-        SELECT 1 FROM information_schema.routine_privileges
+        SELECT 'function', routine_name, grantee, privilege_type FROM information_schema.routine_privileges
         WHERE specific_schema = 'public' AND routine_name = 'security_future_function' AND grantee IN ('PUBLIC', 'anon', 'authenticated')
-      ) exposed`;
-    assert.equal(exposedFutureObjects[0]?.count, 0, 'future objects must inherit deny-all defaults');
+      ) exposed ORDER BY kind, object_name, grantee, privilege`;
+    assert.deepEqual(exposedFutureObjects, [], 'future objects must inherit deny-all defaults');
 
     const policies = await db<{ count: number }[]>`SELECT count(*)::int AS count FROM pg_policies WHERE schemaname = 'public'`;
     assert.equal(policies[0]?.count, 0, 'hardening must not create permissive policies');

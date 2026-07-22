@@ -104,6 +104,13 @@ try {
       ) exposed ORDER BY kind, object_name, grantee, privilege`;
     assert.equal(exposedFutureObjects.length, 0, `future object grants exposed to Data API roles: ${JSON.stringify(exposedFutureObjects)}`);
 
+    const serviceAccess = await db<{ tableAccess: boolean; sequenceAccess: boolean; functionAccess: boolean }[]>`
+      SELECT
+        has_table_privilege('service_role', 'public.security_future_table', 'SELECT,INSERT,UPDATE,DELETE') AS "tableAccess",
+        has_sequence_privilege('service_role', 'public.security_future_sequence', 'USAGE,SELECT,UPDATE') AS "sequenceAccess",
+        has_function_privilege('service_role', 'public.security_future_function()', 'EXECUTE') AS "functionAccess"`;
+    assert.deepEqual(serviceAccess[0], { tableAccess: true, sequenceAccess: true, functionAccess: true });
+
     const policies = await db<{ count: number }[]>`SELECT count(*)::int AS count FROM pg_policies WHERE schemaname = 'public'`;
     assert.equal(policies[0]?.count, 0, 'hardening must not create permissive policies');
   } finally {

@@ -105,7 +105,7 @@ let renderStatus = 'UNREACHABLE';
 if (renderLive.http === 200) {
   if (liveBodyStatus !== 'ok') renderErrors.push(`LIVE_BODY_STATUS:${liveBodyStatus}`);
   if (renderReady.http === 200) {
-    if (readyBodyStatus === 'ok' || readyBodyStatus === 'degraded') renderStatus = 'OPERABLE';
+    if (readyBodyStatus === 'ready' || readyBodyStatus === 'degraded') renderStatus = 'OPERABLE';
     else {
       renderStatus = 'RESPONSE_MISMATCH';
       renderErrors.push(`READY_BODY_STATUS:${readyBodyStatus}`);

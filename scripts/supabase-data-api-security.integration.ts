@@ -73,7 +73,7 @@ try {
       SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
       ORDER BY c.relname`;
-    assert.deepEqual(tablesWithoutRls, [], 'every table created by repository migrations must enable RLS');
+    assert.equal(tablesWithoutRls.length, 0, `repository tables without RLS: ${JSON.stringify(tablesWithoutRls)}`);
 
     const routine = await db<{ searchPath: string[] | null; exposed: number }[]>`
       SELECT p.proconfig AS "searchPath",
@@ -102,7 +102,7 @@ try {
         SELECT 'function', routine_name, grantee, privilege_type FROM information_schema.routine_privileges
         WHERE specific_schema = 'public' AND routine_name = 'security_future_function' AND grantee IN ('PUBLIC', 'anon', 'authenticated')
       ) exposed ORDER BY kind, object_name, grantee, privilege`;
-    assert.deepEqual(exposedFutureObjects, [], 'future objects must inherit deny-all defaults');
+    assert.equal(exposedFutureObjects.length, 0, `future object grants exposed to Data API roles: ${JSON.stringify(exposedFutureObjects)}`);
 
     const policies = await db<{ count: number }[]>`SELECT count(*)::int AS count FROM pg_policies WHERE schemaname = 'public'`;
     assert.equal(policies[0]?.count, 0, 'hardening must not create permissive policies');

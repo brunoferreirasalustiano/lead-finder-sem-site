@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/external-homologation-probe.yml'
-      - 'scripts/external-homologation-probe.sh'
+      - 'scripts/external-homologation-probe.mjs'
   workflow_dispatch:
     inputs:
       render_base_url:
@@ -32,8 +32,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate probe syntax
+        run: node --check scripts/external-homologation-probe.mjs
+
       - name: Run read-only external probe
-        run: bash scripts/external-homologation-probe.sh
+        run: node scripts/external-homologation-probe.mjs
 
       - name: Publish probe summary
         if: always()

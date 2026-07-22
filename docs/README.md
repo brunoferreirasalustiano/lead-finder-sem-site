@@ -6,6 +6,7 @@
 - [Registro de riscos de WhatsApp e IA](whatsapp-ai-risk-register.md) — riscos, controles e gates das fases manual, shadow, sandbox e piloto real.
 - [Arquitetura de mensageria WhatsApp + IA](whatsapp-ai-messaging-architecture.md) — separação de providers, revisão humana, idempotência, webhooks e kill switch.
 - [Checklist de implementação WhatsApp + IA](whatsapp-ai-implementation-checklist.md) — fases e condições de segurança para cada integração.
+- [Segurança da Data API Supabase](supabase-data-api-security.md) — postura deny-all, grants efetivos, RLS e gates para qualquer acesso público futuro.
 
 - [Roadmap estratégico de produto](PRODUCT_ROADMAP.md) — evolução do Lead Finder desde a validação inicial até uma plataforma nacional, enterprise e internacional.
 

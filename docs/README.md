@@ -47,6 +47,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md) — arquitetura free-tier com processamento limitado e fail-closed.
 - [Runbook Supabase + Render](runbooks/supabase-render-deployment.md) — migrations, Render Blueprint, Edge Function opcional, Cron e desligamento.
 - [Evidências da homologação externa](external-homologation-evidence-runbook.md) — níveis de prova, GitHub Pages, Render, health checks, flags, kill switch e restart.
+- [Probe externo de homologação](../scripts/external-homologation-probe.mjs) — valida Pages, aviso público, demonstração, health checks e proteção do endpoint interno sem credenciais ou escrita.
 - [Operação com dois perfis](runbooks/dual-deployment-operations.md) — liderança, failover e prevenção de split-brain.
 - [Variáveis de ambiente](infrastructure/environment-variables.md) — variáveis ativas, secrets e defaults seguros.
 - [Gate sintético de batch](infrastructure/synthetic-batch-gate.md) — processamento determinístico em PostgreSQL descartável.
@@ -57,6 +58,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 ## Estratégia de produto
 
 - [Roadmap estratégico](PRODUCT_ROADMAP.md) — evolução desde o piloto manual até uma plataforma multicanal.
+- [Issue #98 — gate de viabilidade do segmento](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/98) — amostra de 30 barbearias concluída com decisão `PIVOT_RECOMMENDED`.
 
 ## Regras de manutenção
 

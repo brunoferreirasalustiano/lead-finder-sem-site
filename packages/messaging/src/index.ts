@@ -2,19 +2,33 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 export const messagingChannelSchema = z.enum(['WHATSAPP', 'EMAIL']);
-export const authorizationOriginSchema = z.enum([
+export const whatsappAuthorizationOriginSchema = z.enum([
   'DIRECT_OPT_IN',
   'FORM_OPT_IN',
   'SIGNED_RECORD',
-  'PUBLIC_BUSINESS_SOURCE',
 ]);
-export const optInSchema = z.object({
-  channel: messagingChannelSchema,
+export const whatsappAuthorizationSchema = z.object({
+  channel: z.literal('WHATSAPP'),
   purpose: z.string().trim().min(1).max(100),
-  origin: authorizationOriginSchema,
+  origin: whatsappAuthorizationOriginSchema,
   evidenceId: z.string().uuid(),
   recordedAt: z.coerce.date(),
-  revokedAt: z.coerce.date().nullable().default(null),
+});
+export const emailBusinessEvidenceOriginSchema = z.enum([
+  'PUBLIC_BUSINESS_SOURCE',
+  'DIRECTLY_PROVIDED',
+  'SIGNED_RECORD',
+]);
+export const emailBusinessEvidenceSchema = z.object({
+  channel: z.literal('EMAIL'),
+  ownership: z.enum(['BUSINESS', 'PERSONAL', 'UNKNOWN']),
+  origin: emailBusinessEvidenceOriginSchema,
+  evidenceId: z.string().uuid(),
+  evidenceFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  humanDecision: z.enum(['APPROVED', 'REJECTED']),
+  reviewedBy: z.string().trim().min(1).max(100),
+  version: z.number().int().positive(),
+  recordedAt: z.coerce.date(),
 });
 export const templateSchema = z.object({
   id: z.string().trim().min(1).max(100),
@@ -49,7 +63,12 @@ export const preparedMessageSchema = z.object({
   body: z.string(),
   fingerprint: z.string().length(64),
 });
-export const manualActionSchema = z.enum(['PREPARED', 'OPENED', 'CONTACT_CONFIRMED']);
+export const manualActionSchema = z.enum([
+  'PREPARED',
+  'OPENED',
+  'CONTACT_CONFIRMED',
+  'RESPONSE_RECORDED',
+]);
 export const manualResultSchema = z.enum([
   'SENT_CONFIRMED',
   'NOT_SENT',

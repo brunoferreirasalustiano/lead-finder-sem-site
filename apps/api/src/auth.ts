@@ -93,6 +93,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('POST', '/pilots/:id/leads/:leadId/manual-messages/prepare', 'manual-messaging:prepare'),
   policy('POST', '/manual-message-preparations/:id/open', 'manual-messaging:open'),
   policy('POST', '/manual-message-preparations/:id/confirm', 'manual-messaging:confirm'),
+  policy('POST', '/manual-message-preparations/:id/response', 'manual-messaging:confirm'),
   policy('POST', '/collect', 'collection:execute'),
   policy('GET', '/leads/export.csv', 'leads:export'),
 ];

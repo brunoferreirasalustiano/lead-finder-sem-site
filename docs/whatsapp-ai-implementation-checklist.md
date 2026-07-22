@@ -7,7 +7,7 @@
 - [x] criar `packages/ai` com provider fake e schemas de saída;
 - [ ] adaptar o outbox para interface genérica sem remover o simulador atual;
 - [ ] manter todos os providers externos desabilitados;
-- [ ] adicionar testes de opt-out, `NAO_CONTATAR`, revisão humana, idempotência e logs sanitizados.
+- [x] adicionar testes de opt-out, `NAO_CONTATAR`, revisão humana, idempotência e logs sanitizados.
 
 ## Fase B — Manual assistido
 
@@ -16,6 +16,10 @@
 - [x] registrar abertura do fluxo sem afirmar que houve envio;
 - [x] registrar resultado manual separado;
 - [x] impedir segundo contato após opt-out;
+- [x] exigir evidência append-only `BUSINESS` aprovada para o e-mail selecionado;
+- [x] separar autorização explícita de WhatsApp de fundamento empresarial de e-mail;
+- [x] serializar `PREPARED -> OPENED -> CONTACT_CONFIRMED -> RESPONSE_RECORDED` por preparação;
+- [x] minimizar o snapshot e reconstruir mensagem/link somente no replay autenticado;
 - [ ] permitir somente canal comercial oficial configurado fora do Git como remetente documentado.
 
 ## Fase C — IA em shadow mode

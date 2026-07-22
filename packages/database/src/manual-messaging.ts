@@ -63,6 +63,9 @@ type Candidate = {
   whatsapp_opt_out: boolean;
   email_opt_out: boolean;
   review_approved: boolean;
+  email_ownership: 'BUSINESS' | 'PERSONAL' | 'UNKNOWN' | null;
+  email_evidence_origin: string | null;
+  email_human_decision: 'APPROVED' | 'REJECTED' | null;
 };
 async function candidates(tx: Pick<Database, 'execute'>, pilotRunId: string, leadId: string) {
   await tx.execute(
@@ -71,7 +74,7 @@ async function candidates(tx: Pick<Database, 'execute'>, pilotRunId: string, lea
   const rows = await tx.execute(
     sql<
       Candidate[]
-    >`select pr.status pilot_status,l.name,l.is_blocked,l.do_not_contact,l.crm_stage,c.id contact_id,c.type,c.normalized_value,c.source,c.is_valid,c.verified_at,exists(select 1 from contact_channel_authorizations a where a.contact_id=c.id and a.lead_id=l.id and a.channel='WHATSAPP' and a.purpose='B2B_PROSPECTION') whatsapp_authorized,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel is null) global_opt_out,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel='WHATSAPP') whatsapp_opt_out,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel='EMAIL') email_opt_out,coalesce((select r.decision='APPROVED' from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by r.version desc limit 1),false) review_approved from pilot_runs pr join pilot_leads pl on pl.pilot_run_id=pr.id join leads l on l.id=pl.lead_id join lead_contacts c on c.lead_id=l.id where pr.id=${pilotRunId}::uuid and l.id=${leadId}::uuid for update of pr,pl,l,c`,
+    >`select pr.status pilot_status,l.name,l.is_blocked,l.do_not_contact,l.crm_stage,c.id contact_id,c.type,c.normalized_value,c.source,c.is_valid,c.verified_at,exists(select 1 from contact_channel_authorizations a where a.contact_id=c.id and a.lead_id=l.id and a.channel='WHATSAPP' and a.purpose='B2B_PROSPECTION') whatsapp_authorized,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel is null) global_opt_out,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel='WHATSAPP') whatsapp_opt_out,exists(select 1 from campaign_opt_outs o where o.lead_id=l.id and o.channel='EMAIL') email_opt_out,coalesce((select r.decision='APPROVED' from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by r.version desc limit 1),false) review_approved,ee.ownership email_ownership,ee.origin email_evidence_origin,ee.human_decision email_human_decision from pilot_runs pr join pilot_leads pl on pl.pilot_run_id=pr.id join leads l on l.id=pl.lead_id join lead_contacts c on c.lead_id=l.id left join lateral(select e.ownership,e.origin,e.human_decision from contact_email_business_evidence e where e.contact_id=c.id and e.lead_id=l.id and e.channel='EMAIL' order by e.version desc limit 1) ee on true where pr.id=${pilotRunId}::uuid and l.id=${leadId}::uuid for update of pr,pl,l,c`,
   );
   return rows as unknown as Candidate[];
 }
@@ -94,6 +97,11 @@ const wa = (r: Candidate) =>
 const email = (r: Candidate) =>
   base(r) &&
   r.type.toUpperCase() === 'EMAIL' &&
+  r.email_ownership === 'BUSINESS' &&
+  r.email_human_decision === 'APPROVED' &&
+  ['PUBLIC_BUSINESS_SOURCE', 'DIRECTLY_PROVIDED', 'SIGNED_RECORD'].includes(
+    r.email_evidence_origin ?? '',
+  ) &&
   !r.email_opt_out &&
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.normalized_value);
 function choose(rows: Candidate[], requested: MessagingChannel, contactId: string) {
@@ -111,6 +119,23 @@ function requirePreparedContact(rows: Candidate[], channel: MessagingChannel, co
   if (!exact || !(channel === 'WHATSAPP' ? wa(exact) : email(exact)))
     throw new ManualMessagingError('Prepared contact is no longer eligible', 'INELIGIBLE');
 }
+const templateFor = (channel: MessagingChannel, id: string, version: string) => {
+  const template = channel === 'WHATSAPP' ? approvedTemplates.whatsappV1 : approvedTemplates.emailV1;
+  if (template.id !== id || template.version !== version)
+    throw new ManualMessagingError('Persisted template is unavailable', 'INVALID_STATE');
+  return template;
+};
+const variablesFor = (row: Candidate) => ({ EMPRESA: row.name ?? 'empresa', FONTE: row.source });
+const contactFingerprint = (row: Candidate) =>
+  digest({ contactId: row.contact_id, channel: row.type.toUpperCase(), value: row.normalized_value });
+const responseFor = (row: Candidate, channel: MessagingChannel, templateId: string, templateVersion: string) => {
+  const variables = variablesFor(row);
+  const prepared = provider.prepare(templateFor(channel, templateId, templateVersion), variables);
+  const link = channel === 'WHATSAPP'
+    ? createWhatsAppManualUrl(row.normalized_value, prepared.body)
+    : `mailto:${encodeURIComponent(row.normalized_value)}?subject=${encodeURIComponent(prepared.subject ?? '')}&body=${encodeURIComponent(prepared.body)}`;
+  return { variables, prepared, link };
+};
 export async function prepareManualMessage(
   db: Database,
   pilotRunId: string,
@@ -137,32 +162,38 @@ export async function prepareManualMessage(
     if (prior[0] && (prior[0].operator_principal_id !== auth.principalId || prior[0].payload_fingerprint !== fingerprint))
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     if (prior[0]) {
-      requirePreparedContact(
-        await candidates(tx, pilotRunId, leadId),
-        prior[0].channel as MessagingChannel,
-        String(prior[0].contact_id),
-      );
-      if (digest(prior[0].result_snapshot) !== prior[0].result_fingerprint)
+      const persisted = prior[0];
+      if (digest(persisted.result_snapshot) !== persisted.result_fingerprint)
         throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
-      const snapshot = prior[0].result_snapshot as Record<string, unknown>;
+      const snapshot = persisted.result_snapshot as Record<string, unknown>;
       if (
         !['WHATSAPP', 'EMAIL'].includes(String(snapshot['channel'])) ||
         typeof snapshot['templateId'] !== 'string' ||
         typeof snapshot['templateVersion'] !== 'string' ||
-        typeof snapshot['message'] !== 'string' ||
-        typeof snapshot['link'] !== 'string' ||
-        (snapshot['subject'] !== undefined && typeof snapshot['subject'] !== 'string')
+        typeof snapshot['variables'] !== 'object' ||
+        typeof snapshot['contactFingerprint'] !== 'string' ||
+        typeof snapshot['messageFingerprint'] !== 'string'
       ) throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+      const persistedChannel = persisted.channel as MessagingChannel;
+      const persistedContactId = String(persisted.contact_id);
+      const rows = await candidates(tx, pilotRunId, leadId);
+      requirePreparedContact(rows, persistedChannel, persistedContactId);
+      const row = rows.find((item) => item.contact_id === persistedContactId)!;
+      if (contactFingerprint(row) !== snapshot['contactFingerprint'])
+        throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
+      const rebuilt = responseFor(row, persistedChannel, String(snapshot['templateId']), String(snapshot['templateVersion']));
+      if (digest(rebuilt.variables) !== digest(snapshot['variables']) || rebuilt.prepared.fingerprint !== snapshot['messageFingerprint'])
+        throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
       return {
-        preparationId: prior[0].id,
+        preparationId: persisted.id,
         state: 'PREPARED' as const,
         channel: snapshot['channel'] as MessagingChannel,
         templateId: snapshot['templateId'],
         templateVersion: snapshot['templateVersion'],
-        message: snapshot['message'],
-        subject: snapshot['subject'],
-        link: snapshot['link'],
-        preparedAt: prior[0].prepared_at,
+        message: rebuilt.prepared.body,
+        subject: rebuilt.prepared.subject,
+        link: rebuilt.link,
+        preparedAt: persisted.prepared_at,
         replayed: true,
       };
     }
@@ -178,21 +209,14 @@ export async function prepareManualMessage(
       (template.id !== input.templateId || template.version !== input.templateVersion)
     )
       throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
-    const prepared = provider.prepare(template, {
-      EMPRESA: selected.row.name ?? 'empresa',
-      FONTE: selected.row.source,
-    });
-    const link =
-      selected.channel === 'WHATSAPP'
-        ? createWhatsAppManualUrl(selected.row.normalized_value, prepared.body)
-        : `mailto:${encodeURIComponent(selected.row.normalized_value)}?subject=${encodeURIComponent(prepared.subject ?? '')}&body=${encodeURIComponent(prepared.body)}`;
+    const { variables, prepared, link } = responseFor(selected.row, selected.channel, template.id, template.version);
     const snapshot = {
       channel: selected.channel,
       templateId: template.id,
       templateVersion: template.version,
-      message: prepared.body,
-      ...(prepared.subject === undefined ? {} : { subject: prepared.subject }),
-      link,
+      variables,
+      contactFingerprint: contactFingerprint(selected.row),
+      messageFingerprint: prepared.fingerprint,
     };
     const saved = (
         await tx.execute(
@@ -225,17 +249,27 @@ export const confirmManualResult = (
   db: Database,
   id: string,
   input: {
-    result: ManualMessagingResult;
+    result: Extract<ManualMessagingResult, 'SENT_CONFIRMED' | 'NOT_SENT' | 'INVALID_CONTACT' | 'CHANNEL_UNAVAILABLE' | 'OPERATIONAL_ERROR'>;
     idempotencyKey: string;
     observation?: string | undefined;
   },
   auth: AuthorizationContext,
 ) =>
   event(db, id, 'CONTACT_CONFIRMED', input.result, input.idempotencyKey, input.observation, auth);
+export const recordManualResponse = (
+  db: Database,
+  id: string,
+  input: {
+    result: Extract<ManualMessagingResult, 'POSITIVE_REPLY' | 'NEGATIVE_REPLY' | 'OPT_OUT'>;
+    idempotencyKey: string;
+    observation?: string | undefined;
+  },
+  auth: AuthorizationContext,
+) => event(db, id, 'RESPONSE_RECORDED', input.result, input.idempotencyKey, input.observation, auth);
 async function event(
   db: Database,
   id: string,
-  eventType: 'OPENED' | 'CONTACT_CONFIRMED',
+  eventType: 'OPENED' | 'CONTACT_CONFIRMED' | 'RESPONSE_RECORDED',
   result: ManualMessagingResult | undefined,
   key: string,
   observation: string | undefined,
@@ -250,7 +284,7 @@ async function event(
   });
   return db.transaction(async (tx) => {
     await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`${id}:${eventType}:${key}`},0))`,
+      sql`select pg_advisory_xact_lock(hashtextextended(${`manual-message-preparation:${id}`},0))`,
     );
     const prior = await tx.execute(
       sql<
@@ -263,14 +297,6 @@ async function event(
         prior[0].payload_fingerprint !== fingerprint)
     )
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
-    if (prior[0])
-      return {
-        eventId: prior[0].id,
-        state: eventType,
-        result,
-        createdAt: prior[0].created_at,
-        replayed: true,
-      };
     const p = (
       await tx.execute(
         sql<
@@ -282,7 +308,25 @@ async function event(
       | undefined;
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
     requirePreparedContact(await candidates(tx, p.pilot_run_id, p.lead_id), p.channel, p.contact_id);
-    if (eventType === 'CONTACT_CONFIRMED' && result === 'OPT_OUT')
+    const existing = await tx.execute(
+      sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,
+    );
+    const sameType = existing.find((item) => item.event_type === eventType);
+    if (sameType) {
+      if (sameType.operator_principal_id !== auth.principalId || sameType.result !== (result ?? null) || sameType.payload_fingerprint !== fingerprint)
+        throw new ManualMessagingError('Contradictory state transition', 'INVALID_STATE');
+      return { eventId: sameType.id, state: eventType, result, createdAt: sameType.created_at, replayed: true };
+    }
+    const opened = existing.some((item) => item.event_type === 'OPENED');
+    const confirmed = existing.find((item) => item.event_type === 'CONTACT_CONFIRMED');
+    const responded = existing.some((item) => item.event_type === 'RESPONSE_RECORDED');
+    if (eventType === 'OPENED' && (opened || confirmed || responded))
+      throw new ManualMessagingError('Invalid OPENED transition', 'INVALID_STATE');
+    if (eventType === 'CONTACT_CONFIRMED' && (!opened || confirmed || responded))
+      throw new ManualMessagingError('Invalid CONTACT_CONFIRMED transition', 'INVALID_STATE');
+    if (eventType === 'RESPONSE_RECORDED' && (confirmed?.result !== 'SENT_CONFIRMED' || responded))
+      throw new ManualMessagingError('Invalid RESPONSE_RECORDED transition', 'INVALID_STATE');
+    if (eventType === 'RESPONSE_RECORDED' && result === 'OPT_OUT')
       await tx.execute(
         sql`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${p.lead_id}::uuid,${p.channel},'MANUAL_OPT_OUT','PILOT_MANUAL_MESSAGING') on conflict do nothing`,
       );

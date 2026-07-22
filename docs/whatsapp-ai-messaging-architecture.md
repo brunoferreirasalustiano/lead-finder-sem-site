@@ -71,6 +71,28 @@ apps/worker/src/
 - nenhum token Meta necessário;
 - nenhum provider real habilitado.
 
+### Elegibilidade por canal
+
+WhatsApp exige autorização explícita append-only com origem `DIRECT_OPT_IN`, `FORM_OPT_IN` ou `SIGNED_RECORD`. Uma fonte pública, diretório, site ou rede social nunca constitui autorização. E-mail usa um contrato diferente: evidência de propriedade empresarial, vinculada ao contato e lead, com classificação `BUSINESS`, `PERSONAL` ou `UNKNOWN`, fundamento suportado, fingerprint, decisão humana, principal autenticado, timestamp do servidor e versão. Somente a decisão atual `BUSINESS` + `APPROVED` é elegível. Gmail, Outlook e outros domínios gratuitos não recebem classificação automática.
+
+Opt-out global ou por canal, `NAO_CONTATAR`, `do_not_contact` e bloqueio administrativo têm precedência absoluta. Novas evidências ou autorizações nunca reativam supressão.
+
+### Máquina de estados transacional
+
+```text
+PREPARED -> OPENED -> CONTACT_CONFIRMED
+                            |
+                            +-> RESPONSE_RECORDED (somente após SENT_CONFIRMED)
+```
+
+Todas as transições usam advisory lock baseado somente no `preparation_id`. Há no máximo uma abertura, uma confirmação terminal e uma resposta. `CONTACT_CONFIRMED` aceita apenas resultados operacionais de contato; `POSITIVE_REPLY`, `NEGATIVE_REPLY` e `OPT_OUT` pertencem a `RESPONSE_RECORDED`. Replays idênticos devolvem o evento persistido; principal diferente, payload divergente, ordem inválida ou resultado contraditório falham fechado. Índices parciais e trigger de transição protegem também inserções SQL diretas.
+
+### Minimização e retenção
+
+`result_snapshot` persiste apenas canal, contato selecionado por FK, template/versão, variáveis mínimas e fingerprints do contato e mensagem. Não persiste telefone, e-mail, assunto renderizado, corpo renderizado ou URL completa. No replay, o contato persistido é reavaliado, os fingerprints são conferidos e mensagem/link são reconstruídos apenas na resposta autenticada; nunca ocorre seleção de outro contato.
+
+A finalidade exclusiva é replay idempotente e auditável do preparo manual. O acesso é restrito a `service_role` com `SELECT`/`INSERT`, RLS sem policy permissiva e histórico append-only. A retenção segue a retenção operacional do piloto; ao término, o descarte deve remover o snapshot junto com a preparação conforme o processo autorizado. Os fingerprints são não reversíveis, mas não tornam variáveis anônimas; por isso estas devem conter somente os valores mínimos do template.
+
 ## Fase 2 — IA em shadow mode
 
 Casos de uso permitidos:

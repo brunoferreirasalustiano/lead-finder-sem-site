@@ -49,7 +49,7 @@ services:
         source: ${RESTORE_SUPPRESSION_MANIFEST_DIR:-./backups}
         target: /restore-manifests
     tmpfs:
-      - /tmp:size=16m,mode=0700
+      - /tmp:size=16m,mode=1777
     logging: *production-logging
     networks: [database]
   worker:

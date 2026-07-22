@@ -38,6 +38,10 @@ type Deferred<T> = {
   reject: (reason?: unknown) => void;
 };
 
+type ObservedResult<T> =
+  | { status: 'fulfilled'; value: T }
+  | { status: 'rejected'; error: unknown };
+
 function deferred<T>(): Deferred<T> {
   let resolve!: Deferred<T>['resolve'];
   let reject!: Deferred<T>['reject'];
@@ -51,14 +55,14 @@ function deferred<T>(): Deferred<T> {
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-const observe = <T>(operation: Promise<T>) =>
+const observe = <T>(operation: Promise<T>): Promise<ObservedResult<T>> =>
   operation.then(
     (value) => ({ status: 'fulfilled' as const, value }),
     (error: unknown) => ({ status: 'rejected' as const, error }),
   );
 
 async function assertPending<T>(
-  observed: ReturnType<typeof observe<T>>,
+  observed: Promise<ObservedResult<T>>,
   label: string,
 ): Promise<void> {
   const state = await Promise.race([
@@ -69,12 +73,12 @@ async function assertPending<T>(
 }
 
 function assertRejectedCode(
-  result:
-    | { status: 'fulfilled'; value: unknown }
-    | { status: 'rejected'; error: unknown },
+  result: ObservedResult<unknown>,
   code: ManualMessagingError['code'],
 ): void {
-  assert.equal(result.status, 'rejected');
+  if (result.status !== 'rejected') {
+    assert.fail(`expected ${code}, but operation fulfilled`);
+  }
   assert.ok(result.error instanceof ManualMessagingError);
   assert.equal(result.error.code, code);
 }
@@ -144,14 +148,14 @@ async function beginEvidenceTransaction(
   const done = raw.begin(async (tx) => {
     await tx`insert into contact_email_business_evidence(contact_id,lead_id,channel,ownership,origin,evidence_fingerprint,human_decision,reviewer_principal_id,version)
       values(${item.emailId}::uuid,${item.leadId}::uuid,'EMAIL',${input.ownership},'DIRECTLY_PROVIDED',${input.fingerprint},${input.humanDecision},'email-reviewer',${input.version})`;
-    inserted.resolve();
+    inserted.resolve(undefined);
     await release.promise;
   });
   void done.catch(inserted.reject);
   await inserted.promise;
   await assertLeadLockHeld(item.leadId);
   return {
-    release: () => release.resolve(),
+    release: () => release.resolve(undefined),
     done,
   };
 }

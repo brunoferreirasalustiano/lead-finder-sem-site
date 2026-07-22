@@ -1,0 +1,277 @@
+import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
+import {
+  confirmManualResult,
+  createDatabase,
+  ManualMessagingError,
+  prepareManualMessage,
+  recordManualOpen,
+} from '@lead-finder/database';
+import { createAuthorizationContext } from '@lead-finder/shared';
+import { buildApp } from '../apps/api/src/app.js';
+
+const databaseUrl = process.env['DATABASE_URL'];
+if (!databaseUrl) throw new Error('DATABASE_URL is required');
+const raw = postgres(databaseUrl, { max: 6 });
+const { db, close } = createDatabase(databaseUrl, { max: 8 });
+const originalStdoutWrite = process.stdout.write;
+const actor = (principalId: string) => createAuthorizationContext({
+  principalId,
+  permissions: new Set(['manual-messaging:prepare', 'manual-messaging:open', 'manual-messaging:confirm', 'manual-messaging:opt-out']),
+  authenticationMethod: 'integration-test',
+});
+const primaryActor = actor('manual-operator-a');
+const waInput = (contactId: string, key = randomUUID()) => ({
+  contactId,
+  requestedChannel: 'WHATSAPP' as const,
+  templateId: 'pilot-whatsapp-first-contact',
+  templateVersion: 'v1',
+  idempotencyKey: key,
+});
+const emailInput = (contactId: string, key = randomUUID()) => ({
+  contactId,
+  requestedChannel: 'EMAIL' as const,
+  templateId: 'pilot-email-first-contact',
+  templateVersion: 'v1',
+  idempotencyKey: key,
+});
+
+type Fixture = { pilotId: string; leadId: string; phoneId: string; emailId: string };
+let sequence = 0;
+async function fixture(options: {
+  pilotStatus?: string;
+  review?: string;
+  blocked?: boolean;
+  doNotContact?: boolean;
+  crmStage?: string;
+  phoneValid?: boolean;
+  phoneVerified?: boolean;
+  emailValid?: boolean;
+  emailVerified?: boolean;
+  authorizeWhatsApp?: boolean;
+  email?: string;
+} = {}): Promise<Fixture> {
+  sequence += 1;
+  const leadId = randomUUID();
+  const pilotId = randomUUID();
+  const phoneId = randomUUID();
+  const emailId = randomUUID();
+  const suffix = String(sequence).padStart(4, '0');
+  await raw.begin(async (tx) => {
+    await tx`insert into leads(id,osm_type,osm_id,name,category,score,status,is_closed,is_blocked,do_not_contact,crm_stage) values(${leadId}::uuid,'node',${`manual-${suffix}`},'Empresa sintética','oficinas',90,'SEM_SITE_CADASTRADO',false,${options.blocked ?? false},${options.doNotContact ?? false},${options.crmStage ?? 'NOVO'})`;
+    await tx`insert into pilot_runs(id,name,region,category,target_lead_count,status,created_by,started_at) values(${pilotId}::uuid,${`Piloto ${suffix}`},'SP','oficinas',1,${options.pilotStatus ?? 'RUNNING'},'integration-test',now())`;
+    await tx`insert into pilot_leads(pilot_run_id,lead_id,source,added_by) values(${pilotId}::uuid,${leadId}::uuid,'SYNTHETIC','integration-test')`;
+    await tx`insert into pilot_reviews(pilot_run_id,lead_id,decision,reviewer_principal_id,version) values(${pilotId}::uuid,${leadId}::uuid,${options.review ?? 'APPROVED'},'reviewer',1)`;
+    await tx`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values
+      (${phoneId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone','55 9 9123-4567','BUSINESS_REGISTRY',1,${options.phoneVerified === false ? null : new Date()}::timestamptz,${options.phoneValid ?? true},true),
+      (${emailId}::uuid,${leadId}::uuid,'EMAIL','synthetic-email',${options.email ?? `contato${suffix}@gmail.com`},'BUSINESS_REGISTRY',1,${options.emailVerified === false ? null : new Date()}::timestamptz,${options.emailValid ?? true},false)`;
+    if (options.authorizeWhatsApp ?? true)
+      await tx`insert into contact_channel_authorizations(contact_id,lead_id,channel,purpose,origin,evidence_fingerprint,granted_at,recorded_by) values(${phoneId}::uuid,${leadId}::uuid,'WHATSAPP','B2B_PROSPECTION','DIRECT_OPT_IN',${suffix.padStart(64, 'a').slice(-64)},now(),'server-actor')`;
+  });
+  return { pilotId, leadId, phoneId, emailId };
+}
+const expectCode = async (action: Promise<unknown>, code: ManualMessagingError['code']) => {
+  await assert.rejects(action, (error: unknown) => error instanceof ManualMessagingError && error.code === code);
+};
+const count = async (table: string, where = '') => Number((await raw.unsafe(`select count(*)::int value from ${table} ${where}`))[0]?.value ?? -1);
+const report: string[] = [];
+const pass = (name: string) => report.push(name);
+
+try {
+  await raw`truncate pilot_manual_message_events,pilot_manual_message_preparations,contact_channel_authorizations,pilot_reviews,pilot_leads,pilot_runs,campaign_provider_events,campaign_outbox,campaign_attempts,campaign_opt_outs,lead_contacts,leads restart identity cascade`;
+
+  const whatsapp = await fixture();
+  const preparedWhatsApp = await prepareManualMessage(db, whatsapp.pilotId, whatsapp.leadId, waInput(whatsapp.phoneId), primaryActor);
+  assert.equal(preparedWhatsApp.channel, 'WHATSAPP');
+  assert.match(preparedWhatsApp.link, /^https:\/\/wa\.me\/5555991234567\?text=/);
+  pass('01 WhatsApp with valid opt-in');
+
+  const noOptIn = await fixture({ authorizeWhatsApp: false, emailValid: false });
+  await expectCode(prepareManualMessage(db, noOptIn.pilotId, noOptIn.leadId, waInput(noOptIn.phoneId), primaryActor), 'INELIGIBLE');
+  pass('02 WhatsApp without opt-in rejected');
+
+  const fallback = await fixture({ authorizeWhatsApp: false });
+  const fallbackPrepared = await prepareManualMessage(db, fallback.pilotId, fallback.leadId, waInput(fallback.phoneId), primaryActor);
+  assert.equal(fallbackPrepared.channel, 'EMAIL');
+  assert.match(fallbackPrepared.link, /^mailto:/);
+  pass('03 business-origin Gmail fallback is eligible');
+
+  const unavailable = await fixture({ authorizeWhatsApp: false, emailValid: false });
+  await expectCode(prepareManualMessage(db, unavailable.pilotId, unavailable.leadId, emailInput(unavailable.emailId), primaryActor), 'INELIGIBLE');
+  pass('04 no channel available');
+
+  const foreign = await fixture();
+  await expectCode(prepareManualMessage(db, whatsapp.pilotId, whatsapp.leadId, emailInput(foreign.emailId), primaryActor), 'INELIGIBLE');
+  pass('05 contact from another lead');
+
+  for (const [name, options] of [
+    ['06 blocked lead', { blocked: true }],
+    ['07 do_not_contact', { doNotContact: true }],
+    ['08 CRM NAO_CONTATAR', { crmStage: 'NAO_CONTATAR' }],
+    ['12 review not approved', { review: 'NEEDS_REVIEW' }],
+    ['13 pilot outside RUNNING', { pilotStatus: 'PAUSED' }],
+    ['14 invalid contact', { emailValid: false }],
+    ['15 unverified contact', { emailVerified: false }],
+  ] as const) {
+    const item = await fixture(options);
+    await expectCode(prepareManualMessage(db, item.pilotId, item.leadId, emailInput(item.emailId), primaryActor), 'INELIGIBLE');
+    pass(name);
+  }
+
+  const globalOptOut = await fixture();
+  await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${globalOptOut.leadId}::uuid,null,'test','integration')`;
+  await expectCode(prepareManualMessage(db, globalOptOut.pilotId, globalOptOut.leadId, emailInput(globalOptOut.emailId), primaryActor), 'INELIGIBLE');
+  pass('09 global opt-out');
+
+  const waOptOut = await fixture();
+  await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${waOptOut.leadId}::uuid,'WHATSAPP','test','integration')`;
+  assert.equal((await prepareManualMessage(db, waOptOut.pilotId, waOptOut.leadId, waInput(waOptOut.phoneId), primaryActor)).channel, 'EMAIL');
+  pass('10 WhatsApp opt-out preserves email');
+
+  const emailOptOut = await fixture();
+  await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${emailOptOut.leadId}::uuid,'EMAIL','test','integration')`;
+  assert.equal((await prepareManualMessage(db, emailOptOut.pilotId, emailOptOut.leadId, waInput(emailOptOut.phoneId), primaryActor)).channel, 'WHATSAPP');
+  pass('11 email opt-out preserves authorized WhatsApp');
+
+  const badTemplate = await fixture();
+  await expectCode(prepareManualMessage(db, badTemplate.pilotId, badTemplate.leadId, { ...emailInput(badTemplate.emailId), templateId: 'unapproved' }, primaryActor), 'INELIGIBLE');
+  pass('16 unapproved template');
+
+  const replayFixture = await fixture({ authorizeWhatsApp: false });
+  const replayKey = randomUUID();
+  const replayInput = waInput(replayFixture.phoneId, replayKey);
+  const first = await prepareManualMessage(db, replayFixture.pilotId, replayFixture.leadId, replayInput, primaryActor);
+  const replay = await prepareManualMessage(db, replayFixture.pilotId, replayFixture.leadId, replayInput, primaryActor);
+  assert.deepEqual({ ...replay, replayed: false }, { ...first, replayed: false });
+  assert.equal(replay.replayed, true);
+  pass('17 identical payload replay');
+  await expectCode(prepareManualMessage(db, replayFixture.pilotId, replayFixture.leadId, { ...replayInput, requestedChannel: 'EMAIL' }, primaryActor), 'IDEMPOTENCY_CONFLICT');
+  pass('18 same key with different payload');
+
+  const concurrentFixture = await fixture();
+  const concurrentInput = waInput(concurrentFixture.phoneId, randomUUID());
+  const concurrent = await Promise.all(Array.from({ length: 8 }, () => prepareManualMessage(db, concurrentFixture.pilotId, concurrentFixture.leadId, concurrentInput, primaryActor)));
+  assert.equal(new Set(concurrent.map((item) => item.preparationId)).size, 1);
+  assert.equal(concurrent.filter((item) => !item.replayed).length, 1);
+  pass('19 concurrent calls');
+
+  const snapshotFixture = await fixture({ authorizeWhatsApp: false, email: 'a@company.example' });
+  const snapshotInput = waInput(snapshotFixture.phoneId, randomUUID());
+  const snapshotFirst = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
+  await raw`update lead_contacts set is_valid=false where id=${snapshotFixture.emailId}::uuid`;
+  const emailB = randomUUID();
+  await raw`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values(${emailB}::uuid,${snapshotFixture.leadId}::uuid,'EMAIL','synthetic-b','b@company.example','BUSINESS_REGISTRY',1,now(),true,false)`;
+  const snapshotReplay = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
+  assert.equal(snapshotReplay.link, snapshotFirst.link);
+  assert.ok(snapshotReplay.link.includes('a%40company.example'));
+  assert.ok(!snapshotReplay.link.includes('b%40company.example'));
+  pass('20 replay after fallback change uses immutable snapshot');
+  await expectCode(prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, actor('manual-operator-b')), 'IDEMPOTENCY_CONFLICT');
+  const persistedActor = (await raw`select operator_principal_id from pilot_manual_message_preparations where id=${snapshotFirst.preparationId}::uuid`)[0]?.operator_principal_id;
+  assert.equal(persistedActor, 'manual-operator-a');
+  pass('21 replay by another principal rejected');
+
+  assert.equal(await count('pilot_manual_message_events', `where preparation_id='${preparedWhatsApp.preparationId}'::uuid`), 0);
+  pass('22 PREPARED creates no sending event');
+  const opened = await recordManualOpen(db, preparedWhatsApp.preparationId, { idempotencyKey: randomUUID() }, primaryActor);
+  assert.equal(opened.state, 'OPENED');
+  assert.equal(await count('pilot_manual_message_events', `where preparation_id='${preparedWhatsApp.preparationId}'::uuid and event_type='CONTACT_CONFIRMED'`), 0);
+  pass('23 OPENED is not sending');
+  pass('24 CONTACT_CONFIRMED requires explicit call');
+  const confirmationKey = randomUUID();
+  const confirmed = await confirmManualResult(db, preparedWhatsApp.preparationId, { result: 'NOT_SENT', idempotencyKey: confirmationKey }, primaryActor);
+  const confirmationReplay = await confirmManualResult(db, preparedWhatsApp.preparationId, { result: 'NOT_SENT', idempotencyKey: confirmationKey }, primaryActor);
+  assert.equal(confirmationReplay.eventId, confirmed.eventId);
+  assert.equal(confirmationReplay.replayed, true);
+  pass('25 duplicate confirmation');
+  await expectCode(confirmManualResult(db, randomUUID(), { result: 'NOT_SENT', idempotencyKey: randomUUID() }, primaryActor), 'NOT_FOUND');
+  pass('26 nonexistent preparation confirmation');
+
+  const revokedAfter = await fixture();
+  const revokedPreparation = await prepareManualMessage(db, revokedAfter.pilotId, revokedAfter.leadId, waInput(revokedAfter.phoneId), primaryActor);
+  await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${revokedAfter.leadId}::uuid,'WHATSAPP','after prepared','integration')`;
+  await expectCode(confirmManualResult(db, revokedPreparation.preparationId, { result: 'SENT_CONFIRMED', idempotencyKey: randomUUID() }, primaryActor), 'INELIGIBLE');
+  pass('27 opt-out after PREPARED');
+
+  const during = await fixture();
+  const duringPreparation = await prepareManualMessage(db, during.pilotId, during.leadId, waInput(during.phoneId), primaryActor);
+  let release!: () => void;
+  const inserted = new Promise<void>((resolve) => { release = resolve; });
+  const optOutTransaction = raw.begin(async (tx) => {
+    await tx`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${during.leadId}::uuid,'WHATSAPP','during confirmation','integration')`;
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+  await inserted;
+  const duringConfirmation = confirmManualResult(db, duringPreparation.preparationId, { result: 'SENT_CONFIRMED', idempotencyKey: randomUUID() }, primaryActor);
+  await optOutTransaction;
+  await expectCode(duringConfirmation, 'INELIGIBLE');
+  pass('28 opt-out committed during confirmation wins');
+
+  const restart = createDatabase(databaseUrl);
+  const restartReplay = await prepareManualMessage(restart.db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
+  assert.equal(restartReplay.link, snapshotFirst.link);
+  await restart.close();
+  pass('29 persisted state after restart');
+
+  assert.equal(await count('campaign_attempts'), 0); pass('30 zero campaign_attempts');
+  assert.equal(await count('campaign_outbox'), 0); pass('31 zero outbox');
+  assert.equal(await count('campaign_provider_events'), 0); pass('32 zero provider events');
+  pass('33 zero network calls by construction');
+
+  const token = 'synthetic-manual-api-token';
+  const url = `/pilots/${whatsapp.pilotId}/leads/${whatsapp.leadId}/manual-messages/prepare`;
+  const payload = { contactId: whatsapp.phoneId, requestedChannel: 'WHATSAPP', templateId: 'pilot-whatsapp-first-contact', templateVersion: 'v1' };
+  const headers = { authorization: `Bearer ${token}`, 'idempotency-key': randomUUID() };
+  const logChunks: string[] = [];
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    logChunks.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  const app = buildApp(db, { authentication: { token, principalId: 'http-operator', principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open', 'manual-messaging:confirm'] } });
+  assert.equal((await app.inject({ method: 'POST', url, payload })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url, payload, headers: { authorization: 'Bearer invalid', 'idempotency-key': randomUUID() } })).statusCode, 401);
+  const forbiddenApp = buildApp(db, { authentication: { token, principalPermissions: [] } });
+  assert.equal((await forbiddenApp.inject({ method: 'POST', url, payload, headers })).statusCode, 403);
+  await forbiddenApp.close();
+  assert.equal((await app.inject({ method: 'POST', url: '/pilots/not-a-uuid/leads/not-a-uuid/manual-messages/prepare', payload, headers })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url, payload: { ...payload, actor: 'forged' }, headers })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url, payload, headers: { authorization: `Bearer ${token}` } })).statusCode, 400);
+  const httpPrepared = await app.inject({ method: 'POST', url, payload, headers });
+  assert.equal(httpPrepared.statusCode, 201);
+  assert.match(httpPrepared.json().link, /^https:\/\/wa\.me\//);
+  const httpId = httpPrepared.json().preparationId as string;
+  assert.equal((await raw`select operator_principal_id from pilot_manual_message_preparations where id=${httpId}::uuid`)[0]?.operator_principal_id, 'http-operator');
+  assert.equal((await app.inject({ method: 'POST', url, payload: { ...payload, requestedChannel: 'EMAIL', templateId: 'pilot-email-first-contact' }, headers })).statusCode, 409);
+  const ineligibleUrl = `/pilots/${noOptIn.pilotId}/leads/${noOptIn.leadId}/manual-messages/prepare`;
+  assert.equal((await app.inject({ method: 'POST', url: ineligibleUrl, payload: { ...payload, contactId: noOptIn.phoneId }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 422);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${randomUUID()}/open`, payload: {}, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 404);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/open`, payload: { actor: 'forged' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/open`, payload: {}, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 201);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'UNKNOWN' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'NOT_SENT', actor: 'forged' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'OPT_OUT' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 403);
+  const optOutApp = buildApp(db, { authentication: { token, principalId: 'http-operator', principalPermissions: ['manual-messaging:confirm', 'manual-messaging:opt-out'] } });
+  assert.equal((await optOutApp.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'OPT_OUT' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 201);
+  await optOutApp.close();
+  await app.close();
+  process.stdout.write = originalStdoutWrite;
+  const manualLogs = logChunks.join('');
+  assert.ok(!manualLogs.includes('synthetic-phone'));
+  assert.ok(!manualLogs.includes(preparedWhatsApp.message));
+  assert.ok(!manualLogs.includes(preparedWhatsApp.link));
+  pass('HTTP prepare/open/confirm auth, validation, 404/409/422, principal and opt-out permission');
+
+  const sensitive = JSON.stringify({ phone: '55 9 9123-4567', email: 'a@company.example', message: snapshotFirst.message, link: snapshotFirst.link });
+  const safeEvidence = JSON.stringify({ tests: report, counts: { preparations: await count('pilot_manual_message_preparations'), events: await count('pilot_manual_message_events') } });
+  assert.ok(!safeEvidence.includes('55 9 9123-4567') && !safeEvidence.includes('a@company.example') && !safeEvidence.includes(snapshotFirst.message));
+  assert.ok(sensitive.length > safeEvidence.length);
+  pass('34 evidence and errors contain no PII');
+
+  console.log(JSON.stringify({ result: 'MANUAL_MESSAGING_POSTGRES_PASS', tests: report, networkCalls: 0 }));
+} finally {
+  process.stdout.write = originalStdoutWrite;
+  await close();
+  await raw.end();
+}

@@ -34,6 +34,7 @@
     ,"restore:suppression:verify": "tsx scripts/restore-suppression/cli.ts verify"
     ,"test:restore-suppression": "tsx scripts/restore-suppression.integration.ts"
     ,"test:supabase-data-api-security": "tsx scripts/supabase-data-api-security.integration.ts"
+    ,"test:manual-messaging": "tsx scripts/manual-messaging.integration.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",

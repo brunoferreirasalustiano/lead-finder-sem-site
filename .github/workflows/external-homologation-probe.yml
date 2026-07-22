@@ -1,0 +1,57 @@
+name: External homologation probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/external-homologation-probe.yml'
+      - 'scripts/external-homologation-probe.sh'
+  workflow_dispatch:
+    inputs:
+      render_base_url:
+        description: 'Public Render base URL to probe'
+        required: false
+        default: 'https://lead-finder-api-hml.onrender.com'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-homologation-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: public Pages and Render discovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PAGES_BASE_URL: https://brunoferreirasalustiano.github.io/lead-finder-demos
+      RENDER_BASE_URL: ${{ inputs.render_base_url || 'https://lead-finder-api-hml.onrender.com' }}
+      OUTPUT_FILE: external-homologation-probe.json
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run read-only external probe
+        run: bash scripts/external-homologation-probe.sh
+
+      - name: Publish probe summary
+        if: always()
+        run: |
+          if [[ -f "$OUTPUT_FILE" ]]; then
+            echo '## External homologation probe' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$OUTPUT_FILE" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Probe did not produce an evidence file.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload sanitized evidence
+        if: always() && hashFiles('external-homologation-probe.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-homologation-probe
+          path: external-homologation-probe.json
+          if-no-files-found: error
+          retention-days: 7

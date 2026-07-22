@@ -184,6 +184,8 @@ jobs:
       - run: npm run build
       - name: Apply migrations twice to verify version control
         run: npm run db:migrate && npm run db:migrate
+      - name: Verify Supabase Data API deny-all defaults on PostgreSQL
+        run: npm run test:supabase-data-api-security
       - name: Run automated synthetic batch gate on PostgreSQL
         run: npm run test:batch-gate
       - name: Run restore suppression reconciliation on PostgreSQL 16

@@ -19,7 +19,7 @@ de confirmação. A suíte PostgreSQL da PR #84 mantém a transação da evidên
 comprova que replay e confirmação aguardam o lock e exige término fail-closed após o commit.
 
 **Última revisão documental:** 2026-07-22  
-**Baseline revisada:** PR #84 — head `6e5a8c5e5a2f6f52e7caf8ef20959053c2d42952`
+**Baseline revisada:** PR #84 — branch `feat/manual-assisted-messaging-foundation`
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. Ele registra o que está implementado, o que está somente preparado, quais integrações permanecem desligadas e quais bloqueios impedem o piloto real.
 

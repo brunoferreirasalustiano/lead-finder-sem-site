@@ -8,8 +8,18 @@ na confirmação. Uma autorização posterior não reativa opt-out global ou de 
 `NAO_CONTATAR`, `do_not_contact` nem bloqueio administrativo. Qualquer reativação exige fluxo
 separado, explícito e permissionado, fora deste piloto.
 
+## Concorrência de evidência empresarial
+
+Alterações em `contact_email_business_evidence` compartilham o lock transacional
+`manual-messaging:<lead_id>` usado por preparação, replay e confirmação. A ordem de aquisição é
+fixa: primeiro o lock do lead e depois `email-business-evidence:<contact_id>`, responsável pelo
+versionamento sequencial do contato. Assim, uma decisão `PERSONAL`, `UNKNOWN` ou `REJECTED`
+commitada antes da conclusão da operação sempre vence e impede reconstrução de link ou registro
+de confirmação. A suíte PostgreSQL da PR #84 mantém a transação da evidência aberta por latch,
+comprova que replay e confirmação aguardam o lock e exige término fail-closed após o commit.
+
 **Última revisão documental:** 2026-07-22  
-**Baseline revisada:** `38f5810d2fc959261ba3d5d858c3a4d6fa001eed`
+**Baseline revisada:** PR #84 — branch `feat/manual-assisted-messaging-foundation`
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. Ele registra o que está implementado, o que está somente preparado, quais integrações permanecem desligadas e quais bloqueios impedem o piloto real.
 
@@ -24,6 +34,7 @@ O histórico detalhado continua nas issues, pull requests, runbooks e evidência
 - o piloto manual possui runbook, template, registro de riscos e critérios de revisão humana;
 - a WhatsApp Cloud API e a OpenAI ainda não estão integradas ao runtime;
 - a reconciliação segura de supressões após restore foi implementada e validada na PR #69, sem autorizar restore real, retomada automática ou piloto;
+- as Fases A/B de mensageria manual assistida estão em revisão na PR #84, sem provider, egress ou envio real;
 - nenhum resultado comercial real foi produzido pelo sistema.
 
 ## Perfis de implantação
@@ -159,9 +170,13 @@ Referências:
 
 ## WhatsApp e IA
 
-As Fases A/B possuem agora uma fundação local em revisão: contratos tipados, providers fake sem rede, normalização E.164 e fluxo manual assistido com estados `PREPARED`, `OPENED` e `CONTACT_CONFIRMED`. A preparação e a confirmação reavaliam PostgreSQL de forma fail-closed; abrir um link não registra envio. Esta implementação não libera o piloto, provider, egress ou envio real enquanto a PR e todos os gates não forem aprovados.
+As Fases A/B possuem agora uma fundação local em revisão: contratos tipados, providers fake sem rede, normalização E.164 e fluxo manual assistido com estados `PREPARED`, `OPENED`, `CONTACT_CONFIRMED` e `RESPONSE_RECORDED`. A preparação, o replay e a confirmação reavaliam PostgreSQL de forma fail-closed; abrir um link não registra envio.
 
-A arquitetura e os controles estão documentados, mas não implementados no runtime.
+Evidências empresariais de e-mail são append-only e serializadas pelo mesmo lock do lead usado pelas operações de mensageria. A ordem de locks é sempre lead e depois contato. Os testes concorrentes mantêm uma decisão desfavorável sem commit, comprovam que replay e confirmação permanecem aguardando e exigem `INELIGIBLE` após o commit. O snapshot persistido não contém telefone, e-mail, mensagem renderizada ou URL completa.
+
+Esta implementação não libera o piloto, provider, egress ou envio real enquanto a PR #84 e todos os gates não forem aprovados.
+
+A arquitetura e os controles estão documentados, mas integrações externas não estão implementadas no runtime.
 
 - IA poderá gerar rascunhos e classificações em shadow mode;
 - IA nunca recebe capacidade de envio;
@@ -208,7 +223,7 @@ O botão comercial do site não significa que a aplicação principal possua pro
 1. integrar a PR #69 com proteção pelo head esperado e validar CI/Deployment smoke na `main`;
 2. aplicar e verificar a migration `0016` no Supabase de homologação por procedimento controlado;
 3. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
-4. executar a fundação segura e o fluxo manual assistido da issue #71;
+4. concluir a revisão e integrar a fundação segura e o fluxo manual assistido da issue #71;
 5. preparar OpenAI em shadow mode e Meta em sandbox pela issue #79;
 6. executar o primeiro lote manual somente após todos os gates;
 7. implementar propostas, dashboard e automações posteriores;

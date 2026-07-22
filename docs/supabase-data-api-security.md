@@ -19,7 +19,17 @@ A migration `0015_supabase_public_schema_hardening.sql`:
 - fixa `search_path` das funções públicas;
 - revoga execução de funções de `PUBLIC`, `anon` e `authenticated`.
 
+A migration corretiva `0017_restore_suppression_security_hardening.sql` fecha a regressão introduzida por objetos criados depois da `0015`. Ela protege `restore_suppression_runs` e `protect_restore_suppression_run()`, preserva acesso server-side do owner e de `service_role` e revoga default privileges de tabelas, sequências e funções para o **role efetivo que executa as migrations**. Não existe suposição de que esse role se chame `postgres`: no Compose ele é normalmente `leadfinder`, enquanto o perfil Supabase pode usar outro owner autorizado.
+
+As referências opcionais a `anon`, `authenticated` e `service_role` são condicionais para manter compatibilidade com PostgreSQL 16 puro. Os únicos identificadores usados nesse bloco pertencem a uma allowlist fixa; nenhum nome ou SQL vem de entrada externa.
+
 A aplicação continua autorizada pelo papel proprietário usado na conexão PostgreSQL server-side. RLS não deve ser contornada por um cliente público ou por credencial distribuída ao navegador.
+
+## Incidente sanitizado de 2026-07-22
+
+Depois da aplicação da migration `0016` em homologação, a nova tabela foi observada com RLS desabilitado e grants para roles da Data API; a função associada também manteve EXECUTE público. A causa raiz foi temporal: a `0015` endurecia apenas os objetos existentes e não revogava default privileges do role efetivo das migrations. A homologação foi remediada emergencialmente e permaneceu deny-all. Este registro não contém URL de conexão, token, PII, dados de leads ou payloads.
+
+O gate `npm run test:supabase-data-api-security` cria um banco PostgreSQL descartável com owner não-`postgres`, aplica as migrations duas vezes, reaplica a `0017` duas vezes para comprovar idempotência e verifica RLS, ACLs, `search_path`, ausência de policies e default privileges por meio de objetos sintéticos futuros. O banco e as roles do fixture são removidos ao final.
 
 ## Evidência de homologação
 

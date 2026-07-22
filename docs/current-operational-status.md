@@ -36,8 +36,9 @@ Estado verificado em 2026-07-22:
 - projeto Supabase `lead-finder-brasil-homologacao` em `ACTIVE_HEALTHY`;
 - região `sa-east-1`;
 - PostgreSQL 17.6;
-- migrations `0001` até `0015` aplicadas;
-- migration `0016_restore_suppression_reconciliation.sql` versionada na PR #69 e ainda dependente de aplicação controlada após integração;
+- migrations `0001` até `0016` aplicadas;
+- incidente de grants/RLS nos objetos da `0016` remediado emergencialmente na homologação, sem nova alteração do projeto durante a PR #82;
+- migration corretiva `0017_restore_suppression_security_hardening.sql` em validação na PR #82 para tornar o deny-all reproduzível e proteger objetos futuros;
 - nenhuma Edge Function implantada;
 - somente pequeno estado sintético de homologação.
 
@@ -90,6 +91,8 @@ A Data API permanece deliberadamente deny-all:
 - `CREATE` no schema público revogado;
 - backend conectado diretamente ao PostgreSQL;
 - nenhum cliente `supabase-js` ou `/rest/v1` no runtime.
+
+Em 2026-07-22, a aplicação da `0016` revelou que a `0015` protegia os objetos existentes, mas não os criados posteriormente pelo role efetivo das migrations. A correção emergencial de homologação restaurou o deny-all. A PR #82 versiona a correção por meio da `0017` e adiciona um gate PostgreSQL descartável; nenhum acesso adicional ao Supabase real faz parte dessa validação.
 
 O advisor `RLS Enabled No Policy` é informativo neste desenho. Não criar policies permissivas apenas para remover o aviso.
 

@@ -14,10 +14,11 @@ export interface LeadBatchReport {
 
 export function createDryRunItemProcessor(input: {
   db: Database; workerId: string; leaseMs: number; dailyLimit: number;
-  executionSource: ExecutionSource; policy: CampaignExecutionPolicy;
+  executionSource: ExecutionSource; policy: CampaignExecutionPolicy; now?: () => Date;
 }) {
   return async (): Promise<boolean> => {
-    const now = new Date();
+    const now = input.now?.() ?? new Date();
+    if (!Number.isFinite(now.getTime())) throw new RangeError('now must return a valid date');
     const claim = await claimCampaignOutbox(input.db, {
       workerId: input.workerId, leaseMs: input.leaseMs, maxAttempts: input.policy.maxAttempts, now,
     });

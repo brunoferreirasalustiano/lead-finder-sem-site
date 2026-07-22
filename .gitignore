@@ -11,4 +11,6 @@ coverage/
 .pilot-backups/
 *.tsbuildinfo
 *.log
+*.suppression-manifest.json
+restore-suppression-manifests/
 .DS_Store

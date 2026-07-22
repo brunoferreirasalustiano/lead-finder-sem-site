@@ -22,6 +22,10 @@ if [[ "$mode" == --dry-run ]]; then
   exit 0
 fi
 
+[[ -n "${RESTORE_SUPPRESSION_MANIFEST:-}" ]] || pilot_die 'RESTORE_SUPPRESSION_MANIFEST e obrigatorio; use caminho privado fora do Git.'
+[[ -f "$RESTORE_SUPPRESSION_MANIFEST" ]] || pilot_die 'Manifesto de supressao ausente.'
+npm run restore:suppression:validate -- --manifest "$RESTORE_SUPPRESSION_MANIFEST"
+
 [[ "${PILOT_BACKUP_RESTORE_CONFIRMATION:-}" == RESTORE_SYNTHETIC_HOMOLOGATION ]] || pilot_die 'Defina PILOT_BACKUP_RESTORE_CONFIRMATION=RESTORE_SYNTHETIC_HOMOLOGATION para executar.'
 trap 'status=$?; if (( status != 0 )); then pilot_write_evidence "$evidence_dir" backup-restore.json GATE_BACKUP_RESTORE FAIL; fi; exit "$status"' ERR
 umask 077

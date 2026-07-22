@@ -1,5 +1,7 @@
 # Retenção e exclusão de dados
 
+O manifesto de supressão pós-restore é sensível, mínimo e temporário: permissão restrita, armazenamento fora do Git, digest validado antes de escrita e descarte seguro após retenção aprovada. Alvo não resolvido bloqueia retomada e não autoriza recriação de PII ou exclusão de histórico.
+
 Princípios: minimizar, limitar acesso, registrar somente agregados e não executar exclusão destrutiva automática sem teste PostgreSQL e backup verificável.
 
 | Classe | Política operacional |

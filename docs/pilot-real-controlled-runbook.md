@@ -1,5 +1,7 @@
 # Primeiro ciclo real controlado — homologação fail-closed
 
+Antes de restore, pare API/worker, confirme ausência de processamento e exporte/valide o manifesto conforme `infrastructure/backup-and-restore.md`. Após restore e migrations, execute dry-run, aplicação explícita, verificação em nova conexão e preflight. Nenhum serviço inicia automaticamente; qualquer falha mantém `RESTORE_SUPPRESSION_BLOCKED`.
+
 Este runbook prepara a homologação do primeiro piloto da issue #33. Ele não autoriza contato, coleta, scraping, envio, provider, webhook, SDK de mensageria, WhatsApp Web, n8n, deploy produtivo ou uso de dados reais.
 
 ## Limites e pré-requisitos

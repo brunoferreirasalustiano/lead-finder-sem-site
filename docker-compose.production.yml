@@ -33,6 +33,25 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
     logging: *production-logging
     networks: [database]
+  restore-suppression:
+    <<: *production-security
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    profiles: [tools]
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    user: "${RESTORE_RUNNER_UID:-1000}:${RESTORE_RUNNER_GID:-1000}"
+    ports: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    volumes:
+      - type: bind
+        source: ${RESTORE_SUPPRESSION_MANIFEST_DIR:-./backups}
+        target: /restore-manifests
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    logging: *production-logging
+    networks: [database]
   worker:
     <<: *production-security
     ports: !reset []

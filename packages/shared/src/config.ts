@@ -17,6 +17,10 @@ export const apiAuthPermissions = [
   'pilot:record-contact',
   'pilot:record-result',
   'pilot:complete',
+  'manual-messaging:prepare',
+  'manual-messaging:open',
+  'manual-messaging:confirm',
+  'manual-messaging:opt-out',
 ] as const;
 export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
 

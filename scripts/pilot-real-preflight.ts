@@ -12,6 +12,7 @@ import {
   validateShadowModeIsolation,
 } from '@lead-finder/shared';
 import { evaluateSyntheticBatch, loadSyntheticBatch } from './pilot-real-synthetic-batch.js';
+import postgres from 'postgres';
 
 type Evidence = Readonly<{ gate: PilotGateName; status: PilotGateStatus }>;
 type ManualApproval = Readonly<{
@@ -89,6 +90,7 @@ export function buildPilotRealPreflightReport(input: {
   environment?: Record<string, string | undefined>;
   shadowIsolation: { status: PilotGateStatus };
   backupRestore?: Evidence;
+  restoreSuppressionStatus?: PilotGateStatus;
   rollback?: Evidence;
   killSwitch?: Evidence;
   logPrivacy?: { status: 'PASS' | 'FAIL' };
@@ -106,6 +108,7 @@ export function buildPilotRealPreflightReport(input: {
   gates.GATE_MINIMUM_PERMISSIONS = statusFromChecks(homologation, permissions);
   const operationsReady = homologation.status === 'PASS';
   gates.GATE_BACKUP_RESTORE = operationsReady ? evidenceStatus(input.backupRestore, 'GATE_BACKUP_RESTORE') : 'NOT RUN';
+  gates.GATE_RESTORE_SUPPRESSION = operationsReady ? input.restoreSuppressionStatus ?? 'NOT RUN' : 'NOT RUN';
   gates.GATE_ROLLBACK = operationsReady ? evidenceStatus(input.rollback, 'GATE_ROLLBACK') : 'NOT RUN';
   gates.GATE_KILL_SWITCH = operationsReady ? evidenceStatus(input.killSwitch, 'GATE_KILL_SWITCH') : 'NOT RUN';
   gates.GATE_LOG_PRIVACY = operationsReady ? input.logPrivacy?.status ?? 'NOT RUN' : 'NOT RUN';
@@ -122,6 +125,19 @@ export function buildPilotRealPreflightReport(input: {
   };
 }
 
+async function databaseRestoreSuppressionStatus(databaseUrl: string | undefined): Promise<PilotGateStatus> {
+  if (!databaseUrl) return 'NOT RUN';
+  const sql = postgres(databaseUrl, { max: 1, connect_timeout: 5 });
+  try {
+    const rows = await sql<{ safe: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM restore_suppression_runs r
+        WHERE r.state='RESTORE_SUPPRESSION_SAFE' AND r.verified_at IS NOT NULL
+          AND r.applied_at >= COALESCE((SELECT max(updated_at) FROM leads WHERE is_blocked OR do_not_contact OR crm_stage='NAO_CONTATAR'), '-infinity'::timestamptz)
+          AND r.applied_at >= COALESCE((SELECT max(created_at) FROM campaign_opt_outs), '-infinity'::timestamptz)) safe`;
+    return rows[0]?.safe ? 'PASS' : 'BLOCKED';
+  } catch { return 'BLOCKED'; } finally { await sql.end(); }
+}
+
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -130,6 +146,12 @@ function option(name: string): string | undefined {
 async function run() {
   const envFile = option('--env-file') ?? (await exists('.env.homologation') ? '.env.homologation' : undefined);
   const environment = await readEnvironment(envFile);
+  if (process.argv.includes('--restore-suppression-only')) {
+    const status = await databaseRestoreSuppressionStatus(environment?.DATABASE_URL ?? process.env['DATABASE_URL']);
+    process.stdout.write(`${JSON.stringify({ gate: 'GATE_RESTORE_SUPPRESSION', status })}\n`);
+    if (status !== 'PASS') process.exitCode = 2;
+    return;
+  }
   const evidenceDirectory = option('--evidence-dir') ?? environment?.PILOT_EVIDENCE_DIR ?? '.pilot-evidence';
   const [development, production, homologation, backupRestore, rollback, killSwitch, logPrivacy, manualApproval] = await Promise.all([
     readEnvironment('.env.example'),
@@ -147,7 +169,7 @@ async function run() {
   const report = buildPilotRealPreflightReport({
     environment,
     shadowIsolation: validateShadowModeIsolation({ development, production, homologation }),
-    backupRestore, rollback, killSwitch, logPrivacy, manualApproval, syntheticBatchStatus,
+    backupRestore, restoreSuppressionStatus: await databaseRestoreSuppressionStatus(environment?.DATABASE_URL), rollback, killSwitch, logPrivacy, manualApproval, syntheticBatchStatus,
   });
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   const output = option('--output');

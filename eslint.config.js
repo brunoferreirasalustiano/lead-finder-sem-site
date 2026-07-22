@@ -11,6 +11,7 @@ export default tseslint.config(
       'eslint.config.js',
       'scripts/*.ts',
       'scripts/database/*.ts',
+      'scripts/restore-suppression/*.ts',
       'deploy/supabase/functions/**/*.ts',
     ],
   },

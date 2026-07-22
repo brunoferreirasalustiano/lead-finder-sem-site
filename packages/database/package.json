@@ -9,7 +9,9 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@lead-finder/messaging": "*",
     "@lead-finder/shared": "*",
+    "@lead-finder/whatsapp": "*",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.7"
   }

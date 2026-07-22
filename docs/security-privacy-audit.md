@@ -1,5 +1,7 @@
 # Auditoria de segurança e privacidade operacional
 
+Controle de restore: API/worker não retomam sem evidência PostgreSQL verificada `RESTORE_SUPPRESSION_SAFE`. Manifesto ausente, inválido, stale ou com alvo não resolvido bloqueia. A evidência persiste apenas versão, digest, contagens, estado, timestamps e ator sanitizado; o conteúdo e PII não são armazenados.
+
 Base auditada: `2533e7e40f1b633fc05c83e23576858b09da7630`. Escopo: operação shadow com dados reais, sem provider, webhook, SDK ou envio real.
 
 ## Classificação de dados

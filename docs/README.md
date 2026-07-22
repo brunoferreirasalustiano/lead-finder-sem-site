@@ -24,6 +24,8 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
 - [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
 - [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.
+- [Qualificação de canais do primeiro lote](lead-channel-qualification-runbook.md) — hierarquia de fontes, classificação empresarial, opt-in de WhatsApp, supressões e decisão final.
+- [Pacote de aprovação final por lead](first-batch-final-approval-packet.md) — ficha privada, gates técnicos e decisão individual antes do contato.
 
 ## WhatsApp e IA
 
@@ -44,6 +46,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 - [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md) — arquitetura free-tier com processamento limitado e fail-closed.
 - [Runbook Supabase + Render](runbooks/supabase-render-deployment.md) — migrations, Render Blueprint, Edge Function opcional, Cron e desligamento.
+- [Evidências da homologação externa](external-homologation-evidence-runbook.md) — níveis de prova, GitHub Pages, Render, health checks, flags, kill switch e restart.
 - [Operação com dois perfis](runbooks/dual-deployment-operations.md) — liderança, failover e prevenção de split-brain.
 - [Variáveis de ambiente](infrastructure/environment-variables.md) — variáveis ativas, secrets e defaults seguros.
 - [Gate sintético de batch](infrastructure/synthetic-batch-gate.md) — processamento determinístico em PostgreSQL descartável.

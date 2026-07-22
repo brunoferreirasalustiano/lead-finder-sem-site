@@ -83,6 +83,11 @@ requireText(privacy.text, 'leadfinderbrasil@gmail.com', 'PRIVACY_CONTACT', pageE
 requireText(privacy.text, 'um número apenas publicado na internet não é considerado autorização', 'WHATSAPP_OPT_IN_RULE', pageErrors);
 requireText(privacy.text, 'nenhum link, imagem, PDF, proposta ou preço no primeiro contato sem autorização', 'FIRST_CONTACT_SAFEGUARD', pageErrors);
 requireText(privacy.text, 'O opt-out não exige justificativa', 'OPT_OUT_RULE', pageErrors);
+requireText(privacy.text, `<link rel="canonical" href="${pagesBaseUrl}/privacidade/">`, 'PRIVACY_CANONICAL', pageErrors);
+requireText(privacy.text, 'href="../servicos/"', 'PRIVACY_SERVICES_LINK', pageErrors);
+requireText(privacy.text, 'href="../sobre/"', 'PRIVACY_ABOUT_LINK', pageErrors);
+requireText(privacy.text, 'href="../presenca-digital/"', 'PRIVACY_PRESENCE_LINK', pageErrors);
+requireText(privacy.text, 'meta name="robots" content="index,follow', 'PRIVACY_INDEXING', pageErrors);
 requireText(barber.text, 'Lead Finder Brasil', 'BARBER_BRAND', pageErrors);
 
 const pagesStatus = [home.http, privacy.http, barber.http].some((code) => code !== 200)
@@ -128,6 +133,9 @@ const result = {
     privacyHttp: String(privacy.http).padStart(3, '0'),
     barberHttp: String(barber.http).padStart(3, '0'),
     privacyNotice: pagesStatus === 'SERVED' ? 'VERIFIED' : 'UNVERIFIED',
+    canonical: pagesStatus === 'SERVED' ? 'VERIFIED' : 'UNVERIFIED',
+    internalLinks: pagesStatus === 'SERVED' ? 'VERIFIED' : 'UNVERIFIED',
+    indexing: pagesStatus === 'SERVED' ? 'ENABLED' : 'UNVERIFIED',
     tracking: pagesStatus === 'SERVED' ? 'ABSENT' : 'UNVERIFIED',
     formCollection: pagesStatus === 'SERVED' ? 'ABSENT' : 'UNVERIFIED',
     errors: pageErrors,

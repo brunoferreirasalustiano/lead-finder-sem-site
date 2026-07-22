@@ -28,6 +28,10 @@ CREATE INDEX IF NOT EXISTS contact_email_business_evidence_current_idx ON contac
 CREATE OR REPLACE FUNCTION validate_email_business_evidence_append() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE expected_version integer;
 BEGIN
+  -- Lock order is fixed across manual messaging: lead first, then contact.
+  -- This makes a concurrent unfavorable email-evidence decision visible before
+  -- replay or confirmation can complete.
+  PERFORM pg_advisory_xact_lock(hashtextextended('manual-messaging:' || NEW.lead_id::text,0));
   PERFORM pg_advisory_xact_lock(hashtextextended('email-business-evidence:' || NEW.contact_id::text,0));
   SELECT coalesce(max(version),0)+1 INTO expected_version FROM public.contact_email_business_evidence WHERE contact_id=NEW.contact_id;
   IF NEW.version <> expected_version THEN RAISE EXCEPTION 'email business evidence version must be %', expected_version USING ERRCODE='23514'; END IF;

@@ -148,14 +148,62 @@ try {
     `);
     await assertDenyAll(db, 'objects created after migration 0017 must be deny-all');
 
-    const serviceAccess = await db<{ currentTable: boolean; currentFunction: boolean; futureTable: boolean; futureSequence: boolean; futureFunction: boolean }[]>`
+    const serviceAccess = await db<{
+      currentSelect: boolean;
+      currentInsert: boolean;
+      currentUpdate: boolean;
+      currentDelete: boolean;
+      currentTruncate: boolean;
+      currentReferences: boolean;
+      currentTrigger: boolean;
+      currentFunction: boolean;
+      futureSelect: boolean;
+      futureInsert: boolean;
+      futureUpdate: boolean;
+      futureDelete: boolean;
+      futureTruncate: boolean;
+      futureReferences: boolean;
+      futureTrigger: boolean;
+      futureSequence: boolean;
+      futureFunction: boolean;
+    }[]>`
       SELECT
-        has_table_privilege('service_role', 'public.restore_suppression_runs', 'SELECT,INSERT,UPDATE') AS "currentTable",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'SELECT') AS "currentSelect",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'INSERT') AS "currentInsert",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'UPDATE') AS "currentUpdate",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'DELETE') AS "currentDelete",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'TRUNCATE') AS "currentTruncate",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'REFERENCES') AS "currentReferences",
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'TRIGGER') AS "currentTrigger",
         has_function_privilege('service_role', 'public.protect_restore_suppression_run()', 'EXECUTE') AS "currentFunction",
-        has_table_privilege('service_role', 'public.security_future_table', 'SELECT,INSERT,UPDATE') AS "futureTable",
+        has_table_privilege('service_role', 'public.security_future_table', 'SELECT') AS "futureSelect",
+        has_table_privilege('service_role', 'public.security_future_table', 'INSERT') AS "futureInsert",
+        has_table_privilege('service_role', 'public.security_future_table', 'UPDATE') AS "futureUpdate",
+        has_table_privilege('service_role', 'public.security_future_table', 'DELETE') AS "futureDelete",
+        has_table_privilege('service_role', 'public.security_future_table', 'TRUNCATE') AS "futureTruncate",
+        has_table_privilege('service_role', 'public.security_future_table', 'REFERENCES') AS "futureReferences",
+        has_table_privilege('service_role', 'public.security_future_table', 'TRIGGER') AS "futureTrigger",
         has_sequence_privilege('service_role', 'public.security_future_sequence', 'USAGE,SELECT,UPDATE') AS "futureSequence",
         has_function_privilege('service_role', 'public.security_future_function()', 'EXECUTE') AS "futureFunction"`;
-    assert.deepEqual(serviceAccess[0], { currentTable: true, currentFunction: true, futureTable: true, futureSequence: true, futureFunction: true });
+    assert.deepEqual(serviceAccess[0], {
+      currentSelect: true,
+      currentInsert: true,
+      currentUpdate: true,
+      currentDelete: false,
+      currentTruncate: false,
+      currentReferences: false,
+      currentTrigger: false,
+      currentFunction: true,
+      futureSelect: true,
+      futureInsert: true,
+      futureUpdate: true,
+      futureDelete: false,
+      futureTruncate: false,
+      futureReferences: false,
+      futureTrigger: false,
+      futureSequence: true,
+      futureFunction: true,
+    });
 
     await db.unsafe(`
       GRANT SELECT ON TABLE public.security_future_table TO PUBLIC;

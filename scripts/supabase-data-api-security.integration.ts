@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
 
+type Database = ReturnType<typeof postgres>;
+type Finding = { category: string; objectType: string; objectName: string; grantee: string; privilege: string };
+
 const sourceUrl = process.env['DATABASE_URL'];
 if (!sourceUrl) throw new Error('DATABASE_URL is required');
 
@@ -18,6 +21,19 @@ const fixtureUrl = new URL(sourceUrl);
 fixtureUrl.pathname = `/${databaseName}`;
 fixtureUrl.username = ownerName;
 fixtureUrl.password = ownerPassword;
+
+async function seedSupabaseDefaults(url: string) {
+  const db = postgres(url, { max: 1 });
+  try {
+    await db.unsafe(`
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO authenticated;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
+    `);
+  } finally {
+    await db.end();
+  }
+}
 
 async function applyMigrationsTwice(url: string) {
   const db = postgres(url, { max: 1 });
@@ -44,6 +60,62 @@ async function applyMigrationsTwice(url: string) {
   }
 }
 
+async function detectDenyAllViolations(db: Database): Promise<Finding[]> {
+  return db<Finding[]>`
+    WITH relation_acl AS (
+      SELECT
+        'acl'::text AS category,
+        CASE c.relkind WHEN 'S' THEN 'sequence' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' ELSE 'table' END AS object_type,
+        c.relname AS object_name,
+        CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END AS grantee,
+        acl.privilege_type AS privilege
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(coalesce(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 'S'::"char" ELSE 'r'::"char" END, c.relowner))) acl
+      LEFT JOIN pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = 'public'
+        AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+        AND (acl.grantee = 0 OR r.rolname IN ('anon', 'authenticated'))
+    ), function_acl AS (
+      SELECT
+        'acl'::text AS category,
+        'function'::text AS object_type,
+        p.oid::regprocedure::text AS object_name,
+        CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END AS grantee,
+        acl.privilege_type AS privilege
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+      LEFT JOIN pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = 'public'
+        AND acl.privilege_type = 'EXECUTE'
+        AND (acl.grantee = 0 OR r.rolname IN ('anon', 'authenticated'))
+    ), rls AS (
+      SELECT 'rls'::text, 'table'::text, c.relname, 'PUBLIC'::text, 'DISABLED'::text
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
+    ), policies AS (
+      SELECT 'policy'::text, 'table'::text, tablename, coalesce(array_to_string(roles, ','), 'PUBLIC'), policyname
+      FROM pg_policies WHERE schemaname = 'public'
+    ), search_paths AS (
+      SELECT 'search_path'::text, 'function'::text, p.oid::regprocedure::text, 'owner'::text, coalesce(array_to_string(p.proconfig, ','), 'UNSET')
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND NOT coalesce(p.proconfig @> ARRAY['search_path=pg_catalog, public'], false)
+    )
+    SELECT category, object_type AS "objectType", object_name AS "objectName", grantee, privilege FROM relation_acl
+    UNION ALL SELECT category, object_type, object_name, grantee, privilege FROM function_acl
+    UNION ALL SELECT * FROM rls
+    UNION ALL SELECT * FROM policies
+    UNION ALL SELECT * FROM search_paths
+    ORDER BY 1, 2, 3, 4, 5`;
+}
+
+const assertDenyAll = async (db: Database, context: string) => {
+  const findings = await detectDenyAllViolations(db);
+  assert.equal(findings.length, 0, `${context}: ${JSON.stringify(findings)}`);
+};
+
 try {
   await admin.unsafe(`CREATE ROLE ${quoteIdentifier(ownerName)} LOGIN PASSWORD '${ownerPassword}'`);
   createdRoles.add(ownerName);
@@ -54,69 +126,88 @@ try {
     }
   }
   await admin.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)} OWNER ${quoteIdentifier(ownerName)}`);
+  await seedSupabaseDefaults(fixtureUrl.toString());
   await applyMigrationsTwice(fixtureUrl.toString());
 
   const db = postgres(fixtureUrl.toString(), { max: 1 });
   try {
+    await assertDenyAll(db, 'repository migrations must be deny-all');
+
     const table = await db<{ relrowsecurity: boolean; owner: string }[]>`
       SELECT c.relrowsecurity, pg_get_userbyid(c.relowner) AS owner
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relname = 'restore_suppression_runs'`;
     assert.deepEqual(table[0], { relrowsecurity: true, owner: ownerName });
 
-    const exposedTables = await db<{ count: number }[]>`
-      SELECT count(*)::int AS count FROM information_schema.role_table_grants
-      WHERE table_schema = 'public' AND grantee IN ('PUBLIC', 'anon', 'authenticated')`;
-    assert.equal(exposedTables[0]?.count, 0, 'Data API roles must have zero table grants');
-
-    const tablesWithoutRls = await db<{ name: string }[]>`
-      SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
-      ORDER BY c.relname`;
-    assert.equal(tablesWithoutRls.length, 0, `repository tables without RLS: ${JSON.stringify(tablesWithoutRls)}`);
-
-    const routine = await db<{ searchPath: string[] | null; exposed: number }[]>`
-      SELECT p.proconfig AS "searchPath",
-        (SELECT count(*)::int FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
-         LEFT JOIN pg_roles r ON r.oid = acl.grantee
-         WHERE (acl.grantee = 0 OR r.rolname IN ('anon', 'authenticated')) AND acl.privilege_type = 'EXECUTE') AS exposed
-      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND p.proname = 'protect_restore_suppression_run'`;
-    assert.deepEqual(routine[0]?.searchPath, ['search_path=pg_catalog, public']);
-    assert.equal(routine[0]?.exposed, 0, 'trigger function must not be executable by Data API roles or PUBLIC');
-
     await db.unsafe(`
       CREATE TABLE public.security_future_table (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
+      ALTER TABLE public.security_future_table ENABLE ROW LEVEL SECURITY;
       CREATE SEQUENCE public.security_future_sequence;
-      CREATE FUNCTION public.security_future_function() RETURNS integer LANGUAGE sql AS 'SELECT 1';
+      CREATE FUNCTION public.security_future_function() RETURNS integer
+        LANGUAGE sql SET search_path = pg_catalog, public AS 'SELECT 1';
     `);
-    const exposedFutureObjects = await db<{ kind: string; objectName: string; grantee: string; privilege: string }[]>`
-      SELECT kind, object_name AS "objectName", grantee, privilege FROM (
-        SELECT 'table' AS kind, table_name AS object_name, grantee, privilege_type AS privilege
-        FROM information_schema.role_table_grants
-        WHERE table_schema = 'public' AND table_name = 'security_future_table' AND grantee IN ('PUBLIC', 'anon', 'authenticated')
-        UNION ALL
-        SELECT 'sequence', object_name, grantee, privilege_type FROM information_schema.role_usage_grants
-        WHERE object_schema = 'public' AND object_name IN ('security_future_sequence', 'security_future_table_id_seq') AND grantee IN ('PUBLIC', 'anon', 'authenticated')
-        UNION ALL
-        SELECT 'function', routine_name, grantee, privilege_type FROM information_schema.routine_privileges
-        WHERE specific_schema = 'public' AND routine_name = 'security_future_function' AND grantee IN ('PUBLIC', 'anon', 'authenticated')
-      ) exposed ORDER BY kind, object_name, grantee, privilege`;
-    assert.equal(exposedFutureObjects.length, 0, `future object grants exposed to Data API roles: ${JSON.stringify(exposedFutureObjects)}`);
+    await assertDenyAll(db, 'objects created after migration 0017 must be deny-all');
 
-    const serviceAccess = await db<{ tableAccess: boolean; sequenceAccess: boolean; functionAccess: boolean }[]>`
+    const serviceAccess = await db<{ currentTable: boolean; currentFunction: boolean; futureTable: boolean; futureSequence: boolean; futureFunction: boolean }[]>`
       SELECT
-        has_table_privilege('service_role', 'public.security_future_table', 'SELECT,INSERT,UPDATE,DELETE') AS "tableAccess",
-        has_sequence_privilege('service_role', 'public.security_future_sequence', 'USAGE,SELECT,UPDATE') AS "sequenceAccess",
-        has_function_privilege('service_role', 'public.security_future_function()', 'EXECUTE') AS "functionAccess"`;
-    assert.deepEqual(serviceAccess[0], { tableAccess: true, sequenceAccess: true, functionAccess: true });
+        has_table_privilege('service_role', 'public.restore_suppression_runs', 'SELECT,INSERT,UPDATE') AS "currentTable",
+        has_function_privilege('service_role', 'public.protect_restore_suppression_run()', 'EXECUTE') AS "currentFunction",
+        has_table_privilege('service_role', 'public.security_future_table', 'SELECT,INSERT,UPDATE') AS "futureTable",
+        has_sequence_privilege('service_role', 'public.security_future_sequence', 'USAGE,SELECT,UPDATE') AS "futureSequence",
+        has_function_privilege('service_role', 'public.security_future_function()', 'EXECUTE') AS "futureFunction"`;
+    assert.deepEqual(serviceAccess[0], { currentTable: true, currentFunction: true, futureTable: true, futureSequence: true, futureFunction: true });
 
-    const policies = await db<{ count: number }[]>`SELECT count(*)::int AS count FROM pg_policies WHERE schemaname = 'public'`;
-    assert.equal(policies[0]?.count, 0, 'hardening must not create permissive policies');
+    await db.unsafe(`
+      GRANT SELECT ON TABLE public.security_future_table TO PUBLIC;
+      GRANT USAGE ON SEQUENCE public.security_future_sequence TO PUBLIC;
+      GRANT EXECUTE ON FUNCTION public.security_future_function() TO PUBLIC;
+    `);
+    const publicExposure = await detectDenyAllViolations(db);
+    assert.deepEqual(
+      publicExposure.filter((finding) => finding.category === 'acl').map((finding) => [finding.objectType, finding.objectName, finding.grantee, finding.privilege]),
+      [
+        ['function', 'security_future_function()', 'PUBLIC', 'EXECUTE'],
+        ['sequence', 'security_future_sequence', 'PUBLIC', 'USAGE'],
+        ['table', 'security_future_table', 'PUBLIC', 'SELECT'],
+      ],
+      'ACL detector must reject intentional PUBLIC exposure',
+    );
+    console.log(JSON.stringify({ result: 'EXPECTED_DENY_ALL_VIOLATION_DETECTED', principal: 'PUBLIC', findings: 3 }));
+    await db.unsafe(`
+      REVOKE SELECT ON TABLE public.security_future_table FROM PUBLIC;
+      REVOKE USAGE ON SEQUENCE public.security_future_sequence FROM PUBLIC;
+      REVOKE EXECUTE ON FUNCTION public.security_future_function() FROM PUBLIC;
+    `);
+    await assertDenyAll(db, 'PUBLIC exposure must be removable');
+    console.log(JSON.stringify({ result: 'DENY_ALL_RESTORED', principal: 'PUBLIC' }));
+
+    await db.unsafe(`
+      GRANT SELECT ON TABLE public.security_future_table TO anon;
+      GRANT USAGE ON SEQUENCE public.security_future_sequence TO authenticated;
+      GRANT EXECUTE ON FUNCTION public.security_future_function() TO anon;
+    `);
+    const dataApiExposure = await detectDenyAllViolations(db);
+    assert.deepEqual(
+      dataApiExposure.filter((finding) => finding.category === 'acl').map((finding) => [finding.objectType, finding.objectName, finding.grantee, finding.privilege]),
+      [
+        ['function', 'security_future_function()', 'anon', 'EXECUTE'],
+        ['sequence', 'security_future_sequence', 'authenticated', 'USAGE'],
+        ['table', 'security_future_table', 'anon', 'SELECT'],
+      ],
+      'ACL detector must reject intentional Data API role exposure',
+    );
+    console.log(JSON.stringify({ result: 'EXPECTED_DENY_ALL_VIOLATION_DETECTED', principal: 'DATA_API_ROLES', findings: 3 }));
+    await db.unsafe(`
+      REVOKE SELECT ON TABLE public.security_future_table FROM anon;
+      REVOKE USAGE ON SEQUENCE public.security_future_sequence FROM authenticated;
+      REVOKE EXECUTE ON FUNCTION public.security_future_function() FROM anon;
+    `);
+    await assertDenyAll(db, 'negative ACL fixtures must be fully cleaned');
+    console.log(JSON.stringify({ result: 'DENY_ALL_RESTORED', principal: 'DATA_API_ROLES' }));
   } finally {
     await db.end();
   }
-  console.log(JSON.stringify({ result: 'SUPABASE_DATA_API_DENY_ALL_VERIFIED', ownerProfile: 'non-postgres', policies: 0 }));
+  console.log(JSON.stringify({ result: 'SUPABASE_DATA_API_DENY_ALL_VERIFIED', negativeAclTest: 'FAIL_THEN_PASS', ownerProfile: 'non-postgres' }));
 } finally {
   await admin.unsafe(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`).catch(() => undefined);
   for (const role of [ownerName, ...[...roleNames].reverse()]) {

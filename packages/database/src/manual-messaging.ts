@@ -168,7 +168,10 @@ export async function prepareManualMessage(
     );
     const template =
       selected.channel === 'WHATSAPP' ? approvedTemplates.whatsappV1 : approvedTemplates.emailV1;
-    if (template.id !== input.templateId || template.version !== input.templateVersion)
+    if (
+      selected.channel === input.requestedChannel &&
+      (template.id !== input.templateId || template.version !== input.templateVersion)
+    )
       throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
     const prepared = provider.prepare(template, {
       EMPRESA: selected.row.name ?? 'empresa',

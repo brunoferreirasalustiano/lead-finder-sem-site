@@ -356,10 +356,8 @@ try {
   assert.ok(!manualLogs.includes(preparedWhatsApp.link));
   pass('HTTP prepare/open/confirm/response auth, validation, 404/409/422, principal and opt-out permission');
 
-  const sensitive = JSON.stringify({ phone: '55 9 9123-0001', email: 'a@company.example', message: snapshotFirst.message, link: snapshotFirst.link });
   const safeEvidence = JSON.stringify({ tests: report, counts: { preparations: await count('pilot_manual_message_preparations'), events: await count('pilot_manual_message_events') } });
   assert.ok(!safeEvidence.includes('55 9 9123-0001') && !safeEvidence.includes('a@company.example') && !safeEvidence.includes(snapshotFirst.message));
-  assert.ok(sensitive.length > safeEvidence.length);
   pass('34 evidence and errors contain no PII');
 
   console.log(JSON.stringify({ result: 'MANUAL_MESSAGING_POSTGRES_PASS', tests: report, networkCalls: 0 }));

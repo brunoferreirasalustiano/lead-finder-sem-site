@@ -19,7 +19,9 @@ A migration `0015_supabase_public_schema_hardening.sql`:
 - fixa `search_path` das funções públicas;
 - revoga execução de funções de `PUBLIC`, `anon` e `authenticated`.
 
-A migration corretiva `0017_restore_suppression_security_hardening.sql` fecha a regressão introduzida por objetos criados depois da `0015`. Ela protege `restore_suppression_runs` e `protect_restore_suppression_run()`, preserva acesso server-side do owner e de `service_role` e revoga default privileges de tabelas, sequências e funções para o **role efetivo que executa as migrations**. Não existe suposição de que esse role se chame `postgres`: no Compose ele é normalmente `leadfinder`, enquanto o perfil Supabase pode usar outro owner autorizado.
+A migration corretiva `0017_restore_suppression_security_hardening.sql` fecha a regressão introduzida por objetos criados depois da `0015`. Ela protege `restore_suppression_runs` e `protect_restore_suppression_run()` e revoga os default privileges globais e específicos do schema `public` para o **role efetivo que executa as migrations**. Não existe suposição de que esse role se chame `postgres`: no Compose ele é normalmente `leadfinder`, enquanto o perfil Supabase pode usar outro owner autorizado.
+
+O contrato server-side é mínimo e explícito. O owner mantém os privilégios inerentes à propriedade. Quando `service_role` já existe, a migration concede `SELECT`, `INSERT` e `UPDATE` na tabela atual, `EXECUTE` na função de proteção atual e os mesmos defaults para tabelas futuras; sequences futuras recebem `USAGE`, `SELECT` e `UPDATE`, e funções futuras recebem `EXECUTE`. A migration não cria essa role e continua válida em PostgreSQL 16 puro quando ela não existe.
 
 As referências opcionais a `anon`, `authenticated` e `service_role` são condicionais para manter compatibilidade com PostgreSQL 16 puro. Os únicos identificadores usados nesse bloco pertencem a uma allowlist fixa; nenhum nome ou SQL vem de entrada externa.
 
@@ -29,7 +31,11 @@ A aplicação continua autorizada pelo papel proprietário usado na conexão Pos
 
 Depois da aplicação da migration `0016` em homologação, a nova tabela foi observada com RLS desabilitado e grants para roles da Data API; a função associada também manteve EXECUTE público. A causa raiz foi temporal: a `0015` endurecia apenas os objetos existentes e não revogava default privileges do role efetivo das migrations. A homologação foi remediada emergencialmente e permaneceu deny-all. Este registro não contém URL de conexão, token, PII, dados de leads ou payloads.
 
-O gate `npm run test:supabase-data-api-security` cria um banco PostgreSQL descartável com owner não-`postgres`, aplica as migrations duas vezes, reaplica a `0017` duas vezes para comprovar idempotência e verifica RLS, ACLs, `search_path`, ausência de policies e default privileges por meio de objetos sintéticos futuros. O banco e as roles do fixture são removidos ao final.
+O gate `npm run test:supabase-data-api-security` cria um banco PostgreSQL descartável com owner não-`postgres`, semeia defaults equivalentes ao perfil Supabase, aplica as migrations duas vezes, reaplica a `0017` duas vezes para comprovar idempotência e verifica RLS, ACLs, `search_path`, ausência de policies e default privileges por meio de objetos sintéticos futuros. O banco e as roles do fixture são removidos ao final.
+
+As views `information_schema.role_table_grants` e `role_usage_grants` não são prova válida de ausência de acesso público: elas podem omitir privilégios herdados por grants a `PUBLIC`. O detector usa `pg_class.relacl` para relações e sequences e `pg_proc.proacl` para funções, expande `coalesce(acl, acldefault(...))` com `aclexplode`, identifica `PUBLIC` por `acl.grantee = 0` e associa os demais OIDs a `pg_roles` para encontrar `anon` e `authenticated`. A varredura cobre todos os objetos relevantes do schema `public`, não uma lista de nomes conhecidos.
+
+O teste negativo concede temporariamente privilégios sintéticos a `PUBLIC`, `anon` e `authenticated`. Ele exige que o detector retorne exatamente as exposições inseridas, revoga os grants e exige uma nova passagem sem achados. Assim, um PASS não depende apenas da migration: o próprio detector demonstra que falha quando há exposição e volta a passar somente após a limpeza.
 
 ## Evidência de homologação
 
@@ -71,19 +77,31 @@ select
 ```
 
 ```sql
-select grantee, privilege_type, count(*)
-from information_schema.role_table_grants
-where table_schema = 'public'
-  and grantee in ('PUBLIC', 'anon', 'authenticated')
-group by grantee, privilege_type;
+select c.relkind, c.relname,
+       case when acl.grantee = 0 then 'PUBLIC' else r.rolname end as grantee,
+       acl.privilege_type
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+cross join lateral aclexplode(
+  coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 'S'::"char" else 'r'::"char" end, c.relowner))
+) acl
+left join pg_roles r on r.oid = acl.grantee
+where n.nspname = 'public'
+  and c.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+  and (acl.grantee = 0 or r.rolname in ('anon', 'authenticated'));
 ```
 
 ```sql
-select grantee, privilege_type, count(*)
-from information_schema.routine_privileges
-where specific_schema = 'public'
-  and grantee in ('PUBLIC', 'anon', 'authenticated')
-group by grantee, privilege_type;
+select p.oid::regprocedure,
+       case when acl.grantee = 0 then 'PUBLIC' else r.rolname end as grantee,
+       acl.privilege_type
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+left join pg_roles r on r.oid = acl.grantee
+where n.nspname = 'public'
+  and acl.privilege_type = 'EXECUTE'
+  and (acl.grantee = 0 or r.rolname in ('anon', 'authenticated'));
 ```
 
 ```sql

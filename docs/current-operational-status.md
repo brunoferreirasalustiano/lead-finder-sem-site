@@ -94,6 +94,8 @@ A Data API permanece deliberadamente deny-all:
 
 Em 2026-07-22, a aplicação da `0016` revelou que a `0015` protegia os objetos existentes, mas não os criados posteriormente pelo role efetivo das migrations. A correção emergencial de homologação restaurou o deny-all. A PR #82 versiona a correção por meio da `0017` e adiciona um gate PostgreSQL descartável; nenhum acesso adicional ao Supabase real faz parte dessa validação.
 
+O gate da PR #82 inspeciona ACLs efetivas em `pg_class.relacl` e `pg_proc.proacl`, incluindo o grantee interno `0` que representa `PUBLIC`; ele não usa views `information_schema.role_*_grants` para concluir ausência de grants públicos. O teste negativo concede exposições sintéticas a `PUBLIC` e às roles da Data API, comprova que o detector falha, remove os grants e comprova a restauração do deny-all. Quando `service_role` existe, seu contrato fica limitado aos acessos server-side explícitos de tabela, sequence e função; a role não é criada pela migration.
+
 O advisor `RLS Enabled No Policy` é informativo neste desenho. Não criar policies permissivas apenas para remover o aviso.
 
 Referência: [Segurança da Data API Supabase](supabase-data-api-security.md).

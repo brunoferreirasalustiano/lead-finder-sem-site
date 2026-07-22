@@ -1,5 +1,13 @@
 # Estado operacional consolidado
 
+## Revogação no fluxo manual assistido
+
+`contact_channel_authorizations` registra evidência histórica imutável. Revogações são
+representadas exclusivamente por `campaign_opt_outs`, com prioridade absoluta na preparação e
+na confirmação. Uma autorização posterior não reativa opt-out global ou de canal,
+`NAO_CONTATAR`, `do_not_contact` nem bloqueio administrativo. Qualquer reativação exige fluxo
+separado, explícito e permissionado, fora deste piloto.
+
 **Última revisão documental:** 2026-07-22  
 **Baseline revisada:** `38f5810d2fc959261ba3d5d858c3a4d6fa001eed`
 

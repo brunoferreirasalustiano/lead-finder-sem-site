@@ -311,6 +311,10 @@ async function event(
     const existing = await tx.execute(
       sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,
     );
+    const confirmed = existing.find((item) => item.event_type === 'CONTACT_CONFIRMED');
+    const responded = existing.some((item) => item.event_type === 'RESPONSE_RECORDED');
+    if (eventType === 'OPENED' && (confirmed || responded))
+      throw new ManualMessagingError('Invalid OPENED transition', 'INVALID_STATE');
     const sameType = existing.find((item) => item.event_type === eventType);
     if (sameType) {
       if (sameType.operator_principal_id !== auth.principalId || sameType.result !== (result ?? null) || sameType.payload_fingerprint !== fingerprint)
@@ -318,8 +322,6 @@ async function event(
       return { eventId: sameType.id, state: eventType, result, createdAt: sameType.created_at, replayed: true };
     }
     const opened = existing.some((item) => item.event_type === 'OPENED');
-    const confirmed = existing.find((item) => item.event_type === 'CONTACT_CONFIRMED');
-    const responded = existing.some((item) => item.event_type === 'RESPONSE_RECORDED');
     if (eventType === 'OPENED' && (opened || confirmed || responded))
       throw new ManualMessagingError('Invalid OPENED transition', 'INVALID_STATE');
     if (eventType === 'CONTACT_CONFIRMED' && (!opened || confirmed || responded))

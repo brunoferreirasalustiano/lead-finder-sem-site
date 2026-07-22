@@ -22,6 +22,8 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Ficha individual de revisão de lead](first-lead-review-sheet.md) — template privado para validar negócio, canal, supressões, mensagem e resultado.
 - [Política de seleção do primeiro lote](first-batch-selection-policy.md) — critérios de inclusão/exclusão, triagem e regra de canal.
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
+- [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
+- [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.
 
 ## WhatsApp e IA
 

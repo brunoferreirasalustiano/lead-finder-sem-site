@@ -15,6 +15,7 @@ export * from './campaign.js';
 export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
+export * from './manual-messaging.js';
 export * from './deployment-processing.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>

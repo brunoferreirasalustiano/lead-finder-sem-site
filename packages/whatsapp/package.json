@@ -1,5 +1,5 @@
 {
-  "name": "@lead-finder/database",
+  "name": "@lead-finder/whatsapp",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,9 +10,6 @@
   },
   "dependencies": {
     "@lead-finder/messaging": "*",
-    "@lead-finder/shared": "*",
-    "@lead-finder/whatsapp": "*",
-    "drizzle-orm": "^0.45.2",
-    "postgres": "^3.4.7"
+    "zod": "^3.25.67"
   }
 }

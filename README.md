@@ -1,352 +1,247 @@
-# Lead Finder CRM — Prospecção de empresas sem site
+# Lead Finder Brasil
 
-Segurança operacional: [auditoria de segurança e privacidade](docs/security-privacy-audit.md), [threat model](docs/operational-threat-model.md), [retenção e exclusão](docs/data-retention-and-deletion.md), [runtime shadow](docs/shadow-mode-runtime.md), [checklist do piloto](docs/pilot-shadow-mode-checklist.md) e [matriz de prontidão](docs/commercial-readiness-matrix.md).
+CRM de prospecção para localizar empresas com indícios de ausência de site, validar os dados com revisão humana e organizar a oferta de landing pages e soluções digitais.
 
-> Documento oficial de visão, arquitetura, execução, roadmap, critérios de aceite e evidências de teste.
->
-> Ambiente oficial: **VPS Oracle Cloud**, com Ubuntu, Docker Compose, PostgreSQL, API, worker, Caddy e n8n opcional.
+> **Estado atual:** homologação fail-closed, dados sintéticos, coleta externa desligada e nenhum envio real por e-mail, WhatsApp ou IA.
 
-O projeto localiza empresas com indícios de ausência de site, qualifica os leads e organiza a prospecção comercial para oferta de landing pages e sites institucionais. A evolução planejada transforma o coletor atual em um CRM de prospecção multicanal com e-mail, WhatsApp, follow-ups, propostas e métricas.
+- [Estado operacional consolidado](docs/current-operational-status.md)
+- [Índice de documentação](docs/README.md)
+- [Auditoria de segurança e privacidade](docs/security-privacy-audit.md)
+- [Threat model operacional](docs/operational-threat-model.md)
+- [Roadmap estratégico](docs/PRODUCT_ROADMAP.md)
 
-## Regra fundamental do produto
+## Regra fundamental
 
 `SEM_SITE_CADASTRADO` significa apenas que a fonte consultada não informou um site. Isso **não comprova** que a empresa não possui site.
 
-Nenhuma abordagem comercial pode ser enviada antes de:
+Nenhuma abordagem comercial pode ocorrer antes de:
 
 1. validar a empresa e o indício de ausência de site;
 2. validar o contato e sua origem;
-3. confirmar que o lead não está bloqueado ou marcado como `NAO_CONTATAR`;
-4. aprovar a primeira mensagem;
-5. reservar a idempotência e o limite do canal.
+3. confirmar ausência de bloqueio, `NAO_CONTATAR` e opt-out aplicável;
+4. registrar revisão humana;
+5. usar template aprovado;
+6. reservar idempotência e limites;
+7. confirmar que todos os efeitos externos permitidos estão explicitamente habilitados.
 
-## Objetivo final
+Qualquer dúvida resulta em `REVISAO_HUMANA` e impede a ação.
 
-```text
-Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
--> CRM -> Aprovação -> Campanha -> E-mail/WhatsApp -> Resposta
--> Follow-up -> Proposta -> Ganho/Perdido -> Métricas
-```
-
-## Estado atual
+## Estado do projeto
 
 ### Implementado
 
-- [x] coleta via OpenStreetMap/Overpass;
-- [x] categorias permitidas e consultas protegidas;
-- [x] normalização, scoring e deduplicação OSM;
-- [x] PostgreSQL e migrations versionadas;
-- [x] fila transacional e worker;
-- [x] API REST, paginação, detalhes e CSV;
-- [x] testes unitários e integração com PostgreSQL real;
-- [x] imagens Docker de API e worker;
-- [x] validação AMD64 e ARM64;
-- [x] Docker Compose de produção;
-- [x] modos `tunnel` e `public`;
-- [x] Caddy, HTTPS e redes privadas;
-- [x] backup, restauração e rollback;
-- [x] smoke descartável de primeiro deploy e atualização;
-- [x] runbook da Oracle Cloud;
-- [x] validação pós-merge no commit exato do `main`.
-- [x] funil de CRM, oportunidades e histórico comercial;
-- [x] tarefas, notas, tags e follow-ups;
-- [x] contratos, templates versionados e regras seguras de campanhas;
-- [x] persistência transacional de campanhas, outbox, opt-out e dead letters;
-- [x] API de gestão, aprovação, preview e campanha exclusivamente simulada;
-- [x] gate determinístico de prontidão do piloto com relatório por SHA.
+- descoberta por OpenStreetMap/Overpass, com egress desligado por padrão;
+- normalização, scoring e deduplicação;
+- qualificação conservadora e evidências;
+- contatos versionados e associados ao lead;
+- CRM, oportunidades, tarefas, notas, tags e timeline;
+- campanhas e templates versionados;
+- seleção elegível e revisão humana;
+- destinatários, tentativas, eventos e outbox transacionais;
+- leasing, concorrência e liderança de processadores;
+- limites diários, janela de execução e espaçamento;
+- retry limitado, dead-letter e recuperação auditável;
+- pausa, cancelamento, opt-out e bloqueios antes da execução;
+- piloto interno com revisão, contato manual e resultados;
+- gate sintético determinístico em PostgreSQL;
+- autenticação Bearer e matriz explícita de permissões;
+- logs e evidências sanitizados;
+- Docker Compose, imagens API/worker, smoke e CI com PostgreSQL;
+- perfis `oracle-vps` e `supabase-render`;
+- Supabase Data API em postura deny-all;
+- runbooks do piloto manual, WhatsApp, IA, backup, restore e failover.
 
-### Ainda não implementado
+### Pendente ou bloqueado
 
-- [ ] confirmação externa de ausência de site;
-- [ ] enriquecimento de telefone, WhatsApp, e-mail e redes sociais;
-- [ ] envio por e-mail;
-- [ ] envio por WhatsApp oficial;
-- [ ] propostas comerciais e PDF;
-- [ ] dashboard de conversão;
-- [ ] automações completas no n8n;
-- [ ] validação operacional em VPS Oracle real.
+- reconciliação segura de supressões após restore — [PR #69](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/pull/69);
+- confirmação externa automatizada de ausência real de site;
+- enriquecimento externo de contatos;
+- adaptador oficial de e-mail;
+- WhatsApp Business Cloud API;
+- webhooks externos assinados;
+- OpenAI em shadow mode;
+- sandbox Meta e OpenAI — [issue #79](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/79);
+- propostas comerciais e PDF;
+- dashboard operacional e comercial;
+- automações completas no n8n;
+- piloto com leads reais;
+- validação do perfil Oracle em VPS real.
+
+## Bloqueio principal
+
+A PR #69 permanece Draft porque uma restauração pode reativar trabalho que deveria continuar suprimido.
+
+Ela só poderá ser integrada após corrigir:
+
+1. execução da reconciliação dentro da rede Compose;
+2. relação `campaign_outbox -> campaign_attempts -> campaign_recipients -> lead`;
+3. escopo correto de `OPT_OUT_CHANNEL`;
+4. atualização da branch sobre a `main`;
+5. testes PostgreSQL, replay, rollback transacional e revisão sem P1/P2.
+
+**Modelo Codex recomendado:** Sol, por envolver restore, supressões, outbox, concorrência e risco de contato indevido.
+
+Veredito exigido: `RESTORE_SUPPRESSION_READY_FOR_MERGE`.
 
 ## Arquitetura
 
-- `apps/api`: API REST Fastify; valida entradas, pagina leads, exporta CSV e enfileira operações.
-- `apps/worker`: consome jobs, consulta fontes externas, normaliza, pontua e persiste dados.
-- `packages/database`: schema Drizzle, repositórios, deduplicação, migrations e fila transacional.
-- `packages/overpass-client`: categorias, consultas seguras, timeout e retry.
-- `packages/lead-scoring`: regras puras de pontuação.
-- `packages/shared`: contratos, enums e schemas Zod.
-- `database/migrations`: SQL versionado e idempotente.
-- `n8n/workflows`: automações opcionais.
-- `deploy`: Caddyfiles e overrides de produção.
-- `scripts`: setup, deploy, backup, restauração e smoke.
-
-## Ambiente oficial — Oracle Cloud VPS
-
-Todas as decisões devem considerar:
-
-- Ubuntu Server 22.04 ou 24.04;
-- compatibilidade AMD64 e ARM64;
-- Docker Engine e Docker Compose;
-- Caddy como única entrada pública em 80/443;
-- PostgreSQL, API, worker e n8n em redes privadas;
-- API somente em loopback no modo tunnel;
-- segredos fora do Git em `.env` com permissão `600`;
-- limites de CPU, memória, disco, logs e concorrência;
-- filas persistentes e operações idempotentes;
-- backup local e cópia externa criptografada;
-- restart policies, healthchecks e recuperação;
-- nenhuma dependência de navegador aberto;
-- e-mail e WhatsApp por APIs oficiais e headless.
-
-Runbook: [`docs/ORACLE_DEPLOY.md`](docs/ORACLE_DEPLOY.md).
-
-## Plano de execução por partes
-
-Cada fase deve usar branch própria, pull request, gates obrigatórios e evidências. Uma fase só é concluída após integração e atualização deste documento.
-
-| Fase | Tarefa | Estado |
-|---|---|---|
-| Base técnica e Oracle | [#5 — homologar a stack em VPS Oracle real](../../issues/5) | CI concluída; VPS pendente |
-| Qualificação | [#6 — contatos, evidências e bloqueio de outreach](../../issues/6) | concluída no PR #14 |
-| CRM | [#7 — funil, tarefas e histórico](../../issues/7) | concluída no PR #15; G6 PASS |
-| Campanhas | [#8 — e-mail e WhatsApp idempotentes](../../issues/8) | domínio, persistência e API simulada concluídos; worker #19 ativo |
-| Piloto interno | [#33 — captação e oferta manual](../../issues/33) | pronto para operação manual; gate automático concluído no PR #38 |
-| Propostas | [#9 — propostas de landing pages e sites](../../issues/9) | bloqueada por #7 |
-| Dashboard | [#10 — métricas e operação](../../issues/10) | depende das fases anteriores |
-| n8n | [#11 — automações recuperáveis](../../issues/11) | depende das APIs anteriores |
-
-Roadmap principal: [#4 — evoluir o Lead Finder para CRM multicanal](../../issues/4).
-
-### Fase 0 — Base técnica e deploy
-
-**Estado:** concluída em CI; pendente de validação em VPS real.
-
-- [x] API, worker, PostgreSQL e migrations;
-- [x] Compose local e produção;
-- [x] tunnel, Caddy, HTTPS e n8n opcional;
-- [x] backup, restauração e rollback;
-- [x] CI, integração, smoke e multiarch;
-- [ ] primeiro deploy real na Oracle;
-- [ ] reinício e persistência;
-- [ ] backup e restauração reais;
-- [ ] atualização e rollback reais;
-- [ ] medição de CPU, memória, disco e logs.
-
-### Fase 1 — Qualificação e enriquecimento
-
-**Estado:** concluída no PR #14, commit `d95e860104ab9a88e3801f9ba340543d00c7c9c8`.
-
-- [x] estados `PENDENTE`, `VALIDANDO`, `SITE_ENCONTRADO`, `SEM_SITE_CONFIRMADO`, `INCONCLUSIVO` e `DESCARTADO`;
-- [x] evidências e fontes de validação;
-- [x] contatos com tipo, valor, origem, confiança e verificação;
-- [x] normalização de telefone, e-mail, nome empresarial e endereço;
-- [x] indicação conservadora de telefone potencialmente habilitado para WhatsApp;
-- [x] deduplicação por identificador da origem, telefone e nome combinado com endereço;
-- [x] bloqueio reutilizável de outreach para não confirmados, bloqueados, descartados ou sem contato validado;
-- [x] auditoria de alterações.
-
-**Conclusão:** nenhuma campanha consegue selecionar lead não validado.
-
-### Fase 2 — CRM e funil comercial
-
-**Estado:** concluída no PR #15; G6 validado no commit `236e939722ac5d95e022742d7ee58998fb1f6cc2`.
-
-- [x] etapas `NOVO`, `EM_VALIDACAO`, `QUALIFICADO`, `CONTATO_PENDENTE`, `CONTATADO`, `RESPONDEU`, `REUNIAO`, `PROPOSTA`, `GANHO`, `PERDIDO` e `NAO_CONTATAR`;
-- [x] regras de transição;
-- [x] notas, tags, prioridade e responsável;
-- [x] tarefas e próxima ação;
-- [x] histórico imutável;
-- [x] prevenção de ações concorrentes.
-
-**Conclusão:** transições inválidas são rejeitadas e todas as mudanças ficam auditáveis.
-
-### Fase 3 — Campanhas e mensagens
-
-**Estado:** domínio, persistência e API de simulação concluídos (#16–#18); worker seguro pendente em #19.
-
-- [x] templates versionados de e-mail e WhatsApp;
-- [x] variáveis seguras;
-- [x] aprovação humana do primeiro contato;
-- [ ] limites globais e janelas de envio;
-- [x] idempotência;
-- [x] estados persistidos de destinatário, tentativa, evento, outbox e dead letter;
-- [x] pausa, retomada e cancelamento na gestão;
-- [ ] observação imediata de pausa, cancelamento, resposta e opt-out pelo worker;
-- [ ] retry limitado e recuperação auditável de dead-letter no worker;
-- [ ] integração de e-mail configurável;
-- [ ] WhatsApp por integração oficial.
-
-**Conclusão:** retries e reinícios não produzem mensagens duplicadas.
-
-### Fase 4 — Propostas comerciais
-
-- [ ] catálogo de landing pages e sites;
-- [ ] escopo, prazo, preço e validade;
-- [ ] proposta vinculada ao lead e oportunidade;
-- [ ] PDF e link compartilhável;
-- [ ] versionamento e estados comerciais;
-- [ ] motivo de perda e valor ganho.
-
-**Conclusão:** oportunidade percorre do lead validado ao fechamento com histórico completo.
-
-### Fase 5 — Dashboard e operação
-
-- [ ] descoberta, validação, descarte e bloqueios;
-- [ ] contatos por canal;
-- [ ] taxas de resposta, reunião, proposta e fechamento;
-- [ ] desempenho por categoria, cidade, origem e campanha;
-- [ ] erros, dead letters e mensagens pendentes;
-- [ ] follow-ups e leads sem ação;
-- [ ] consumo da VPS e saúde dos serviços.
-
-**Conclusão:** métricas são reconciliáveis com eventos e registros do banco.
-
-### Fase 6 — Automação n8n
-
-- [ ] coleta agendada;
-- [ ] fila de validação;
-- [ ] revisão humana;
-- [ ] formação de campanhas;
-- [ ] follow-up sem resposta;
-- [ ] parada após resposta ou opt-out;
-- [ ] alertas;
-- [ ] exportação e restauração de workflows.
-
-**Conclusão:** desligar o n8n não corrompe estado nem impede operação manual.
-
-### Fase 7 — Homologação final na Oracle
-
-- [ ] deploy limpo;
-- [ ] DNS e TLS, quando aplicável;
-- [ ] coleta real controlada;
-- [ ] validação e CRM completos;
-- [ ] campanha em simulação;
-- [ ] envio apenas para contatos próprios de teste;
-- [ ] opt-out e bloqueio comprovados;
-- [ ] backup, restauração e rollback;
-- [ ] reinício e recuperação;
-- [ ] relatório final de capacidade.
-
-**Conclusão:** fluxo completo funciona na VPS com evidências reproduzíveis e sem envio indevido.
-
-## Política de execução autônoma
-
-O trabalho poderá avançar automaticamente quando:
-
-- estiver dentro do roadmap aprovado;
-- não exigir credenciais novas, pagamento ou acesso humano externo;
-- houver testes objetivos;
-- a mudança for reversível;
-- não houver risco de contato comercial real não autorizado.
-
-Processo padrão:
-
-1. selecionar uma tarefa;
-2. criar branch específica;
-3. implementar escopo mínimo completo;
-4. executar testes;
-5. abrir PR com riscos e evidências;
-6. corrigir falhas;
-7. integrar por squash;
-8. verificar o commit exato do `main`;
-9. atualizar README e tarefa.
-
-O Codex será solicitado apenas para:
-
-- Docker ou terminal local;
-- refatorações amplas em muitos arquivos;
-- reprodução no Windows;
-- arquivos indisponíveis no GitHub;
-- conexão e testes na VPS Oracle real.
-
-## Gates obrigatórios de qualidade
-
-| Gate | Validação | Evidência mínima |
-|---|---|---|
-| G0 | Escopo e regras de negócio | issue/PR com critérios de aceite |
-| G1 | Typecheck, lint e build | run da CI e commit SHA |
-| G2 | Testes unitários | quantidade e resultado |
-| G3 | Integração PostgreSQL | job e logs |
-| G4 | Smoke descartável | primeiro deploy, atualização e rollback |
-| G5 | AMD64 e ARM64 | builds e manifests |
-| G6 | Pós-merge | status no commit exato do `main` |
-| G7 | VPS Oracle real | comandos, logs, ambiente e resultado |
-| G8 | Segurança comercial | bloqueios, opt-out e idempotência |
-
-Nenhum gate deve ser ignorado com `continue-on-error` para deixar o pipeline verde.
-
-## Registro e autenticação das evidências
-
-Uma evidência válida deve conter:
-
-- data e hora UTC;
-- commit SHA completo;
-- branch ou PR;
-- ambiente;
-- comando, workflow ou cenário;
-- run ID, URL ou log;
-- resultado `PASS`, `FAIL` ou `BLOCKED`;
-- observações e risco residual;
-- responsável.
-
-Modelo:
-
 ```text
-Data UTC:
-Commit SHA:
-PR/branch:
-Ambiente:
-Gate:
-Comando ou workflow:
-Run/log:
-Resultado:
-Observações:
-Responsável:
+Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
+-> CRM -> Revisão humana -> Campanha -> Outbox simulada
+-> Resultado manual/simulado -> Métricas -> Proposta futura
 ```
 
-### Evidências consolidadas
+Componentes principais:
 
-| Data UTC | Commit/PR | Ambiente | Gates | Evidência | Resultado |
-|---|---|---|---|---|---|
-| 2026-07-11 | PR #2 / `a3c9c197...` | GitHub Actions | G1–G5 | CI `29152954163`; smoke `29152954166` | PASS |
-| 2026-07-11 | `94c51c4364cd292040ea747d687ba922dab708be` | `main` | base Oracle | squash do PR #2 | PASS |
-| 2026-07-11 | PR #3 / `dee9d6d765599255bfaf711de23bbb587785f354` | GitHub Actions | G1–G5 | CI `29154038462`; smoke `29154038485` | PASS |
-| 2026-07-11 | `f211d6eb6a9437b51cc14147f11f0d34cb426b6c` | `main` | G6 | `deployment-smoke/post-merge`; run `29155446772` | PASS |
-| pendente | commit futuro | VPS Oracle | G7–G8 | homologação operacional | BLOCKED |
-| 2026-07-11 | PR #14 / `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | GitHub Actions | G0–G5, G8 | CI `29159498610`; Deployment Smoke `29159498641` | PASS |
-| 2026-07-11 | `d95e860104ab9a88e3801f9ba340543d00c7c9c8` | `main` | G6 | `deployment-smoke.yml` não disparou: o merge não alterou paths monitorados | NOT RUN |
-| 2026-07-12 | PR #15 / `60ca740a40c036bccaced358ee44edf01bc47f01` | GitHub Actions / PostgreSQL 16 | G0–G5, G8 | CI `29175918041`; Deployment Smoke `29175918046`; integração, imagens e multiarch | PASS |
-| 2026-07-12 | `236e939722ac5d95e022742d7ee58998fb1f6cc2` / PR #15 | `main` | G6 | `deployment-smoke/post-merge`; run `29193004346` | PASS |
-| 2026-07-13 | `a19f7af8effe198ac28e5f4d96586c32d1be4823` / PR #30 | `main` | G0–G6, G8 | CI, PostgreSQL, multiarch e `deployment-smoke/post-merge` | PASS |
-| 2026-07-13 | `bafd0370f9ce463c761596295fe8e5a5f4639087` / PR #37 | `main` | G6 | CI `29263328249`; Check Runs `validate`, `integration` e `multiarch` | PASS |
-| 2026-07-13 | `4bae82d1ca301bc6e71870dc71fa7b303a3468b7` / PR #38 | `main` | G1–G6 | CI `29287783121`; smoke `29287783139`; artefato `pilot-readiness-*` | PASS |
+- `apps/api` — API Fastify, autenticação, autorização e rotas operacionais;
+- `apps/worker` — processamento de jobs e outbox simulada;
+- `packages/database` — schema, repositórios, migrations, idempotência e filas;
+- `packages/batch-processor` — processamento limitado e coordenado;
+- `packages/overpass-client` — consultas seguras, timeout e retry;
+- `packages/lead-scoring` — regras puras de pontuação;
+- `packages/shared` — contratos e schemas Zod;
+- `database/migrations` — SQL incremental e versionado;
+- `deploy` — descritores Oracle, Supabase e Caddy;
+- `scripts` — migrations, gates, backup, restore, rollback e smoke;
+- `n8n/workflows` — automações opcionais, ainda não operacionais.
 
-A tabela deve ser atualizada sempre que uma fase ou gate mudar de estado.
+## Perfis de implantação
 
-## Prontidão comercial
+### Supabase + Render
 
-O projeto continua sem envio externo. A operação deve usar a [matriz](docs/commercial-readiness-matrix.md), [métricas de qualidade](docs/lead-quality-metrics.md), [métricas do funil](docs/commercial-funnel-metrics.md), [checklists de shadow mode](docs/pilot-shadow-mode-checklist.md) e [piloto manual](docs/pilot-manual-checklist.md), [política de recuperação](docs/lead-recovery-policy.md) e [template de relatório](docs/commercial-readiness-report.template.json). Não há aprovação de piloto nem resultados reais neste material.
+Perfil de homologação e Plano B:
+
+- API Node.js no Render;
+- PostgreSQL no Supabase;
+- conexão server-side por `DATABASE_URL`;
+- TLS obrigatório;
+- pool inicial reduzido;
+- Edge Function e Cron opcionais e desligados por padrão;
+- dry-run e providers externos bloqueados.
+
+Documentos:
+
+- [Plano B Supabase + Render](docs/infrastructure/supabase-render-plan-b.md)
+- [Runbook de implantação](docs/runbooks/supabase-render-deployment.md)
+- [Operação com dois perfis](docs/runbooks/dual-deployment-operations.md)
+- [Segurança da Data API](docs/supabase-data-api-security.md)
+
+### Oracle VPS
+
+Perfil self-hosted completo:
+
+- Ubuntu;
+- Docker Compose;
+- PostgreSQL, API e worker em redes privadas;
+- Caddy em 80/443;
+- n8n opcional;
+- backup, restore, rollback e observabilidade locais.
+
+A validação em VPS real continua pendente.
+
+Documento: [Runbook Oracle](docs/ORACLE_DEPLOY.md).
+
+## Defaults de segurança
+
+```text
+COLLECTION_EGRESS_ENABLED=false
+DRY_RUN=true
+REAL_SEND_ENABLED=false
+REAL_PROVIDERS_ENABLED=false
+REAL_PROVIDER_CONFIGURED=false
+```
+
+A homologação isolada usa `SHADOW_MODE_ENABLED=true`. O kill switch deve ser testado antes do piloto e engatado durante incidentes.
+
+Nenhuma credencial ou configuração parcial autoriza envio. A execução real futura exigirá todos os gates simultaneamente.
+
+## Supabase deny-all
+
+O backend usa conexão PostgreSQL direta. A Data API pública não é usada.
+
+Estado verificado:
+
+- 39 tabelas públicas com RLS;
+- zero policies;
+- zero grants para `PUBLIC`, `anon` e `authenticated`;
+- zero execução pública de funções;
+- `CREATE` no schema público revogado;
+- nenhum `supabase-js` ou `/rest/v1` no runtime.
+
+Não criar policies permissivas apenas para eliminar o aviso informativo `RLS Enabled No Policy`.
+
+Detalhes: [Segurança da Data API Supabase](docs/supabase-data-api-security.md).
+
+## Piloto manual controlado
+
+O piloto documentado não é disparo automatizado.
+
+Regras do primeiro lote:
+
+- no máximo cinco negócios;
+- uma categoria;
+- uma cidade ou região;
+- seleção individual;
+- revisão humana obrigatória;
+- primeiro contato sem link, salvo autorização do destinatário;
+- opt-out imediato;
+- nenhum follow-up automático;
+- nenhum WhatsApp Web automatizado;
+- nenhuma lista comprada ou importação em massa;
+- nenhuma métrica inferida pela abertura de link.
+
+A execução continua bloqueada até a PR #69, o ambiente, o kill switch, o WhatsApp Business e os gates de privacidade estarem aprovados.
+
+Documentos:
+
+- [Pacote operacional](docs/pilot-manual-operations-pack.md)
+- [Template manual v1](docs/pilot-real-manual-message-v1.md)
+- [Runbook do ciclo controlado](docs/pilot-real-controlled-runbook.md)
+- [Matriz de prontidão](docs/commercial-readiness-matrix.md)
+
+## WhatsApp e IA
+
+Estado: arquitetura e controles documentados; integração real ausente.
+
+Princípios:
+
+- WhatsApp somente pela Cloud API oficial;
+- WhatsApp Web, QR Code, Baileys, Evolution API e equivalentes são proibidos;
+- IA gera rascunho ou classificação, nunca autoriza envio;
+- saída inválida ou incerta retorna `REVISAO_HUMANA`;
+- prompts minimizam PII;
+- OpenAI deverá usar chave server-side, Structured Outputs e `store=false`;
+- webhooks deverão validar assinatura sobre os bytes originais;
+- sandbox usará somente números próprios em allowlist;
+- tokens e payloads integrais nunca entram em logs ou Git.
+
+Documentos:
+
+- [Arquitetura WhatsApp + IA](docs/whatsapp-ai-messaging-architecture.md)
+- [Checklist de implementação](docs/whatsapp-ai-implementation-checklist.md)
+- [Registro de riscos](docs/whatsapp-ai-risk-register.md)
 
 ## Requisitos locais
 
 - Node.js 22 ou superior;
 - npm;
-- Docker Engine;
-- Docker Compose.
+- Docker Engine e Docker Compose para integração local completa;
+- PostgreSQL real executado pelo Compose ou CI.
+
+O usuário atual trabalha em Windows sem Docker Desktop/WSL; por isso, integrações PostgreSQL, Compose e multiarch podem ser executadas na CI ou pelo Codex em ambiente apropriado.
 
 ## Configuração local
 
 ```bash
 cp .env.example .env
+npm install
 ```
 
-Defina `POSTGRES_PASSWORD` e ajuste `DATABASE_URL`. Nenhuma credencial real acompanha o repositório.
+Preencha apenas valores locais. Nunca copie secrets de homologação ou produção.
 
-Variáveis principais: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `COLLECTION_EGRESS_ENABLED`, `OVERPASS_API_URL`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_MAX_RETRIES`, `WORKER_POLL_INTERVAL_MS` e `DAILY_LEAD_LIMIT`. A coleta externa permanece desabilitada por padrão; para habilitá-la, defina explicitamente `COLLECTION_EGRESS_ENABLED=true` e `OVERPASS_API_URL`.
-
-## Execução local
+Para a stack local:
 
 ```bash
-npm install
 docker compose up -d postgres
 docker compose run --rm migrate
 npm run dev:api
@@ -357,114 +252,43 @@ Stack completa:
 
 ```bash
 docker compose up --build
-docker compose --profile integration up -d n8n
 ```
 
-As migrations usam `schema_migrations`; executá-las novamente é seguro.
+As migrations usam `schema_migrations` e devem ser reaplicáveis sem executar alteração duplicada.
 
-## API atual
+Variáveis: [documentação de ambiente](docs/infrastructure/environment-variables.md).
 
-Todas as rotas, exceto `GET /health/live`, `GET /health` e `GET /health/ready`, exigem
-`Authorization: Bearer <API_AUTH_TOKEN>`. O token deve ser um secret de ambiente com pelo menos
-32 caracteres; `CHANGE_ME`, valor vazio e configuração ausente são rejeitados na inicialização.
-O Caddy apenas encaminha a requisição para uma API que já autentica e autoriza na aplicação.
-Credenciais nunca devem ser versionadas, colocadas no Caddyfile, em URLs ou query strings.
+## API e autorização
 
-`API_AUTH_PERMISSIONS` é obrigatória e define, por lista CSV estrita, as permissões concedidas ao
-principal operacional single-operator. Entradas vazias, duplicadas, desconhecidas, malformadas e
-wildcards são rejeitadas no startup. A configuração mínima recomendada para o piloto interno é
-`pilot:read,pilot:write,pilot:review,pilot:record-contact,pilot:record-result`; `pilot:complete`,
-`leads:export` e `collection:execute` permanecem opt-in e não fazem parte desse perfil comum.
-Antes de introduzir múltiplos usuários, operadores ou clientes, deve ser implementada autorização
-adicional por objeto/tenant e uma identidade OIDC apropriada.
+Rotas públicas:
 
-- `GET /health`
 - `GET /health/live`
+- `GET /health`
 - `GET /health/ready`
-- `GET /leads?page=1&pageSize=20&status=SEM_SITE_CADASTRADO&category=oficinas&city=Campinas&minScore=30`
-- `GET /leads/:id`
-- `GET /leads/export.csv`
-- `GET /leads/:id/qualification`
-- `PATCH /leads/:id/qualification`
-- `POST /leads/:id/evidence`
-- `GET /leads/:id/contacts`
-- `PUT /leads/:id/contacts`
-- `GET /leads/:id/history`
-- `GET /leads/:id/crm`
-- `PATCH /leads/:id/crm`
-- `PATCH /leads/:id/crm/stage`
-- `GET /leads/:id/opportunities`
-- `POST /leads/:id/opportunities`
-- `PATCH /opportunities/:id`
-- `GET /leads/:id/notes`
-- `POST /leads/:id/notes`
-- `GET /leads/:id/tags`
-- `PUT /leads/:id/tags/:tag`
-- `DELETE /leads/:id/tags/:tag`
-- `GET /leads/:id/tasks`
-- `POST /leads/:id/tasks`
-- `PATCH /tasks/:id/complete`
-- `PATCH /tasks/:id/reschedule`
-- `GET /leads/:id/timeline`
-- `GET /crm/tasks/overdue`
-- `GET /crm/follow-ups/upcoming`
-- `POST /campaigns/preview`
-- `POST /campaigns`
-- `GET /campaigns`
-- `GET /campaigns/:id`
-- `POST /campaigns/:id/versions`
-- `GET /campaigns/:id/versions`
-- `GET /campaign-versions/:id/templates`
-- `POST /campaign-versions/:id/submit`
-- `POST /campaign-versions/:id/approve`
-- `POST /campaigns/:id/activate`
-- `POST /campaigns/:id/pause`
-- `POST /campaigns/:id/resume`
-- `POST /campaigns/:id/cancel`
-- `GET /campaigns/eligible/leads`
-- `POST /campaigns/:id/simulations`
-- `GET /campaigns/:id/recipients`
-- `GET /recipients/:id/attempts`
-- `GET /campaigns/:id/audit`
-- `GET /campaigns/failures`
-- `POST /collect`
 
-`GET /leads/export.csv` exporta, de forma determinística, no máximo os primeiros 100 registros que correspondem aos filtros. Para conjuntos maiores, use a paginação de `GET /leads`; exportação paginada/completa permanece uma evolução explícita para evitar consumo de memória sem limite.
+As demais rotas exigem:
 
-O núcleo da Fase 1 não envia mensagens. Uma seleção futura para outreach deve obrigatoriamente usar `listOutreachEligibleLeads`: somente leads em `SEM_SITE_CONFIRMADO`, não bloqueados, sem marcação de não contato e com ao menos um contato válido e verificado são retornados.
-
-## Núcleo CRM da Fase 2
-
-A migration idempotente `0003_crm_pipeline.sql` cria oportunidades, notas, tags, tarefas, idempotência e timeline comercial imutável. Estágio, prioridade, responsável, próxima ação e versão otimista permanecem no lead; valores monetários usam `numeric(15,2)` e datas usam `timestamptz` em UTC.
-
-Transições usam uma máquina explícita. Conflitos de versão e idempotência retornam HTTP 409; regras de domínio e transições inválidas retornam 422. A saída de `NAO_CONTATAR` exige ação `REACTIVATE`, motivo, ator e metadados de auditoria. Leads `DESCARTADO`, `isBlocked`, `doNotContact` ou `NAO_CONTATAR` não entram em filas comerciais.
-
-Mutações registram a timeline na mesma transação e usam chave de idempotência com fingerprint do payload. Retry idêntico retorna o recurso anterior sem novo evento; reutilização da chave com payload diferente é conflito. Não existe envio real de e-mail ou WhatsApp nesta fase.
-
-O núcleo de campanhas permanece sem envio externo: preview e simulação produzem snapshots, tentativas e outbox auditáveis, mas não chamam provedores. O próximo passo técnico é o worker seguro da issue #19, com limites distribuídos, retry controlado, dead-letter e observação de bloqueios antes da execução.
-
-A API usa Bearer token e uma matriz explícita de permissões, mas permanece single-operator.
-Antes de atender múltiplos clientes, ainda são necessários OIDC, isolamento multi-tenant e
-autorização por objeto. Até lá, os endpoints CRM devem permanecer atrás do perímetro privado.
-
-O fluxo interno do batch possui um [Gate sintético automatizado](docs/infrastructure/synthetic-batch-gate.md)
-executado exclusivamente contra PostgreSQL descartável.
-
-Exemplo:
-
-```json
-{
-  "city": "Campinas",
-  "state": "SP",
-  "country": "Brasil",
-  "category": "oficinas",
-  "limit": 50
-}
+```text
+Authorization: Bearer <API_AUTH_TOKEN>
 ```
 
-Categorias atuais: `oficinas`, `autoeletricas`, `saloes-de-beleza`, `barbearias`, `clinicas`, `consultorios`, `restaurantes`, `lanchonetes`, `empresas-de-seguranca` e `prestadores-de-servicos`.
+`API_AUTH_TOKEN` precisa ter pelo menos 32 caracteres. `API_AUTH_PERMISSIONS` usa allowlist CSV estrita, sem wildcards ou valores desconhecidos.
 
-## Comandos de qualidade
+Grupos de rotas:
+
+- leads, qualificação, evidências e contatos;
+- CRM, oportunidades, notas, tags, tarefas e timeline;
+- campanhas, versões, revisão e simulação;
+- recipients, attempts, failures e audit;
+- piloto interno, revisão, contato manual e resultados;
+- batch interno autenticado;
+- coleta externa bloqueada por feature flag.
+
+A API permanece single-operator. Multi-tenant exige OIDC, isolamento por tenant e autorização por objeto antes de atender clientes externos.
+
+## Qualidade e CI
+
+Comandos principais:
 
 ```bash
 npm run typecheck
@@ -475,66 +299,92 @@ npm run build
 npm run test:integration
 npm run test:pilot
 npm run test:pilot:restart
+npm audit --audit-level=high
 docker compose config
-docker build -f apps/api/Dockerfile -t lead-finder-api:test .
-docker build -f apps/worker/Dockerfile -t lead-finder-worker:test .
 ```
 
-A integração usa PostgreSQL real e Overpass mock determinístico. A consulta pública é opcional e nunca substitui o mock como critério da CI.
+Gates:
 
-## Operação
+| Gate | Verificação |
+|---|---|
+| G0 | escopo, regras de negócio e risco |
+| G1 | typecheck, lint e build |
+| G2 | testes unitários e cobertura |
+| G3 | integração PostgreSQL |
+| G4 | smoke, deploy e rollback aplicáveis |
+| G5 | AMD64/ARM64 quando houver imagem |
+| G6 | validação no commit exato da `main` |
+| G7 | infraestrutura real |
+| G8 | segurança comercial, opt-out e idempotência |
 
-```bash
-docker compose ps
-docker compose logs --no-color --tail=100 api worker
-docker compose stop api worker
-docker compose down -v --remove-orphans
-```
+Nenhum gate pode ser ocultado com `continue-on-error` apenas para deixar a pipeline verde. Falha de infraestrutura deve ser `BLOCKED`, não `PASS`.
 
-- `live` com erro indica falha do processo;
-- `ready` com HTTP 503 indica indisponibilidade do PostgreSQL;
-- o healthcheck do worker confirma o processo principal.
+## Política de execução autônoma
 
-## Backup e restauração
+O trabalho pode avançar automaticamente quando:
 
-Desenvolvimento:
+- estiver no roadmap aprovado;
+- não exigir credencial, pagamento ou confirmação humana externa;
+- houver critério objetivo de teste;
+- a mudança for reversível;
+- não houver risco de contato real não autorizado.
 
-```bash
-docker compose exec -T postgres pg_dump -U leadfinder -d leadfinder -Fc > leadfinder.dump
-docker compose exec -T postgres pg_restore -U leadfinder -d leadfinder --clean --if-exists < leadfinder.dump
-```
+Processo:
 
-Na Oracle, use os scripts do runbook. Backups não devem permanecer somente no disco da VPS.
+1. criar branch específica;
+2. implementar escopo mínimo;
+3. executar validações;
+4. abrir PR com riscos e evidências;
+5. corrigir findings;
+6. integrar por squash;
+7. verificar a `main`;
+8. atualizar documentação e issue.
 
-## Segurança e conformidade operacional
+### Seleção do modelo Codex
 
-- nenhuma credencial no Git;
-- PostgreSQL sem porta pública;
-- API e n8n atrás de Caddy ou tunnel;
-- payload, paginação, timeout e retries limitados;
-- tratamento de 429, 502 e 504;
-- deduplicação concorrente;
-- logs sem dados sensíveis;
-- opt-out futuro bloqueia todos os canais;
-- nenhum envio para lead não validado;
-- WhatsApp somente por integração oficial;
-- campanhas com pausa imediata e auditoria.
+- **Luna:** documentação, investigação simples e mudanças locais de baixo risco;
+- **Terra:** implementação padrão, testes e refatorações moderadas;
+- **Sol:** segurança, migrations, restore, concorrência, autenticação, infraestrutura e mudanças de alto impacto.
+
+O modelo deve ser informado antes de cada trabalho do Codex, com justificativa de risco, complexidade e custo.
+
+## Segurança operacional
+
+- nenhum secret no Git;
+- PostgreSQL sem exposição pública desnecessária;
+- logs sem PII e payload bruto;
+- autenticação e autorização no aplicativo;
+- opt-out global e por canal;
+- `NAO_CONTATAR` com reativação explícita e auditada;
+- idempotência antes de efeitos externos;
+- retry somente para falhas transitórias classificadas;
+- provider real desligado por padrão;
+- backup e restore com reconciliação de supressões;
+- nenhuma automação de navegador para WhatsApp;
+- nenhuma dependência de navegador aberto para operação 24/7.
 
 ## Limitações atuais
 
-- OSM pode estar incompleto ou desatualizado;
-- ausência de site no OSM não confirma ausência real;
-- esta versão ainda não envia mensagens;
-- não há validação externa de site ou contato;
-- não há cota comercial global entre réplicas;
-- o deploy foi comprovado em CI, mas ainda não homologado em VPS Oracle real.
+- dados OSM podem estar incompletos ou desatualizados;
+- ausência de site na fonte não confirma ausência real;
+- não existe envio real pelo runtime;
+- não existe provider Meta, e-mail ou OpenAI integrado;
+- não existe dashboard ou proposta em PDF;
+- não existe homologação Oracle real;
+- PR #69 bloqueia restore seguro e o piloto;
+- cron e Edge Function do Plano B não estão ativos por padrão;
+- o projeto não está pronto para multi-tenant ou escala comercial automática.
 
 Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada.
 
-## Piloto interno controlado
+## Manutenção documental
 
-O núcleo do piloto persiste runs, associações, revisões humanas, contatos feitos manualmente fora do sistema, resultados comerciais e métricas agregadas sem PII. Ele não envia mensagens, não abre WhatsApp Web, não cria webhooks e não chama providers externos.
+Toda PR que alterar arquitetura, flags, ambiente, provider, segurança ou estado de uma fase deve revisar:
 
-As nove rotas `/pilots` são protegidas por permissões específicas `pilot:*`; somente os três health checks existentes permanecem públicos. O gate `DRAFT -> READY` é fail-closed: exige `SHADOW_MODE_ENABLED=true`, egress de coleta desabilitado e todos os leads elegíveis e aprovados. A elegibilidade é revalidada antes do início, do contato manual e do resultado.
+1. [estado operacional consolidado](docs/current-operational-status.md);
+2. este `README.md`;
+3. [índice de documentação](docs/README.md);
+4. runbook e registro de riscos afetados;
+5. issue e evidências de CI correspondentes.
 
-`DO_NOT_CONTACT` grava resultado, opt-out, bloqueio e `NAO_CONTATAR` atomicamente. `INVALID_CONTACT` invalida o contato sem apagar sua origem ou histórico.
+Nunca documentar publicamente tokens, senhas, connection strings, PII de leads, mensagens integrais ou payloads brutos.

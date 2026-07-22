@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/coverage/**',
       'eslint.config.js',
       'scripts/*.ts',
+      'scripts/external-homologation-probe.mjs',
       'scripts/database/*.ts',
       'scripts/restore-suppression/*.ts',
       'deploy/supabase/functions/**/*.ts',
@@ -20,7 +21,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: { allowDefaultProject: ['*.js', '*.ts', 'scripts/*.ts', 'scripts/*.mjs'] },
+        projectService: { allowDefaultProject: ['*.js', '*.ts', 'scripts/*.ts'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },

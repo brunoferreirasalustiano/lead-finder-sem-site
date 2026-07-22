@@ -2,7 +2,7 @@
 
 **Última revisão:** 22 de julho de 2026  
 **Baseline integrada:** `main` em `2b3fa8a9f51549db8a40975083b388c58c6cefe2`  
-**Validação externa em revisão:** PR #99, head `a97f9c4bbb9b429c18e2abc06ee17c9a86fbb698`
+**Validação externa em revisão:** PR #99
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O código, as migrations e os gates executados no SHA citado são a autoridade técnica. Issues e PRs registram o histórico e as decisões detalhadas.
 
@@ -16,6 +16,7 @@ Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O cód
 - a API de homologação no Render está viva e pronta segundo os endpoints públicos;
 - o endpoint operacional interno rejeita acesso sem autenticação;
 - nenhum provider real, envio automático, webhook externo ou integração OpenAI/Meta está ativo;
+- o gate de 30 barbearias terminou em `PIVOT_RECOMMENDED`;
 - não há lead aprovado para contato no primeiro lote;
 - o envio real continua não autorizado.
 
@@ -25,7 +26,7 @@ Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O cód
 
 A PR #99 adiciona um probe somente leitura, executado pelo GitHub Actions e sem credenciais. O probe consulta exclusivamente recursos públicos e produz JSON sanitizado.
 
-Evidência do run verde no head `a97f9c4bbb9b429c18e2abc06ee17c9a86fbb698`:
+Evidência do probe verde:
 
 ### GitHub Pages
 
@@ -33,6 +34,9 @@ Evidência do run verde no head `a97f9c4bbb9b429c18e2abc06ee17c9a86fbb698`:
 - `/privacidade/`: HTTP 200;
 - `/barbearia/`: HTTP 200;
 - aviso de privacidade: conteúdo obrigatório verificado;
+- canonical: verificado;
+- navegação interna: verificada;
+- indexação: habilitada;
 - formulário próprio: ausente;
 - Google Analytics, Tag Manager, Meta Pixel, Hotjar e Clarity: ausentes;
 - nenhuma mensagem ou dado foi enviado durante o probe.
@@ -158,6 +162,8 @@ Comprovado pelo probe externo:
 - home publicada;
 - demonstração de barbearia publicada;
 - aviso de privacidade publicado;
+- canonical e links internos válidos;
+- indexação habilitada;
 - contato oficial por WhatsApp e e-mail;
 - nenhum formulário interno;
 - nenhum tracking próprio;
@@ -168,7 +174,7 @@ O site não confirma que uma mensagem foi enviada e não acessa conversas.
 
 ## Primeiro lote manual
 
-Escopo fixo:
+Escopo invariável:
 
 - até cinco negócios;
 - uma categoria e uma região;
@@ -180,17 +186,23 @@ Escopo fixo:
 - opt-out imediato;
 - nenhum follow-up automático.
 
-Estado da triagem privada em 22 de julho de 2026:
+### Gate de barbearias
 
-- 18 negócios pesquisados;
-- 6 excluídos por possuírem site próprio;
-- 11 em revisão;
-- 1 rejeitado por inconsistência;
+A amostra mínima foi concluída com 30 candidatos distintos em Campinas/SP e proximidades.
+
+Resultado:
+
+- 30 negócios pesquisados;
+- 6 excluídos por site próprio funcional;
+- 22 sem site próprio confirmado ou presentes apenas em páginas de agenda/terceiros;
+- 1 rejeitado por inconsistência de identidade/atividade;
 - 0 canais de e-mail `BUSINESS/APPROVED`;
 - 0 opt-ins válidos de WhatsApp;
 - 0 leads aprovados para contato.
 
-Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Telefone público ou botão de WhatsApp não é opt-in.
+Decisão: `PIVOT_RECOMMENDED`.
+
+O resultado não significa flexibilizar canal. Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Telefone público ou botão de WhatsApp não é opt-in. A próxima etapa é comparar categorias alternativas sem contato e escolher uma com canais empresariais oficiais mais verificáveis.
 
 ## Gates concluídos
 
@@ -203,7 +215,9 @@ Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Te
 - runbooks de prontidão integrados;
 - aviso público de privacidade servido;
 - Render live e ready em HTTP 200;
-- snapshot interno protegido por autenticação.
+- snapshot interno protegido por autenticação;
+- amostra de 30 barbearias concluída;
+- gate de segmento emitido como `PIVOT_RECOMMENDED`.
 
 ## Bloqueios restantes
 
@@ -217,9 +231,10 @@ Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Te
 - comprovar ausência de egress Meta, SMTP, OpenAI e webhooks;
 - registrar service ID e workspace quando o conector Render voltar a funcionar.
 
-### Leads
+### Categoria e leads
 
-- completar o gate de viabilidade do segmento;
+- comparar categorias alternativas;
+- escolher a categoria do lote após o gate de pivot;
 - localizar canais publicados pelo próprio negócio;
 - classificar propriedade do e-mail;
 - registrar decisão humana por contato;
@@ -258,13 +273,14 @@ O perfil self-hosted continua suportado, mas a validação em VPS Oracle real es
 1. integrar e manter o probe externo da PR #99;
 2. recuperar o conector Render e concluir a inspeção autenticada;
 3. testar restart, logs, kill switch e ausência de egress;
-4. completar a amostra de viabilidade da issue #98;
-5. qualificar canais da issue #93;
-6. montar até cinco fichas para aprovação;
-7. executar qualquer contato somente após autorização individual;
-8. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
-9. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
-10. validar o perfil Oracle quando houver infraestrutura adequada.
+4. concluir a comparação de categorias alternativas;
+5. selecionar uma nova categoria para o lote;
+6. qualificar canais empresariais oficiais;
+7. montar até cinco fichas para aprovação;
+8. executar qualquer contato somente após autorização individual;
+9. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
+10. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
+11. validar o perfil Oracle quando houver infraestrutura adequada.
 
 ## Regra de manutenção documental
 

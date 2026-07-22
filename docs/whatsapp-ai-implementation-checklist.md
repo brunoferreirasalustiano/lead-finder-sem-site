@@ -19,6 +19,8 @@
 - [x] exigir evidência append-only `BUSINESS` aprovada para o e-mail selecionado;
 - [x] separar autorização explícita de WhatsApp de fundamento empresarial de e-mail;
 - [x] serializar `PREPARED -> OPENED -> CONTACT_CONFIRMED -> RESPONSE_RECORDED` por preparação;
+- [x] serializar alterações de elegibilidade de e-mail e operações de mensageria pelo lock do lead, sempre antes do lock do contato;
+- [x] testar replay e confirmação concorrentes contra decisão empresarial desfavorável ainda não commitada;
 - [x] minimizar o snapshot e reconstruir mensagem/link somente no replay autenticado;
 - [ ] permitir somente canal comercial oficial configurado fora do Git como remetente documentado.
 

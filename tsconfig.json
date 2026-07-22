@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     { "path": "packages/shared" },
+    { "path": "packages/messaging" },
+    { "path": "packages/whatsapp" },
+    { "path": "packages/ai" },
     { "path": "packages/lead-scoring" },
     { "path": "packages/overpass-client" },
     { "path": "packages/database" },

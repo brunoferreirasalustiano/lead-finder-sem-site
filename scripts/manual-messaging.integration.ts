@@ -159,14 +159,16 @@ try {
   const snapshotFixture = await fixture({ authorizeWhatsApp: false, email: 'a@company.example' });
   const snapshotInput = waInput(snapshotFixture.phoneId, randomUUID());
   const snapshotFirst = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
-  await raw`update lead_contacts set is_valid=false where id=${snapshotFixture.emailId}::uuid`;
   const emailB = randomUUID();
   await raw`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values(${emailB}::uuid,${snapshotFixture.leadId}::uuid,'EMAIL','synthetic-b','b@company.example','BUSINESS_REGISTRY',1,now(),true,false)`;
   const snapshotReplay = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
   assert.equal(snapshotReplay.link, snapshotFirst.link);
   assert.ok(snapshotReplay.link.includes('a%40company.example'));
   assert.ok(!snapshotReplay.link.includes('b%40company.example'));
-  pass('20 replay after fallback change uses immutable snapshot');
+  pass('20 replay preserves the eligible persisted contact');
+  await raw`update lead_contacts set is_valid=false where id=${snapshotFixture.emailId}::uuid`;
+  await expectCode(prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor), 'INELIGIBLE');
+  pass('20a replay fails closed after persisted contact invalidation');
   await expectCode(prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, actor('manual-operator-b')), 'IDEMPOTENCY_CONFLICT');
   const persistedActor = (await raw`select operator_principal_id from pilot_manual_message_preparations where id=${snapshotFirst.preparationId}::uuid`)[0]?.operator_principal_id;
   assert.equal(persistedActor, 'manual-operator-a');
@@ -185,14 +187,25 @@ try {
   assert.equal(confirmationReplay.eventId, confirmed.eventId);
   assert.equal(confirmationReplay.replayed, true);
   pass('25 duplicate confirmation');
+  await expectCode(confirmManualResult(db, preparedWhatsApp.preparationId, { result: 'NOT_SENT', idempotencyKey: confirmationKey }, actor('manual-operator-b')), 'IDEMPOTENCY_CONFLICT');
+  pass('25a event replay by another principal rejected');
   await expectCode(confirmManualResult(db, randomUUID(), { result: 'NOT_SENT', idempotencyKey: randomUUID() }, primaryActor), 'NOT_FOUND');
   pass('26 nonexistent preparation confirmation');
 
   const revokedAfter = await fixture();
-  const revokedPreparation = await prepareManualMessage(db, revokedAfter.pilotId, revokedAfter.leadId, waInput(revokedAfter.phoneId), primaryActor);
+  const revokedInput = waInput(revokedAfter.phoneId);
+  const revokedPreparation = await prepareManualMessage(db, revokedAfter.pilotId, revokedAfter.leadId, revokedInput, primaryActor);
   await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${revokedAfter.leadId}::uuid,'WHATSAPP','after prepared','integration')`;
+  await expectCode(prepareManualMessage(db, revokedAfter.pilotId, revokedAfter.leadId, revokedInput, primaryActor), 'INELIGIBLE');
   await expectCode(confirmManualResult(db, revokedPreparation.preparationId, { result: 'SENT_CONFIRMED', idempotencyKey: randomUUID() }, primaryActor), 'INELIGIBLE');
-  pass('27 opt-out after PREPARED');
+  pass('27 opt-out after PREPARED blocks replay and confirmation');
+
+  const blockedAfter = await fixture();
+  const blockedInput = waInput(blockedAfter.phoneId);
+  await prepareManualMessage(db, blockedAfter.pilotId, blockedAfter.leadId, blockedInput, primaryActor);
+  await raw`update leads set do_not_contact=true,crm_stage='NAO_CONTATAR' where id=${blockedAfter.leadId}::uuid`;
+  await expectCode(prepareManualMessage(db, blockedAfter.pilotId, blockedAfter.leadId, blockedInput, primaryActor), 'INELIGIBLE');
+  pass('27a do_not_contact and NAO_CONTATAR block replay');
 
   const during = await fixture();
   const duringPreparation = await prepareManualMessage(db, during.pilotId, during.leadId, waInput(during.phoneId), primaryActor);
@@ -210,8 +223,8 @@ try {
   pass('28 opt-out committed during confirmation wins');
 
   const restart = createDatabase(databaseUrl);
-  const restartReplay = await prepareManualMessage(restart.db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
-  assert.equal(restartReplay.link, snapshotFirst.link);
+  const restartReplay = await prepareManualMessage(restart.db, replayFixture.pilotId, replayFixture.leadId, replayInput, primaryActor);
+  assert.equal(restartReplay.link, first.link);
   await restart.close();
   pass('29 persisted state after restart');
 

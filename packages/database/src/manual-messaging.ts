@@ -131,12 +131,17 @@ export async function prepareManualMessage(
     );
     const prior = await tx.execute(
       sql<
-        { id: string; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; operator_principal_id: string }[]
-      >`select id,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
+        { id: string; contact_id: string; channel: MessagingChannel; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; operator_principal_id: string }[]
+      >`select id,contact_id,channel,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
     );
     if (prior[0] && (prior[0].operator_principal_id !== auth.principalId || prior[0].payload_fingerprint !== fingerprint))
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     if (prior[0]) {
+      requirePreparedContact(
+        await candidates(tx, pilotRunId, leadId),
+        prior[0].channel as MessagingChannel,
+        String(prior[0].contact_id),
+      );
       if (digest(prior[0].result_snapshot) !== prior[0].result_fingerprint)
         throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
       const snapshot = prior[0].result_snapshot as Record<string, unknown>;
@@ -236,17 +241,27 @@ async function event(
   observation: string | undefined,
   auth: AuthorizationContext,
 ) {
-  const fingerprint = digest({ id, eventType, result, observation: clean(observation) });
+  const fingerprint = digest({
+    id,
+    eventType,
+    result,
+    observation: clean(observation),
+    principalId: auth.principalId,
+  });
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`${id}:${eventType}:${key}`},0))`,
     );
     const prior = await tx.execute(
       sql<
-        { id: string; payload_fingerprint: string; created_at: Date }[]
-      >`select id,payload_fingerprint,created_at from pilot_manual_message_events where preparation_id=${id}::uuid and event_type=${eventType} and idempotency_key=${key}`,
+        { id: string; payload_fingerprint: string; created_at: Date; operator_principal_id: string }[]
+      >`select id,payload_fingerprint,created_at,operator_principal_id from pilot_manual_message_events where preparation_id=${id}::uuid and event_type=${eventType} and idempotency_key=${key}`,
     );
-    if (prior[0] && prior[0].payload_fingerprint !== fingerprint)
+    if (
+      prior[0] &&
+      (prior[0].operator_principal_id !== auth.principalId ||
+        prior[0].payload_fingerprint !== fingerprint)
+    )
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     if (prior[0])
       return {

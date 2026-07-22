@@ -140,13 +140,23 @@ try {
     assert.deepEqual(table[0], { relrowsecurity: true, owner: ownerName });
 
     await db.unsafe(`
+      GRANT ALL ON TABLE public.restore_suppression_runs TO service_role;
+      ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+    `);
+    const reconciliation = await readFile(new URL('../database/migrations/0018_service_role_least_privilege_reconciliation.sql', import.meta.url), 'utf8');
+    await db.unsafe(reconciliation);
+    await db.unsafe(reconciliation);
+    console.log(JSON.stringify({ result: 'SERVICE_ROLE_EMERGENCY_DRIFT_RECONCILED', replay: 2 }));
+
+    await db.unsafe(`
       CREATE TABLE public.security_future_table (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
       ALTER TABLE public.security_future_table ENABLE ROW LEVEL SECURITY;
       CREATE SEQUENCE public.security_future_sequence;
       CREATE FUNCTION public.security_future_function() RETURNS integer
         LANGUAGE sql SET search_path = pg_catalog, public AS 'SELECT 1';
     `);
-    await assertDenyAll(db, 'objects created after migration 0017 must be deny-all');
+    await assertDenyAll(db, 'objects created after migration 0018 must be deny-all');
 
     const serviceAccess = await db<{
       currentSelect: boolean;

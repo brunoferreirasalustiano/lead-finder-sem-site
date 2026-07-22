@@ -64,7 +64,7 @@ async function fixture(options: {
     await tx`insert into pilot_leads(pilot_run_id,lead_id,source,added_by) values(${pilotId}::uuid,${leadId}::uuid,'SYNTHETIC','integration-test')`;
     await tx`insert into pilot_reviews(pilot_run_id,lead_id,decision,reviewer_principal_id,version) values(${pilotId}::uuid,${leadId}::uuid,${options.review ?? 'APPROVED'},'reviewer',1)`;
     await tx`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values
-      (${phoneId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone','55 9 9123-4567','BUSINESS_REGISTRY',1,${options.phoneVerified === false ? null : new Date()}::timestamptz,${options.phoneValid ?? true},true),
+      (${phoneId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone',${`55 9 9123-${suffix}`} ,'BUSINESS_REGISTRY',1,${options.phoneVerified === false ? null : new Date()}::timestamptz,${options.phoneValid ?? true},true),
       (${emailId}::uuid,${leadId}::uuid,'EMAIL','synthetic-email',${options.email ?? `contato${suffix}@gmail.com`},'BUSINESS_REGISTRY',1,${options.emailVerified === false ? null : new Date()}::timestamptz,${options.emailValid ?? true},false)`;
     if (options.authorizeWhatsApp ?? true)
       await tx`insert into contact_channel_authorizations(contact_id,lead_id,channel,purpose,origin,evidence_fingerprint,granted_at,recorded_by) values(${phoneId}::uuid,${leadId}::uuid,'WHATSAPP','B2B_PROSPECTION','DIRECT_OPT_IN',${suffix.padStart(64, 'a').slice(-64)},now(),'server-actor')`;
@@ -84,7 +84,7 @@ try {
   const whatsapp = await fixture();
   const preparedWhatsApp = await prepareManualMessage(db, whatsapp.pilotId, whatsapp.leadId, waInput(whatsapp.phoneId), primaryActor);
   assert.equal(preparedWhatsApp.channel, 'WHATSAPP');
-  assert.match(preparedWhatsApp.link, /^https:\/\/wa\.me\/5555991234567\?text=/);
+  assert.match(preparedWhatsApp.link, /^https:\/\/wa\.me\/5555991230001\?text=/);
   pass('01 WhatsApp with valid opt-in');
 
   const noOptIn = await fixture({ authorizeWhatsApp: false, emailValid: false });
@@ -263,9 +263,9 @@ try {
   assert.ok(!manualLogs.includes(preparedWhatsApp.link));
   pass('HTTP prepare/open/confirm auth, validation, 404/409/422, principal and opt-out permission');
 
-  const sensitive = JSON.stringify({ phone: '55 9 9123-4567', email: 'a@company.example', message: snapshotFirst.message, link: snapshotFirst.link });
+  const sensitive = JSON.stringify({ phone: '55 9 9123-0001', email: 'a@company.example', message: snapshotFirst.message, link: snapshotFirst.link });
   const safeEvidence = JSON.stringify({ tests: report, counts: { preparations: await count('pilot_manual_message_preparations'), events: await count('pilot_manual_message_events') } });
-  assert.ok(!safeEvidence.includes('55 9 9123-4567') && !safeEvidence.includes('a@company.example') && !safeEvidence.includes(snapshotFirst.message));
+  assert.ok(!safeEvidence.includes('55 9 9123-0001') && !safeEvidence.includes('a@company.example') && !safeEvidence.includes(snapshotFirst.message));
   assert.ok(sensitive.length > safeEvidence.length);
   pass('34 evidence and errors contain no PII');
 

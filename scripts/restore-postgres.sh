@@ -17,22 +17,32 @@ manifest="$2"
 [[ -f "${backup}" && -r "${backup}" && -s "${backup}" ]] || die 'Backup inexistente, ilegivel ou vazio.'
 backup="$(realpath "$backup")"
 case "$backup" in "$BACKUP_DIR"/*) ;; *) die 'O backup deve estar dentro de BACKUP_DIR.' ;; esac
+manifest_parent="$(realpath "$(dirname "$manifest")")"
+[[ "$manifest_parent" == "$BACKUP_DIR" ]] || die 'O manifesto deve ser criado diretamente em BACKUP_DIR.'
+manifest_name="$(basename "$manifest")"
+[[ "$manifest_name" == *.suppression-manifest.json ]] || die 'O manifesto deve usar o sufixo .suppression-manifest.json.'
+manifest_container="/restore-manifests/$manifest_name"
+export RESTORE_SUPPRESSION_MANIFEST_DIR="$BACKUP_DIR"
 docker compose "${COMPOSE_FILES[@]}" exec -T postgres pg_restore --list < "${backup}" >/dev/null || die 'Arquivo nao e um dump custom valido.'
 printf 'Esta operacao substituira objetos no PostgreSQL da stack. Digite RESTAURAR para continuar: ' >&2
 read -r confirmation
 [[ "${confirmation}" == RESTAURAR ]] || die 'Restauracao cancelada.'
 
 docker compose "${COMPOSE_FILES[@]}" stop api worker
-[[ -n "${DATABASE_URL:-}" ]] || die 'DATABASE_URL e obrigatoria para reconciliacao.'
 [[ ! -e "$manifest" ]] || die 'O manifesto de saida ja existe.'
-npm run restore:suppression:export -- --output "$manifest"
-npm run restore:suppression:validate -- --manifest "$manifest"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restore:suppression:export -- --output "$manifest_container"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restore:suppression:validate -- --manifest "$manifest_container"
 restore_status=0
 docker compose "${COMPOSE_FILES[@]}" exec -T postgres sh -ceu 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges' < "${backup}" || restore_status=$?
 (( restore_status == 0 )) || die "pg_restore falhou com codigo ${restore_status}; API e worker permanecem parados."
 docker compose "${COMPOSE_FILES[@]}" run --rm migrate
-npm run restore:suppression:apply -- --manifest "$manifest"
-npm run restore:suppression:apply -- --manifest "$manifest" --apply --actor "${RESTORE_SUPPRESSION_ACTOR:-restore-operator}"
-npm run restore:suppression:verify -- --manifest "$manifest"
-npm run pilot:real:preflight -- --restore-suppression-only
-printf '[restore] RESTORE_SUPPRESSION_SAFE; API e worker permanecem parados ate liberacao operacional: %s\n' "${backup}"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restore:suppression:apply -- --manifest "$manifest_container"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restore:suppression:apply -- --manifest "$manifest_container" --apply --actor "${RESTORE_SUPPRESSION_ACTOR:-restore-operator}"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restore:suppression:verify -- --manifest "$manifest_container"
+docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run pilot:real:preflight -- --restore-suppression-only
+if [[ "${RESTORE_RESUME_SERVICES:-false}" == true ]]; then
+  docker compose "${COMPOSE_FILES[@]}" up -d api worker
+  printf '[restore] RESTORE_SUPPRESSION_SAFE; retomada controlada concluida.\n'
+else
+  printf '[restore] RESTORE_SUPPRESSION_SAFE; API e worker permanecem parados ate liberacao operacional.\n'
+fi

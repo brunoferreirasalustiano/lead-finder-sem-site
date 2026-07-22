@@ -18,6 +18,10 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Métricas de qualidade de leads](lead-quality-metrics.md) — definições de qualidade sem inferir ausência real de site.
 - [Métricas do funil](commercial-funnel-metrics.md) — definições reconciliáveis de etapas e conversões.
 - [Política de recuperação de leads](lead-recovery-policy.md) — tratamento seguro de estados e retomadas.
+- [Avaliação de legítimo interesse do primeiro contato](first-outreach-legitimate-interest-assessment.md) — finalidade, necessidade, balanceamento, salvaguardas e decisão condicional.
+- [Ficha individual de revisão de lead](first-lead-review-sheet.md) — template privado para validar negócio, canal, supressões, mensagem e resultado.
+- [Política de seleção do primeiro lote](first-batch-selection-policy.md) — critérios de inclusão/exclusão, triagem e regra de canal.
+- [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
 
 ## WhatsApp e IA
 

@@ -2,20 +2,20 @@
 
 ## Fase A — Fundação segura
 
-- [ ] criar `packages/messaging` com contratos de provider e políticas;
-- [ ] criar `packages/whatsapp` com normalização E.164, link manual e provider fake;
-- [ ] criar `packages/ai` com provider fake e schemas de saída;
+- [x] criar `packages/messaging` com contratos de provider e políticas;
+- [x] criar `packages/whatsapp` com normalização E.164, link manual e provider fake;
+- [x] criar `packages/ai` com provider fake e schemas de saída;
 - [ ] adaptar o outbox para interface genérica sem remover o simulador atual;
 - [ ] manter todos os providers externos desabilitados;
 - [ ] adicionar testes de opt-out, `NAO_CONTATAR`, revisão humana, idempotência e logs sanitizados.
 
 ## Fase B — Manual assistido
 
-- [ ] endpoint autenticado para gerar link manual de WhatsApp;
-- [ ] exigir permissão específica e revisão humana registrada;
-- [ ] registrar abertura do fluxo sem afirmar que houve envio;
-- [ ] registrar resultado manual separado;
-- [ ] impedir segundo contato após opt-out;
+- [x] endpoint autenticado para gerar link manual de WhatsApp ou e-mail permitido;
+- [x] exigir permissões específicas e revisão humana registrada;
+- [x] registrar abertura do fluxo sem afirmar que houve envio;
+- [x] registrar resultado manual separado;
+- [x] impedir segundo contato após opt-out;
 - [ ] permitir somente canal comercial oficial configurado fora do Git como remetente documentado.
 
 ## Fase C — IA em shadow mode

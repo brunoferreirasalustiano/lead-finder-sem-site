@@ -151,6 +151,8 @@ Referências:
 
 ## WhatsApp e IA
 
+As Fases A/B possuem agora uma fundação local em revisão: contratos tipados, providers fake sem rede, normalização E.164 e fluxo manual assistido com estados `PREPARED`, `OPENED` e `CONTACT_CONFIRMED`. A preparação e a confirmação reavaliam PostgreSQL de forma fail-closed; abrir um link não registra envio. Esta implementação não libera o piloto, provider, egress ou envio real enquanto a PR e todos os gates não forem aprovados.
+
 A arquitetura e os controles estão documentados, mas não implementados no runtime.
 
 - IA poderá gerar rascunhos e classificações em shadow mode;

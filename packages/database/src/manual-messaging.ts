@@ -285,5 +285,5 @@ async function event(
       createdAt: row.created_at,
       replayed: false,
     };
-  }, { isolationLevel: 'serializable' });
+  });
 }

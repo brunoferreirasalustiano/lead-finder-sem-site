@@ -9,14 +9,15 @@ export function normalizePhoneE164(
 ): PhoneNormalizationResult {
   if (!value?.trim()) return { ok: false, code: 'MISSING_PHONE' };
   if (!/^[\d\s()+.-]+$/.test(value)) return { ok: false, code: 'INVALID_PHONE' };
+  const trimmed = value.trim();
+  const explicitInternational = trimmed.startsWith('+') || trimmed.startsWith('00');
   let digits = value.replace(/\D/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
-  if (
-    defaultCountry === 'BR' &&
-    !digits.startsWith('55') &&
-    (digits.length === 10 || digits.length === 11)
-  )
-    digits = `55${digits}`;
+  if (defaultCountry === 'BR' && !explicitInternational) {
+    if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+    else if (!((digits.length === 12 || digits.length === 13) && digits.startsWith('55')))
+      return { ok: false, code: 'INVALID_PHONE' };
+  }
   const e164 = `+${digits}`;
   return e164Schema.safeParse(e164).success
     ? { ok: true, e164, digits }

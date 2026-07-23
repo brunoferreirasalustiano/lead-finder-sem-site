@@ -1,0 +1,187 @@
+name: Reconcile operational status
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - docs/current-operational-status.md
+      - .github/workflows/docs-status-reconcile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Reconcile verified project state
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/current-operational-status.md')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  '**Baseline integrada:** `main` em `3d5e3abd1cf9fe90a6ad0cb869c9d1ff3bfa903f`',
+                  '**Baseline integrada:** `main` em `d45c2b47cbd7e1787623fa992d9d3b727daea964`',
+              ),
+              (
+                  'A PR #118 foi integrada na baseline acima. A CI #413 foi integralmente verde no head revisado `b7ca5d3a6616057e0611140e61e1fc509c7c6571`; ainda não há execução pós-merge visível para o SHA de squash da `main`, que também não foi confirmado como implantado no Render.',
+                  'As PRs #118, #121 e #122 estão integradas na baseline acima. A compatibilidade fail-closed de migrations passou na CI #429; a correção transitiva `find-my-way 9.6.0 → 9.7.0` passou na CI #438. O SHA atual da `main` ainda não foi implantado no Render.',
+              ),
+              (
+                  '- o runner local ainda consulta somente o registro público e precisa de compatibilidade fail-closed antes de qualquer execução contra a homologação;',
+                  '- o runner lê os registros local e Supabase, valida paridade de `0019/0020` e falha fechado em conflitos ou migrations importadas sem validador;',
+              ),
+              (
+                  '- nenhum provider real, envio automático, webhook externo ou integração OpenAI/Meta está ativo;',
+                  '- nenhum provider real, envio automático, webhook externo ou integração OpenAI/Meta está ativo;\n- o audit de dependências está verde após a atualização lockfile-only de `find-my-way` para `9.7.0`;',
+              ),
+              (
+                  'A inspeção autenticada anterior do serviço Render `srv-d9fbpp6rnols73bko9f0` registrou auto-deploy desligado, flags fail-closed e o deployment anterior `live` no SHA `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`. A `main` e sua CI estavam verdes no SHA `0feb26885682ff19f254d70b001ccbcc39306d35`.',
+                  'A inspeção autenticada do Render confirmou o serviço `srv-d9fbpp6rnols73bko9f0`, auto-deploy desligado, branch `hml/render-supabase-plan-b`, região Virginia e deployment `live` no SHA antigo `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`. O MCP não disponibilizou leitura das variáveis efetivas ou do `DATABASE_URL`.',
+              ),
+              (
+                  'O risco operacional permanece porque `scripts/migrate.ts` consulta somente o registro público e classificaria `0019/0020` como pendentes.',
+                  'A PR #121 eliminou o risco conhecido: `scripts/migrate.ts` consulta os dois registros, reconhece `0019/0020` pelo nome lógico, valida objetos e ACL e comprova segunda execução sem DDL ou escrita artificial no histórico local.',
+              ),
+              (
+                  '''Antes do deploy controlado ainda é obrigatório:
+
+1. confirmar que o projeto Supabase inspecionado é o banco exato referenciado pelo `DATABASE_URL` efetivo do Render;
+2. concluir a issue #120 com compatibilidade fail-closed para os dois registros;
+3. comprovar que o runner reconhece `0019/0020` pelo nome lógico e não executa DDL;
+4. validar a solução em PostgreSQL comum e Supabase;
+5. confirmar CI verde no SHA exato que será implantado;
+6. somente então repetir deploy, restart, kill switch e smoke test.
+
+Até a issue #120 ser concluída:
+
+- não executar `scripts/migrate.ts` contra a homologação;
+- não reaplicar `0019` ou `0020`;
+- não inserir versões manualmente em `public.schema_migrations`;
+- não alterar objetos ou grants atuais.''',
+                  '''Antes do deploy controlado ainda é obrigatório:
+
+1. confirmar que o projeto Supabase inspecionado é o banco exato referenciado pelo `DATABASE_URL` efetivo do Render;
+2. confirmar as flags efetivas sem revelar secrets;
+3. selecionar um SHA aprovado e com CI integralmente verde;
+4. executar deploy controlado sem habilitar provider ou envio;
+5. revisar logs e health checks após o deploy;
+6. comprovar restart, kill switch, ausência observada de egress, rollback e smoke test.
+
+As regras permanentes continuam:
+
+- não reaplicar `0019` ou `0020` manualmente;
+- não inserir versões artificialmente em `public.schema_migrations`;
+- não alterar objetos ou grants fora de migration revisada;
+- interromper a operação diante de divergência de histórico ou paridade.''',
+              ),
+              (
+                  '''- `MIGRATION_REGISTRY_SPLIT_VERIFIED`;
+- `MIGRATION_RUNNER_COMPATIBILITY_REQUIRED`;
+- `MIGRATION_REAPPLY_BLOCKED`;
+- `POST_DEPLOY_GATE_BLOCKED`.''',
+                  '''- `MIGRATION_REGISTRY_SPLIT_VERIFIED`;
+- `MIGRATION_RUNNER_COMPATIBILITY_COMPLETE`;
+- `MIGRATION_REAPPLY_GUARD_PROVED`;
+- `DEPENDENCY_AUDIT_CLEAN`;
+- `POST_DEPLOY_GATE_BLOCKED`.''',
+              ),
+              (
+                  '- plano free e região Virginia;',
+                  '- plano free declarado no Blueprint;\n- serviço Render confirmado na região Virginia;\n- Supabase de homologação confirmado em `sa-east-1`;',
+              ),
+              (
+                  '- compatibilidade do runner local pendente na issue #120;',
+                  '- compatibilidade fail-closed do runner concluída pela PR #121 e validada na CI #429;',
+              ),
+              (
+                  '''- registros de migrations `0019/0020` localizados no histórico Supabase;
+- causa raiz do registro dividido comprovada;
+- objetos, constraints, funções, triggers, RLS e ACL esperados de `0019/0020` presentes na homologação;''',
+                  '''- registros de migrations `0019/0020` localizados no histórico Supabase;
+- causa raiz do registro dividido comprovada;
+- runner compatível com os dois registros e replay guard comprovado;
+- objetos, constraints, funções, triggers, RLS e ACL esperados de `0019/0020` presentes na homologação;
+- audit de dependências sem vulnerabilidade alta após a PR #122;''',
+              ),
+              (
+                  '''### Registros e runner de migrations
+
+- confirmar que o projeto Supabase inspecionado é o banco exato do serviço Render;
+- concluir a compatibilidade fail-closed da issue #120;
+- comprovar que `scripts/migrate.ts` não reaplica `0019/0020`;
+- validar a origem `LOCAL`, `SUPABASE` ou `BOTH` sem escrita de histórico;
+- validar a solução em PostgreSQL comum e Supabase;
+- preservar backup/restore antes de qualquer futura alteração de banco.''',
+                  '''### Banco efetivo e resiliência
+
+- confirmar que o projeto Supabase inspecionado é o banco exato do serviço Render;
+- preservar backup/restore antes de qualquer futura alteração de banco;
+- registrar evidência sanitizada do preflight no SHA escolhido para deploy.''',
+              ),
+              (
+                  '''- confirmar o SHA efetivamente implantado no Render;
+- confirmar as variáveis efetivas sem expor valores secretos;
+- revisar logs sanitizados;
+- comprovar restart lógico;
+- testar kill switch de forma controlada;
+- comprovar ausência de egress Meta, SMTP, OpenAI e webhooks;
+- confirmar workspace, service ID, branch, fonte de deploy e auto-deploy.''',
+                  '''- implantar um SHA aprovado, substituindo o SHA antigo atualmente live;
+- confirmar as variáveis efetivas sem expor valores secretos;
+- revisar logs sanitizados após o deploy;
+- comprovar restart lógico;
+- testar kill switch de forma controlada;
+- comprovar ausência de egress Meta, SMTP, OpenAI e webhooks;
+- comprovar rollback e smoke test.''',
+              ),
+              (
+                  '''1. concluir a issue #120 e impedir reaplicação de `0019/0020`;
+2. recuperar o conector Render e confirmar banco, workspace, serviço, branch e SHA;
+3. concluir deploy controlado, restart, logs, kill switch, backup/restore, rollback e ausência de egress;
+4. concluir as fichas privadas dos quatro códigos prioritários;
+5. qualificar canais empresariais oficiais e consultar supressões;
+6. montar até cinco fichas para aprovação individual;
+7. aplicar a rubrica de qualidade e manter todas as mensagens em `NOT_SENT` até o veredito final;
+8. executar qualquer contato somente após `REAL_MANUAL_PILOT_READY` e autorização individual;
+9. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
+10. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
+11. validar o perfil Oracle quando houver infraestrutura adequada.''',
+                  '''1. confirmar `DATABASE_URL` e flags efetivas do Render sem expor secrets;
+2. concluir deploy controlado, restart, logs, kill switch, backup/restore, rollback e ausência de egress;
+3. concluir as fichas privadas dos quatro códigos prioritários;
+4. qualificar canais empresariais oficiais e consultar supressões;
+5. montar até cinco fichas para aprovação individual;
+6. aplicar a rubrica de qualidade e manter todas as mensagens em `NOT_SENT` até o veredito final;
+7. executar qualquer contato somente após `REAL_MANUAL_PILOT_READY` e autorização individual;
+8. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
+9. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
+10. validar o perfil Oracle quando houver infraestrutura adequada.''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, found {count}: {old[:100]!r}')
+              text = text.replace(old, new)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit reconciled status
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/current-operational-status.md
+          git commit -m 'docs: reconcile consolidated operational status'
+          git push origin HEAD:${{ github.head_ref }}

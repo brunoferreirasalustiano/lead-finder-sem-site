@@ -61,7 +61,7 @@ describe('1,080 named core communication cases', () => {
     expect(evaluation.rendered.body).not.toMatch(realEmailPattern);
     expect(evaluation.rendered.body).not.toMatch(realPhonePattern);
     expect(evaluation.rendered.body).not.toMatch(/garantimos|resultado garantido|dobrar vendas/i);
-    expect(evaluation.rendered.body).not.toMatch(/sent|delivered|disparo em massa/i);
+    expect(evaluation.rendered.body).not.toMatch(/\b(?:sent|delivered)\b|disparo em massa/i);
   });
 });
 

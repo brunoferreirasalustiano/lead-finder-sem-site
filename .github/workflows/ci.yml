@@ -157,7 +157,7 @@ jobs:
           [[ "$(docker compose -f docker-compose.yml -f docker-compose.production.yml --profile tools ps --services --status running)" == postgres ]]
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression npm run db:migrate
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression npm run db:migrate
-          docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression node --input-type=module -e "import postgres from 'postgres'; const sql=postgres(process.env.DATABASE_URL,{max:1}); const rows=await sql\`select count(*)::int count from schema_migrations\`; if(!rows[0]?.count)process.exit(2); await sql.end(); console.log(JSON.stringify({result:'RESTORE_COMPOSE_REACHABLE'}));"
+          docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression node --input-type=module -e "import postgres from 'postgres'; const sql=postgres(process.env.DATABASE_URL,{max:1}); const rows=await sql\`select count(*)::int count from public.schema_migrations\`; if(!rows[0]?.count)process.exit(2); await sql.end(); console.log(JSON.stringify({result:'RESTORE_COMPOSE_REACHABLE'}));"
           [[ "$(docker compose -f docker-compose.yml -f docker-compose.production.yml --profile tools ps --services --status running)" == postgres ]]
   integration:
     runs-on: ubuntu-latest
@@ -184,6 +184,8 @@ jobs:
       - run: npm run build
       - name: Apply migrations twice to verify version control
         run: npm run db:migrate && npm run db:migrate
+      - name: Verify split migration registry compatibility
+        run: npm run test:migration-registry
       - name: Verify Supabase Data API deny-all defaults on PostgreSQL
         run: npm run test:supabase-data-api-security
       - name: Verify manual assisted messaging on PostgreSQL 16

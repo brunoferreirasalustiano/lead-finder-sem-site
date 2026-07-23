@@ -27,14 +27,15 @@
     "test:pilot:restart": "tsx scripts/pilot-restart-test.ts",
     "pilot:real:preflight": "tsx scripts/pilot-real-preflight.ts",
     "pilot:real:fixture": "tsx scripts/pilot-real-synthetic-batch.ts",
-    "pilot:real:log-privacy": "tsx scripts/pilot-real-log-privacy.ts"
-    ,"restore:suppression:export": "tsx scripts/restore-suppression/cli.ts export"
-    ,"restore:suppression:validate": "tsx scripts/restore-suppression/cli.ts validate"
-    ,"restore:suppression:apply": "tsx scripts/restore-suppression/cli.ts apply"
-    ,"restore:suppression:verify": "tsx scripts/restore-suppression/cli.ts verify"
-    ,"test:restore-suppression": "tsx scripts/restore-suppression.integration.ts"
-    ,"test:supabase-data-api-security": "tsx scripts/supabase-data-api-security.integration.ts && tsx scripts/manual-messaging-append-only-acl.integration.ts"
-    ,"test:manual-messaging": "tsx scripts/manual-messaging.integration.ts && tsx scripts/manual-messaging-concurrency.integration.ts"
+    "pilot:real:log-privacy": "tsx scripts/pilot-real-log-privacy.ts",
+    "restore:suppression:export": "tsx scripts/restore-suppression/cli.ts export",
+    "restore:suppression:validate": "tsx scripts/restore-suppression/cli.ts validate",
+    "restore:suppression:apply": "tsx scripts/restore-suppression/cli.ts apply",
+    "restore:suppression:verify": "tsx scripts/restore-suppression/cli.ts verify",
+    "test:restore-suppression": "tsx scripts/restore-suppression.integration.ts",
+    "test:supabase-data-api-security": "tsx scripts/supabase-data-api-security.integration.ts && tsx scripts/manual-messaging-append-only-acl.integration.ts",
+    "test:manual-messaging": "tsx scripts/manual-messaging.integration.ts && tsx scripts/manual-messaging-concurrency.integration.ts",
+    "test:migration-registry": "tsx scripts/migration-registry-compatibility.integration.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
@@ -46,7 +47,7 @@
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.35.0",
-    "vitest": "^3.2.4"
-    ,"zod": "^3.25.67"
+    "vitest": "^3.2.4",
+    "zod": "^3.25.67"
   }
 }

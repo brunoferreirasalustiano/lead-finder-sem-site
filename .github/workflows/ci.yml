@@ -112,8 +112,8 @@ jobs:
           file: apps/api/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
+          cache-from: type=gha,scope=api-v2
+          cache-to: type=gha,mode=max,scope=api-v2
       - name: Build worker for AMD64 and ARM64 without publishing
         uses: docker/build-push-action@v6
         with:
@@ -121,8 +121,8 @@ jobs:
           file: apps/worker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,mode=max,scope=worker
+          cache-from: type=gha,scope=worker-v2
+          cache-to: type=gha,mode=max,scope=worker-v2
       - name: Verify production image manifests
         run: |
           for image in postgres:16-alpine caddy:2.10-alpine n8nio/n8n:1.99.1; do

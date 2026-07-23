@@ -9,6 +9,7 @@ on:
       - 'packages/messaging/src/communication-evidence-guards.ts'
       - 'packages/messaging/src/communication-evidence-guards.test.ts'
       - 'scripts/communication-experiment-report.ts'
+      - 'scripts/guarded-communication-recommendations.ts'
       - 'docs/communication-experiment-lab.md'
   workflow_dispatch:
 
@@ -43,17 +44,19 @@ jobs:
           packages/messaging/src/communication-evidence-guards.test.ts
           --reporter=dot
 
-      - name: Generate sanitized experiment report
+      - name: Generate sanitized experiment reports
         env:
           GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: npx tsx scripts/communication-experiment-report.ts
+        run: |
+          npx tsx scripts/communication-experiment-report.ts
+          npx tsx scripts/guarded-communication-recommendations.ts
 
-      - name: Verify report contract
+      - name: Verify report contracts
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
-          const path = 'artifacts/communication-lab/communication-experiment-report.json';
-          const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const experimentPath = 'artifacts/communication-lab/communication-experiment-report.json';
+          const report = JSON.parse(fs.readFileSync(experimentPath, 'utf8'));
           if (report.metadata.schemaVersion !== 'v2') throw new Error('REPORT_SCHEMA_V2_REQUIRED');
           if (report.metadata.namedCoreTests < 1000) throw new Error('NAMED_TEST_COUNT_TOO_LOW');
           if (report.metadata.evaluatedScenarios < 10000) throw new Error('SCENARIO_COUNT_TOO_LOW');
@@ -77,13 +80,35 @@ jobs:
           if (!diagnostic.codes.some(({ code, count }) => code === 'DIAGNOSTIC_EVIDENCE_REQUIRED' && count === 540)) {
             throw new Error('DIAGNOSTIC_CODE_MISSING');
           }
+
+          const guardedPath = 'artifacts/communication-lab/guarded-communication-recommendations.json';
+          const guarded = JSON.parse(fs.readFileSync(guardedPath, 'utf8'));
+          if (guarded.metadata.schemaVersion !== 'v1') throw new Error('GUARDED_RECOMMENDATION_SCHEMA_REQUIRED');
+          if (guarded.metadata.evaluatedRecommendationScenarios !== report.metadata.evaluatedScenarios) {
+            throw new Error('GUARDED_RECOMMENDATION_SCENARIO_MISMATCH');
+          }
+          if (guarded.metadata.realConversionEvidence !== false) throw new Error('GUARDED_REAL_CONVERSION_CLAIM_FORBIDDEN');
+          if (Object.values(guarded.metadata.externalEffects).some(Boolean)) throw new Error('GUARDED_EXTERNAL_EFFECT_DETECTED');
+          if (!guarded.guardedPatterns?.requiresVerifiedDiagnosticEvidence) {
+            throw new Error('DIAGNOSTIC_EVIDENCE_CONDITION_MISSING');
+          }
+          for (const variants of Object.values(guarded.topByChannel ?? {})) {
+            if (!Array.isArray(variants) || variants.length === 0) throw new Error('GUARDED_TOP_VARIANTS_MISSING');
+            for (const variant of variants) {
+              if (!variant.sourceType) throw new Error('GUARDED_SOURCE_TYPE_MISSING');
+              if (variant.opening === 'DIAGNOSIS_FIRST' && variant.diagnosticEvidenceRequired !== true) {
+                throw new Error('UNGUARDED_DIAGNOSIS_RECOMMENDATION');
+              }
+            }
+          }
           console.log(JSON.stringify({
             commit: report.metadata.commit,
             namedCoreTests: report.metadata.namedCoreTests,
             evaluatedScenarios: report.metadata.evaluatedScenarios,
             evaluatedGuardScenarios: report.metadata.evaluatedGuardScenarios,
-            channelSourceBlocked: channelSource.blocked,
-            diagnosticBlocked: diagnostic.blocked,
+            guardedRecommendationScenarios: guarded.metadata.evaluatedRecommendationScenarios,
+            guardedEligible: guarded.summary.eligible,
+            guardedBlocked: guarded.summary.blocked,
           }));
           NODE
 
@@ -94,6 +119,11 @@ jobs:
             cat artifacts/communication-lab/communication-experiment-report.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'Communication experiment report was not generated.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -f artifacts/communication-lab/guarded-communication-recommendations.md ]]; then
+            cat artifacts/communication-lab/guarded-communication-recommendations.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Guarded communication recommendations were not generated.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload sanitized experiment artifacts

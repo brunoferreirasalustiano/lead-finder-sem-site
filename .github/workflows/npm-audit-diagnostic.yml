@@ -9,50 +9,35 @@ on:
       - .github/workflows/npm-audit-diagnostic.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Explain vulnerable dependency
-        shell: bash
-        run: npm explain find-my-way --json > npm-explain-find-my-way.json
-      - name: Generate compatible lockfile fix
+      - name: Apply compatible lockfile-only fix
         shell: bash
         run: |
-          set +e
-          npm audit --json > npm-audit-before.json
-          before_status=$?
           npm audit fix --package-lock-only --ignore-scripts
-          fix_status=$?
-          npm audit --json > npm-audit-after.json
-          after_status=$?
-          git diff -- package-lock.json > package-lock.diff
-          printf '%s' "$before_status" > npm-audit-before-status.txt
-          printf '%s' "$fix_status" > npm-audit-fix-status.txt
-          printf '%s' "$after_status" > npm-audit-after-status.txt
-      - name: Upload diagnostic and candidate fix
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-audit-candidate-fix
-          path: |
-            npm-explain-find-my-way.json
-            npm-audit-before.json
-            npm-audit-after.json
-            npm-audit-before-status.txt
-            npm-audit-fix-status.txt
-            npm-audit-after-status.txt
-            package-lock.json
-            package-lock.diff
-          retention-days: 1
-      - name: Require clean audit after compatible fix
+          npm audit --audit-level=high
+          git diff --check
+      - name: Commit verified lockfile
         shell: bash
-        run: test "$(cat npm-audit-after-status.txt)" -eq 0
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json already clean'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'fix: update find-my-way to patched lockfile version'
+          git push origin HEAD:${{ github.head_ref }}

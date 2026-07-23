@@ -1,15 +1,15 @@
 # Estado operacional consolidado
 
-**Última revisão:** 22 de julho de 2026  
-**Baseline integrada:** `main` em `2b3fa8a9f51549db8a40975083b388c58c6cefe2`  
-**Validação externa em revisão:** PR #99
+**Última revisão:** 23 de julho de 2026
+**Baseline integrada:** `main` em `0feb26885682ff19f254d70b001ccbcc39306d35`
+**Gate pós-deploy:** bloqueado antes do deploy
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O código, as migrations e os gates executados no SHA citado são a autoridade técnica. Issues e PRs registram o histórico e as decisões detalhadas.
 
 ## Veredito executivo
 
 - a fundação de mensageria manual assistida está integrada na `main`;
-- a homologação Supabase está provisionada e com migrations `0001` até `0020` aplicadas;
+- a homologação Supabase está provisionada, mas a inspeção autenticada mais recente reconheceu somente as migrations `0001` até `0018`;
 - a Data API permanece deny-all;
 - o site e as demonstrações estão publicados no GitHub Pages;
 - o aviso público de privacidade está servido e verificado;
@@ -21,6 +21,24 @@ Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O cód
 - o envio real continua não autorizado.
 
 **Estado atual:** `PILOT_SEND_NOT_AUTHORIZED`.
+
+## Bloqueio pré-deploy de 23 de julho de 2026
+
+A inspeção autenticada do serviço Render `srv-d9fbpp6rnols73bko9f0` confirmou
+auto-deploy desligado, flags fail-closed e o deployment anterior `live` no SHA
+`49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`. A `main` e sua CI estão verdes
+no SHA `0feb26885682ff19f254d70b001ccbcc39306d35`.
+
+O banco efetivamente referenciado pelo serviço respondeu por TLS, porém sua
+`schema_migrations` reconheceu somente `0016` a `0018`. As migrations `0019` e
+`0020` não estavam registradas, e as tabelas introduzidas por `0019` não
+existiam. O comando do serviço inicia diretamente a API e não executa
+migrations.
+
+Por isso, nenhum deploy, restart, alteração de flag, teste de kill switch ou
+restore foi executado. O gate permanece `POST_DEPLOY_GATE_BLOCKED` até que uma
+etapa separada e explicitamente autorizada aplique e valide `0019` e `0020` no
+banco de homologação antes de repetir o deploy controlado.
 
 ## Evidência externa reproduzível
 
@@ -92,7 +110,8 @@ Projeto: `lead-finder-brasil-homologacao`.
 Estado consolidado:
 
 - PostgreSQL em `ACTIVE_HEALTHY`;
-- migrations `0001` a `0020` aplicadas;
+- migrations `0001` a `0018` reconhecidas na inspeção autenticada mais recente;
+- migrations `0019` e `0020` pendentes no banco efetivamente usado pelo Render;
 - RLS habilitada nas tabelas públicas;
 - zero policies permissivas;
 - zero grants para `PUBLIC`, `anon` e `authenticated`;

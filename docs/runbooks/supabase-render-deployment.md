@@ -1,6 +1,6 @@
 # Supabase + Render deployment
 
-1. Create a Supabase Free project manually. Use the direct URL for migrations/backup and session pooler for Render where needed; require TLS. Apply repository migrations, never recreate schema in Dashboard.
+1. Create a Supabase Free project manually. Use the direct URL for migrations/backup and session pooler for Render where needed; require TLS. Apply repository migrations, never recreate schema in Dashboard. Before every Render deploy, query `schema_migrations` through the exact `DATABASE_URL` configured on the target service and compare it with the repository migration directory. Stop before deploy if any required migration is missing. The Render service starts the application directly and does not apply migrations automatically; migration execution must be a separate, explicitly authorized operation with sanitized evidence.
 2. Verify RLS/grants and run database advisors. Put `service_role` nowhere in the frontend.
 3. Create the Render Blueprint manually from `render.yaml`; enter secrets in Render. Verify `/health`, `/ready`, cold start and hibernation recovery. Do not add keep-alive traffic.
 4. With Supabase CLI, inspect `supabase --help`, set `CRON_INVOKE_SECRET`, `INTERNAL_CRON_SECRET`, and `RENDER_INTERNAL_BATCH_URL`, then deploy the Edge Function from `deploy/supabase/functions/process-lead-batch`.

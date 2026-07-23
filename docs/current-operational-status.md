@@ -1,15 +1,15 @@
 # Estado operacional consolidado
 
-**Última revisão:** 22 de julho de 2026  
-**Baseline integrada:** `main` em `2b3fa8a9f51549db8a40975083b388c58c6cefe2`  
-**Validação externa em revisão:** PR #99
+**Última revisão:** 23 de julho de 2026
+**Baseline integrada:** `main` em `0feb26885682ff19f254d70b001ccbcc39306d35`
+**Gate pós-deploy:** bloqueado antes do deploy controlado
 
 Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O código, as migrations e os gates executados no SHA citado são a autoridade técnica. Issues e PRs registram o histórico e as decisões detalhadas.
 
 ## Veredito executivo
 
 - a fundação de mensageria manual assistida está integrada na `main`;
-- a homologação Supabase está provisionada e com migrations `0001` até `0020` aplicadas;
+- a homologação Supabase registra migrations `0001` até `0018`, enquanto os objetos esperados de `0019` e a ACL de `0020` estão presentes, criando uma inconsistência de histórico que precisa ser reconciliada antes do deploy;
 - a Data API permanece deny-all;
 - o site e as demonstrações estão publicados no GitHub Pages;
 - o aviso público de privacidade está servido e verificado;
@@ -17,10 +17,40 @@ Este documento é a fonte resumida do estado atual do Lead Finder Brasil. O cód
 - o endpoint operacional interno rejeita acesso sem autenticação;
 - nenhum provider real, envio automático, webhook externo ou integração OpenAI/Meta está ativo;
 - o gate de 30 barbearias terminou em `PIVOT_RECOMMENDED`;
+- a categoria seguinte foi definida como manutenção e serviços técnicos;
 - não há lead aprovado para contato no primeiro lote;
 - o envio real continua não autorizado.
 
 **Estado atual:** `PILOT_SEND_NOT_AUTHORIZED`.
+
+## Bloqueio pré-deploy de 23 de julho de 2026
+
+A inspeção autenticada anterior do serviço Render `srv-d9fbpp6rnols73bko9f0` registrou auto-deploy desligado, flags fail-closed e o deployment anterior `live` no SHA `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`. A `main` e sua CI estavam verdes no SHA `0feb26885682ff19f254d70b001ccbcc39306d35`.
+
+A inspeção autenticada atual do projeto Supabase de homologação confirmou:
+
+- `schema_migrations` contém a sequência completa de `0001_initial` até `0018_service_role_least_privilege_reconciliation`;
+- `0019_manual_assisted_messaging` e `0020_manual_messaging_append_only_acl` não aparecem no histórico;
+- as tabelas `contact_channel_authorizations`, `contact_email_business_evidence`, `pilot_manual_message_preparations` e `pilot_manual_message_events` existem;
+- as quatro tabelas estão vazias;
+- colunas, defaults, checks, foreign keys, índices, funções e triggers correspondem materialmente ao contrato das migrations `0019` e `0020`;
+- RLS está habilitada e não há policies permissivas;
+- `PUBLIC`, `anon` e `authenticated` não possuem acesso efetivo;
+- `service_role` possui somente `SELECT` e `INSERT` nas quatro tabelas;
+- triggers append-only, transição de estado, versionamento de evidência e lock de supressão estão ativos.
+
+O estado correto é, portanto, **histórico de migrations inconsistente**, e não ausência das tabelas. Reaplicar `0019` ou `0020`, ou inserir versões em `schema_migrations` sem reconciliação, seria inseguro.
+
+Antes do deploy controlado ainda é obrigatório:
+
+1. confirmar novamente que o projeto Supabase inspecionado é o banco exato referenciado pelo `DATABASE_URL` efetivo do serviço Render;
+2. preservar um ponto de backup/restore;
+3. documentar a origem provável da divergência;
+4. reconciliar o histórico em transação explicitamente revisada, sem recriar objetos nem alterar dados;
+5. validar novamente catálogo, grants, RLS, row counts e advisors;
+6. somente então repetir deploy, restart, kill switch e smoke test.
+
+O gate permanece `DATABASE_HISTORY_RECONCILIATION_REQUIRED` e `POST_DEPLOY_GATE_BLOCKED`.
 
 ## Evidência externa reproduzível
 
@@ -54,7 +84,7 @@ Estado: `SERVED`.
 
 Estado: `OPERABLE` para disponibilidade e banco.
 
-O probe não lê variáveis privadas do Render. A matriz efetiva de flags, o SHA implantado, logs, restart e kill switch ainda precisam de evidência autenticada ou do conector Render.
+O probe não lê variáveis privadas do Render. A matriz efetiva de flags, o SHA implantado, logs, restart, kill switch e a correspondência exata do `DATABASE_URL` ainda precisam de evidência autenticada.
 
 ## Perfil `supabase-render`
 
@@ -92,7 +122,10 @@ Projeto: `lead-finder-brasil-homologacao`.
 Estado consolidado:
 
 - PostgreSQL em `ACTIVE_HEALTHY`;
-- migrations `0001` a `0020` aplicadas;
+- histórico de migrations registrado de `0001` a `0018`;
+- objetos esperados de `0019` e controles de ACL de `0020` presentes;
+- histórico de migrations pendente de reconciliação segura;
+- quatro tabelas de mensageria manual com zero registros;
 - RLS habilitada nas tabelas públicas;
 - zero policies permissivas;
 - zero grants para `PUBLIC`, `anon` e `authenticated`;
@@ -101,7 +134,9 @@ Estado consolidado:
 - nenhuma Edge Function ativa para envio;
 - dados reais de lead não foram inseridos durante as validações.
 
-As tabelas append-only de mensageria permitem ao `service_role` somente `SELECT` e `INSERT`. `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` e `TRIGGER` foram revogados pela migration `0020` e possuem gate de regressão PostgreSQL.
+As tabelas append-only de mensageria permitem ao `service_role` somente `SELECT` e `INSERT`. `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` e `TRIGGER` não estão concedidos ao `service_role`. Os triggers de mutação e transição estão ativos.
+
+Os advisors de segurança retornam somente avisos informativos de RLS sem policies, compatíveis com a postura deny-all atual. Os advisors de performance registram foreign keys sem índice e índices ainda não utilizados; esses itens precisam de benchmark antes de qualquer alteração e não justificam criar ou remover índices apenas para silenciar o advisor.
 
 ## Mensageria manual assistida
 
@@ -202,24 +237,46 @@ Resultado:
 
 Decisão: `PIVOT_RECOMMENDED`.
 
-O resultado não significa flexibilizar canal. Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Telefone público ou botão de WhatsApp não é opt-in. A próxima etapa é comparar categorias alternativas sem contato e escolher uma com canais empresariais oficiais mais verificáveis.
+O resultado não significa flexibilizar canal. Diretório cadastral isolado não comprova propriedade empresarial do e-mail. Telefone público ou botão de WhatsApp não é opt-in. A categoria seguinte foi definida como manutenção e serviços técnicos, mantendo os mesmos gates.
+
+### Métricas do primeiro lote
+
+A documentação `first-batch-success-metrics.md` separa:
+
+- envio confirmado pelo operador;
+- resposta comercial registrada;
+- qualidade da mensagem;
+- qualidade operacional do projeto;
+- incidentes e violações de gate.
+
+Sem provider e sem tracking, entrega, abertura e leitura não serão alegadas. O lote de até cinco leads será analisado principalmente por contagens absolutas, auditoria integral e gates duros em zero.
 
 ## Gates concluídos
 
 - fundação manual assistida integrada;
-- migrations `0019` e `0020` aplicadas em homologação;
-- ACL append-only reconciliada;
+- objetos, constraints, funções, triggers, RLS e ACL esperados de `0019`/`0020` presentes na homologação;
+- ACL append-only efetiva reconciliada;
 - governança do primeiro contato integrada;
 - templates por canal alinhados;
 - ensaio sintético e pacote de controle integrados;
+- laboratório de comunicação com ranking guardado, separado por estágio, nicho e oportunidade;
+- métricas de sucesso do primeiro lote documentadas;
 - runbooks de prontidão integrados;
 - aviso público de privacidade servido;
 - Render live e ready em HTTP 200;
 - snapshot interno protegido por autenticação;
 - amostra de 30 barbearias concluída;
-- gate de segmento emitido como `PIVOT_RECOMMENDED`.
+- gate de segmento emitido como `PIVOT_RECOMMENDED`;
+- categoria de manutenção e serviços técnicos selecionada para qualificação privada.
 
 ## Bloqueios restantes
+
+### Banco e histórico
+
+- confirmar que o projeto Supabase inspecionado é o banco exato do serviço Render;
+- preservar backup/restore antes da reconciliação;
+- reconciliar `schema_migrations` sem reaplicar DDL nem alterar dados;
+- repetir snapshot de catálogo, grants, RLS, row counts e advisors após a reconciliação.
 
 ### Homologação autenticada
 
@@ -229,12 +286,13 @@ O resultado não significa flexibilizar canal. Diretório cadastral isolado não
 - comprovar restart lógico;
 - testar kill switch de forma controlada;
 - comprovar ausência de egress Meta, SMTP, OpenAI e webhooks;
-- registrar service ID e workspace quando o conector Render voltar a funcionar.
+- confirmar workspace, service ID, branch, fonte de deploy e auto-deploy.
 
 ### Categoria e leads
 
-- comparar categorias alternativas;
-- escolher a categoria do lote após o gate de pivot;
+- concluir shortlist privada de manutenção e serviços técnicos;
+- eliminar duplicidades e homônimos;
+- confirmar identidade, atividade, cidade e diagnóstico de até cinco negócios;
 - localizar canais publicados pelo próprio negócio;
 - classificar propriedade do e-mail;
 - registrar decisão humana por contato;
@@ -245,10 +303,12 @@ O resultado não significa flexibilizar canal. Diretório cadastral isolado não
 ### Execução
 
 - personalizar mensagem sem link;
+- aplicar rubrica de qualidade com mínimo `8/10` e nenhuma dimensão em zero;
 - validar a demonstração escolhida;
 - registrar estado inicial `NOT_SENT`;
 - realizar contato exclusivamente de forma manual;
-- registrar envio somente após confirmação humana.
+- registrar envio somente após confirmação humana;
+- registrar respostas e opt-outs sem copiar conteúdo sensível.
 
 ## Integrações futuras
 
@@ -270,14 +330,14 @@ O perfil self-hosted continua suportado, mas a validação em VPS Oracle real es
 
 ## Pendências priorizadas
 
-1. integrar e manter o probe externo da PR #99;
-2. recuperar o conector Render e concluir a inspeção autenticada;
-3. testar restart, logs, kill switch e ausência de egress;
-4. concluir a comparação de categorias alternativas;
-5. selecionar uma nova categoria para o lote;
-6. qualificar canais empresariais oficiais;
-7. montar até cinco fichas para aprovação;
-8. executar qualquer contato somente após autorização individual;
+1. reconciliar o histórico de migrations sem reaplicar objetos;
+2. recuperar o conector Render e confirmar banco, workspace, serviço, branch e SHA;
+3. concluir deploy controlado, restart, logs, kill switch, backup/restore, rollback e ausência de egress;
+4. concluir a shortlist privada de manutenção e serviços técnicos;
+5. qualificar canais empresariais oficiais e consultar supressões;
+6. montar até cinco fichas para aprovação individual;
+7. aplicar a rubrica de qualidade e manter todas as mensagens em `NOT_SENT` até o veredito final;
+8. executar qualquer contato somente após `REAL_MANUAL_PILOT_READY` e autorização individual;
 9. concluir o benchmark da issue #77 sem criar índices apenas para silenciar advisor;
 10. preparar Meta/OpenAI apenas em sandbox/shadow pela issue #79;
 11. validar o perfil Oracle quando houver infraestrutura adequada.

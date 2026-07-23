@@ -58,6 +58,11 @@ function serializeEvaluation(evaluation: CommunicationEvaluation) {
 }
 
 type SerializedEvaluation = ReturnType<typeof serializeEvaluation>;
+type ExperimentSummary = ReturnType<typeof summarizeCommunicationExperiment>;
+type IntersectionSummary = Pick<
+  ExperimentSummary,
+  'total' | 'eligible' | 'blocked' | 'averageEligibleScore'
+>;
 
 function rankEligible(items: readonly CommunicationEvaluation[]) {
   return items
@@ -94,17 +99,23 @@ function topForOpportunity(
     .map(serializeEvaluation);
 }
 
+function itemsForNicheOpportunity(
+  items: readonly CommunicationEvaluation[],
+  niche: CommunicationNiche,
+  opportunity: OpportunityState,
+) {
+  return items.filter(
+    (evaluation) => evaluation.variant.niche === niche && evaluation.variant.opportunity === opportunity,
+  );
+}
+
 function topForNicheOpportunity(
   items: readonly CommunicationEvaluation[],
   niche: CommunicationNiche,
   opportunity: OpportunityState,
   limit = recommendationsPerGroup,
 ) {
-  return rankEligible(items)
-    .filter(
-      (evaluation) =>
-        evaluation.variant.niche === niche && evaluation.variant.opportunity === opportunity,
-    )
+  return rankEligible(itemsForNicheOpportunity(items, niche, opportunity))
     .slice(0, limit)
     .map(serializeEvaluation);
 }
@@ -121,6 +132,30 @@ function createCrossStratification(items: readonly CommunicationEvaluation[]) {
       ) as Record<OpportunityState, SerializedEvaluation[]>,
     ]),
   ) as Record<CommunicationNiche, Record<OpportunityState, SerializedEvaluation[]>>;
+}
+
+function createCrossSummaries(items: readonly CommunicationEvaluation[]) {
+  return Object.fromEntries(
+    communicationNiches.map((niche) => [
+      niche,
+      Object.fromEntries(
+        opportunityStates.map((opportunity) => {
+          const summary = summarizeCommunicationExperiment(
+            itemsForNicheOpportunity(items, niche, opportunity),
+          );
+          return [
+            opportunity,
+            {
+              total: summary.total,
+              eligible: summary.eligible,
+              blocked: summary.blocked,
+              averageEligibleScore: summary.averageEligibleScore,
+            } satisfies IntersectionSummary,
+          ];
+        }),
+      ) as Record<OpportunityState, IntersectionSummary>,
+    ]),
+  ) as Record<CommunicationNiche, Record<OpportunityState, IntersectionSummary>>;
 }
 
 function validateCrossStratification(
@@ -148,8 +183,76 @@ function validateCrossStratification(
   }
 }
 
+function validateCrossSummaries(
+  stage: RecommendationStage,
+  cross: Record<CommunicationNiche, Record<OpportunityState, IntersectionSummary>>,
+  stageSummary: ExperimentSummary,
+) {
+  let globalTotal = 0;
+  let globalEligible = 0;
+  let globalBlocked = 0;
+
+  for (const niche of communicationNiches) {
+    let nicheTotal = 0;
+    let nicheEligible = 0;
+    let nicheBlocked = 0;
+    for (const opportunity of opportunityStates) {
+      const summary = cross[niche][opportunity];
+      if (summary.total !== summary.eligible + summary.blocked || summary.total <= 0) {
+        throw new Error(`CROSS_SUMMARY_INVALID:${stage}:${niche}:${opportunity}`);
+      }
+      if (!Number.isFinite(summary.averageEligibleScore)) {
+        throw new Error(`CROSS_SUMMARY_SCORE_INVALID:${stage}:${niche}:${opportunity}`);
+      }
+      nicheTotal += summary.total;
+      nicheEligible += summary.eligible;
+      nicheBlocked += summary.blocked;
+    }
+    const expected = stageSummary.byNiche.find(({ key }) => key === niche);
+    if (!expected || expected.eligible !== nicheEligible || expected.blocked !== nicheBlocked) {
+      throw new Error(`CROSS_SUMMARY_NICHE_RECONCILIATION_FAILED:${stage}:${niche}`);
+    }
+    if (nicheTotal !== nicheEligible + nicheBlocked) {
+      throw new Error(`CROSS_SUMMARY_NICHE_TOTAL_INVALID:${stage}:${niche}`);
+    }
+    globalTotal += nicheTotal;
+    globalEligible += nicheEligible;
+    globalBlocked += nicheBlocked;
+  }
+
+  for (const opportunity of opportunityStates) {
+    const opportunitySummary = communicationNiches.reduce(
+      (accumulator, niche) => {
+        const summary = cross[niche][opportunity];
+        accumulator.total += summary.total;
+        accumulator.eligible += summary.eligible;
+        accumulator.blocked += summary.blocked;
+        return accumulator;
+      },
+      { total: 0, eligible: 0, blocked: 0 },
+    );
+    const expected = stageSummary.byOpportunity.find(({ key }) => key === opportunity);
+    if (
+      !expected ||
+      expected.eligible !== opportunitySummary.eligible ||
+      expected.blocked !== opportunitySummary.blocked ||
+      opportunitySummary.total !== opportunitySummary.eligible + opportunitySummary.blocked
+    ) {
+      throw new Error(`CROSS_SUMMARY_OPPORTUNITY_RECONCILIATION_FAILED:${stage}:${opportunity}`);
+    }
+  }
+
+  if (
+    globalTotal !== stageSummary.total ||
+    globalEligible !== stageSummary.eligible ||
+    globalBlocked !== stageSummary.blocked
+  ) {
+    throw new Error(`CROSS_SUMMARY_STAGE_RECONCILIATION_FAILED:${stage}`);
+  }
+}
+
 function countCrossIntersections(
-  cross: Record<CommunicationNiche, Record<OpportunityState, SerializedEvaluation[]>>,
+  cross: Record<CommunicationNiche, Record<OpportunityState, readonly unknown[]>>,
 ) {
   let count = 0;
   for (const niche of communicationNiches) {
@@ -158,6 +261,16 @@ function countCrossIntersections(
     }
   }
   return count;
+}
+
+function countCrossSummaries(
+  cross: Record<CommunicationNiche, Record<OpportunityState, IntersectionSummary>>,
+) {
+  return communicationNiches.reduce(
+    (count, niche) =>
+      count + opportunityStates.filter((opportunity) => cross[niche][opportunity].total > 0).length,
+    0,
+  );
 }
 
 function countValues(items: readonly CommunicationEvaluation[], field: 'codes' | 'warnings') {
@@ -189,7 +302,9 @@ function createStageReport(stage: RecommendationStage) {
     opportunityStates.map((opportunity) => [opportunity, topForOpportunity(items, opportunity)]),
   );
   const topByNicheOpportunity = createCrossStratification(items);
+  const summaryByNicheOpportunity = createCrossSummaries(items);
   validateCrossStratification(stage, topByNicheOpportunity);
+  validateCrossSummaries(stage, summaryByNicheOpportunity, summary);
   const topVariants = topForStage(items);
   return {
     stage,
@@ -200,6 +315,7 @@ function createStageReport(stage: RecommendationStage) {
     topByNiche,
     topByOpportunity,
     topByNicheOpportunity,
+    summaryByNicheOpportunity,
     topVariants,
     guardedPatterns: {
       opening: summary.byOpening[0]?.key ?? null,
@@ -231,6 +347,7 @@ const report = {
       niches: communicationNiches.length,
       opportunities: opportunityStates.length,
       intersections: communicationNiches.length * opportunityStates.length,
+      intersectionSummaries: communicationNiches.length * opportunityStates.length,
       recommendationsPerGroup,
       recommendationsPerIntersection: recommendationsPerGroup,
     },
@@ -241,6 +358,7 @@ const report = {
     'POST_OPT_IN contém somente WhatsApp com autorização válida já registrada.',
     'ALL_GUARDED é uma visão técnica consolidada e não deve ser usada para escolher o primeiro canal.',
     'topByNiche, topByOpportunity e topByNicheOpportunity evitam que empates escondam grupos ou interseções.',
+    'summaryByNicheOpportunity informa total, elegíveis, bloqueados e média de cada interseção.',
     'DIAGNOSIS_FIRST e personalização DIAGNOSIS são condicionais a evidência VERIFIED.',
     'Scores sintéticos não representam taxa real de resposta ou conversão.',
     'Nenhuma variante autoriza envio automático ou WhatsApp sem opt-in.',
@@ -256,6 +374,7 @@ const markdown = [
   `- Nichos cobertos: **${report.metadata.stratification.niches}**`,
   `- Oportunidades cobertas: **${report.metadata.stratification.opportunities}**`,
   `- Interseções nicho × oportunidade: **${report.metadata.stratification.intersections}**`,
+  `- Resumos estatísticos por interseção: **${report.metadata.stratification.intersectionSummaries}**`,
   '- Efeitos externos: **zero**',
   '',
   '## Primeiro contato frio',
@@ -269,6 +388,7 @@ const markdown = [
   `- Nichos com recomendações: **${Object.values(cold.topByNiche).filter((items) => items.length > 0).length}**`,
   `- Oportunidades com recomendações: **${Object.values(cold.topByOpportunity).filter((items) => items.length > 0).length}**`,
   `- Interseções com recomendações: **${countCrossIntersections(cold.topByNicheOpportunity)}**`,
+  `- Interseções com resumo: **${countCrossSummaries(cold.summaryByNicheOpportunity)}**`,
   '',
   '## Comunicação pós-opt-in',
   '',
@@ -279,6 +399,7 @@ const markdown = [
   `- Elegíveis: **${postOptIn.summary.eligible}**`,
   `- Bloqueados: **${postOptIn.summary.blocked}**`,
   `- Interseções com recomendações: **${countCrossIntersections(postOptIn.topByNicheOpportunity)}**`,
+  `- Interseções com resumo: **${countCrossSummaries(postOptIn.summaryByNicheOpportunity)}**`,
   '',
   '## Leitura correta',
   '',
@@ -306,6 +427,7 @@ console.log(
       coldNicheCoverage: Object.values(cold.topByNiche).filter((items) => items.length > 0).length,
       coldOpportunityCoverage: Object.values(cold.topByOpportunity).filter((items) => items.length > 0).length,
       coldCrossIntersectionCoverage: countCrossIntersections(cold.topByNicheOpportunity),
+      coldCrossSummaryCoverage: countCrossSummaries(cold.summaryByNicheOpportunity),
     },
     null,
     2,

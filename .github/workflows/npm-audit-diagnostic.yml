@@ -21,14 +21,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Print compact audit summary
+      - name: Build compact audit summary
         shell: bash
         run: |
           set +e
           npm audit --json > npm-audit.json
           audit_status=$?
+          printf '%s' "$audit_status" > npm-audit-status.txt
           node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
+          import { readFileSync, writeFileSync } from 'node:fs';
 
           const report = JSON.parse(readFileSync('npm-audit.json', 'utf8'));
           const vulnerabilities = Object.entries(report.vulnerabilities ?? {}).map(([name, item]) => ({
@@ -52,6 +53,19 @@ jobs:
             fixAvailable: item.fixAvailable,
           }));
 
-          console.log(JSON.stringify({ metadata: report.metadata, vulnerabilities }, null, 2));
+          const summary = JSON.stringify({ metadata: report.metadata, vulnerabilities }, null, 2);
+          writeFileSync('npm-audit-summary.json', summary);
+          console.log(summary);
           NODE
-          exit "$audit_status"
+      - name: Upload audit summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-summary
+          path: |
+            npm-audit-summary.json
+            npm-audit-status.txt
+          retention-days: 1
+      - name: Preserve audit result
+        shell: bash
+        run: test "$(cat npm-audit-status.txt)" -eq 0

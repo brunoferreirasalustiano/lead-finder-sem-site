@@ -1,6 +1,11 @@
 name: Reconcile operational status
 
 on:
+  push:
+    branches: [docs/update-issue-117-baseline]
+    paths:
+      - docs/current-operational-status.md
+      - .github/workflows/docs-status-reconcile.yml
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -16,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: docs/update-issue-117-baseline
       - name: Reconcile verified project state
         shell: bash
         run: |
@@ -184,4 +189,4 @@ As regras permanentes continuam:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add docs/current-operational-status.md
           git commit -m 'docs: reconcile consolidated operational status'
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:docs/update-issue-117-baseline

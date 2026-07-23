@@ -1,0 +1,57 @@
+name: NPM audit diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/npm-audit-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Print compact audit summary
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit.json
+          audit_status=$?
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const report = JSON.parse(readFileSync('npm-audit.json', 'utf8'));
+          const vulnerabilities = Object.entries(report.vulnerabilities ?? {}).map(([name, item]) => ({
+            name,
+            severity: item.severity,
+            direct: item.isDirect,
+            range: item.range,
+            via: (item.via ?? []).map((entry) =>
+              typeof entry === 'string'
+                ? entry
+                : {
+                    source: entry.source,
+                    name: entry.name,
+                    severity: entry.severity,
+                    title: entry.title,
+                    url: entry.url,
+                    range: entry.range,
+                  },
+            ),
+            effects: item.effects,
+            fixAvailable: item.fixAvailable,
+          }));
+
+          console.log(JSON.stringify({ metadata: report.metadata, vulnerabilities }, null, 2));
+          NODE
+          exit "$audit_status"

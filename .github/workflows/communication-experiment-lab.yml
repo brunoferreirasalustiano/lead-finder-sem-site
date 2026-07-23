@@ -6,6 +6,8 @@ on:
       - '.github/workflows/communication-experiment-lab.yml'
       - 'packages/messaging/src/communication-lab.ts'
       - 'packages/messaging/src/communication-lab.test.ts'
+      - 'packages/messaging/src/communication-evidence-guards.ts'
+      - 'packages/messaging/src/communication-evidence-guards.test.ts'
       - 'scripts/communication-experiment-report.ts'
       - 'docs/communication-experiment-lab.md'
   workflow_dispatch:
@@ -34,10 +36,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run 1,000+ named communication tests
-        run: npx vitest run packages/messaging/src/communication-lab.test.ts --reporter=dot
+      - name: Run communication matrix and evidence guard tests
+        run: >-
+          npx vitest run
+          packages/messaging/src/communication-lab.test.ts
+          packages/messaging/src/communication-evidence-guards.test.ts
+          --reporter=dot
 
       - name: Generate sanitized experiment report
+        env:
+          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npx tsx scripts/communication-experiment-report.ts
 
       - name: Verify report contract
@@ -46,18 +54,36 @@ jobs:
           const fs = require('node:fs');
           const path = 'artifacts/communication-lab/communication-experiment-report.json';
           const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (report.metadata.schemaVersion !== 'v2') throw new Error('REPORT_SCHEMA_V2_REQUIRED');
           if (report.metadata.namedCoreTests < 1000) throw new Error('NAMED_TEST_COUNT_TOO_LOW');
           if (report.metadata.evaluatedScenarios < 10000) throw new Error('SCENARIO_COUNT_TOO_LOW');
+          if (report.metadata.evaluatedGuardScenarios !== 2880) throw new Error('GUARD_SCENARIO_COUNT_MISMATCH');
           if (report.metadata.realConversionEvidence !== false) throw new Error('REAL_CONVERSION_CLAIM_FORBIDDEN');
           if (Object.values(report.metadata.externalEffects).some(Boolean)) throw new Error('EXTERNAL_EFFECT_DETECTED');
           if (!report.summary || report.summary.total !== report.metadata.evaluatedScenarios) {
             throw new Error('SUMMARY_MISMATCH');
           }
+          const channelSource = report.evidenceGuards?.channelSource;
+          const diagnostic = report.evidenceGuards?.diagnostic;
+          if (!channelSource || channelSource.total !== 1260 || channelSource.blocked !== 990) {
+            throw new Error('CHANNEL_SOURCE_GUARD_MISMATCH');
+          }
+          if (!diagnostic || diagnostic.total !== 1620 || diagnostic.blocked !== 540) {
+            throw new Error('DIAGNOSTIC_GUARD_MISMATCH');
+          }
+          if (!channelSource.codes.some(({ code, count }) => code === 'CHANNEL_SOURCE_MISMATCH' && count === 990)) {
+            throw new Error('CHANNEL_SOURCE_CODE_MISSING');
+          }
+          if (!diagnostic.codes.some(({ code, count }) => code === 'DIAGNOSTIC_EVIDENCE_REQUIRED' && count === 540)) {
+            throw new Error('DIAGNOSTIC_CODE_MISSING');
+          }
           console.log(JSON.stringify({
+            commit: report.metadata.commit,
             namedCoreTests: report.metadata.namedCoreTests,
             evaluatedScenarios: report.metadata.evaluatedScenarios,
-            eligible: report.summary.eligible,
-            blocked: report.summary.blocked,
+            evaluatedGuardScenarios: report.metadata.evaluatedGuardScenarios,
+            channelSourceBlocked: channelSource.blocked,
+            diagnosticBlocked: diagnostic.blocked,
           }));
           NODE
 

@@ -16,8 +16,8 @@ import {
 } from '../packages/messaging/src/communication-evidence-guards.js';
 
 const outputDirectory = process.env.COMMUNICATION_LAB_OUTPUT_DIR ?? 'artifacts/communication-lab';
+const recommendationsPerGroup = 3;
 const variants = generateExtendedCommunicationCases();
-
 const evaluations = variants.map((variant) =>
   evaluateGuardedCommunicationVariant(variant, {
     diagnosticEvidence: communicationRequiresDiagnosticEvidence(variant) ? 'VERIFIED' : 'NOT_APPLICABLE',
@@ -26,7 +26,6 @@ const evaluations = variants.map((variant) =>
 
 const coldAcquisitionChannels = new Set<CommunicationChannel>(['EMAIL', 'CONTACT_FORM', 'BUSINESS_DM']);
 const postOptInChannels = new Set<CommunicationChannel>(['WHATSAPP_OPT_IN']);
-
 type RecommendationStage = 'COLD_ACQUISITION' | 'POST_OPT_IN' | 'ALL_GUARDED';
 
 function evaluationsForStage(stage: RecommendationStage): CommunicationEvaluation[] {
@@ -58,6 +57,8 @@ function serializeEvaluation(evaluation: CommunicationEvaluation) {
   };
 }
 
+type SerializedEvaluation = ReturnType<typeof serializeEvaluation>;
+
 function rankEligible(items: readonly CommunicationEvaluation[]) {
   return items
     .filter((evaluation) => evaluation.eligible)
@@ -75,18 +76,88 @@ function topForStage(items: readonly CommunicationEvaluation[], limit = 20) {
   return rankEligible(items).slice(0, limit).map(serializeEvaluation);
 }
 
-function topForNiche(items: readonly CommunicationEvaluation[], niche: CommunicationNiche, limit = 3) {
+function topForNiche(items: readonly CommunicationEvaluation[], niche: CommunicationNiche, limit = recommendationsPerGroup) {
   return rankEligible(items)
     .filter((evaluation) => evaluation.variant.niche === niche)
     .slice(0, limit)
     .map(serializeEvaluation);
 }
 
-function topForOpportunity(items: readonly CommunicationEvaluation[], opportunity: OpportunityState, limit = 3) {
+function topForOpportunity(
+  items: readonly CommunicationEvaluation[],
+  opportunity: OpportunityState,
+  limit = recommendationsPerGroup,
+) {
   return rankEligible(items)
     .filter((evaluation) => evaluation.variant.opportunity === opportunity)
     .slice(0, limit)
     .map(serializeEvaluation);
+}
+
+function topForNicheOpportunity(
+  items: readonly CommunicationEvaluation[],
+  niche: CommunicationNiche,
+  opportunity: OpportunityState,
+  limit = recommendationsPerGroup,
+) {
+  return rankEligible(items)
+    .filter(
+      (evaluation) =>
+        evaluation.variant.niche === niche && evaluation.variant.opportunity === opportunity,
+    )
+    .slice(0, limit)
+    .map(serializeEvaluation);
+}
+
+function createCrossStratification(items: readonly CommunicationEvaluation[]) {
+  return Object.fromEntries(
+    communicationNiches.map((niche) => [
+      niche,
+      Object.fromEntries(
+        opportunityStates.map((opportunity) => [
+          opportunity,
+          topForNicheOpportunity(items, niche, opportunity),
+        ]),
+      ) as Record<OpportunityState, SerializedEvaluation[]>,
+    ]),
+  ) as Record<CommunicationNiche, Record<OpportunityState, SerializedEvaluation[]>>;
+}
+
+function validateCrossStratification(
+  stage: RecommendationStage,
+  cross: Record<CommunicationNiche, Record<OpportunityState, SerializedEvaluation[]>>,
+) {
+  for (const niche of communicationNiches) {
+    for (const opportunity of opportunityStates) {
+      const recommendations = cross[niche][opportunity];
+      if (recommendations.length !== recommendationsPerGroup) {
+        throw new Error(`CROSS_RECOMMENDATIONS_MISSING:${stage}:${niche}:${opportunity}`);
+      }
+      if (new Set(recommendations.map(({ id }) => id)).size !== recommendations.length) {
+        throw new Error(`CROSS_RECOMMENDATION_DUPLICATE:${stage}:${niche}:${opportunity}`);
+      }
+      if (
+        recommendations.some(
+          (recommendation) =>
+            recommendation.niche !== niche || recommendation.opportunity !== opportunity,
+        )
+      ) {
+        throw new Error(`CROSS_RECOMMENDATION_MISMATCH:${stage}:${niche}:${opportunity}`);
+      }
+    }
+  }
+}
+
+function countCrossIntersections(
+  cross: Record<CommunicationNiche, Record<OpportunityState, SerializedEvaluation[]>>,
+) {
+  let count = 0;
+  for (const niche of communicationNiches) {
+    for (const opportunity of opportunityStates) {
+      if (cross[niche][opportunity].length > 0) count += 1;
+    }
+  }
+  return count;
 }
 
 function countValues(items: readonly CommunicationEvaluation[], field: 'codes' | 'warnings') {
@@ -102,11 +173,12 @@ function countValues(items: readonly CommunicationEvaluation[], field: 'codes' |
 function createStageReport(stage: RecommendationStage) {
   const items = evaluationsForStage(stage);
   const summary = summarizeCommunicationExperiment(items);
-  const allowedChannels = stage === 'COLD_ACQUISITION'
-    ? communicationChannels.filter((channel) => coldAcquisitionChannels.has(channel))
-    : stage === 'POST_OPT_IN'
-      ? communicationChannels.filter((channel) => postOptInChannels.has(channel))
-      : communicationChannels;
+  const allowedChannels =
+    stage === 'COLD_ACQUISITION'
+      ? communicationChannels.filter((channel) => coldAcquisitionChannels.has(channel))
+      : stage === 'POST_OPT_IN'
+        ? communicationChannels.filter((channel) => postOptInChannels.has(channel))
+        : communicationChannels;
   const topByChannel = Object.fromEntries(
     allowedChannels.map((channel) => [channel, topForChannel(items, channel)]),
   );
@@ -116,6 +188,8 @@ function createStageReport(stage: RecommendationStage) {
   const topByOpportunity = Object.fromEntries(
     opportunityStates.map((opportunity) => [opportunity, topForOpportunity(items, opportunity)]),
   );
+  const topByNicheOpportunity = createCrossStratification(items);
+  validateCrossStratification(stage, topByNicheOpportunity);
   const topVariants = topForStage(items);
   return {
     stage,
@@ -125,6 +199,7 @@ function createStageReport(stage: RecommendationStage) {
     topByChannel,
     topByNiche,
     topByOpportunity,
+    topByNicheOpportunity,
     topVariants,
     guardedPatterns: {
       opening: summary.byOpening[0]?.key ?? null,
@@ -155,7 +230,9 @@ const report = {
     stratification: {
       niches: communicationNiches.length,
       opportunities: opportunityStates.length,
-      recommendationsPerGroup: 3,
+      intersections: communicationNiches.length * opportunityStates.length,
+      recommendationsPerGroup,
+      recommendationsPerIntersection: recommendationsPerGroup,
     },
   },
   stages,
@@ -163,7 +240,7 @@ const report = {
     'COLD_ACQUISITION contém somente e-mail, formulário empresarial e DM empresarial.',
     'POST_OPT_IN contém somente WhatsApp com autorização válida já registrada.',
     'ALL_GUARDED é uma visão técnica consolidada e não deve ser usada para escolher o primeiro canal.',
-    'topByNiche e topByOpportunity evitam que empates de score escondam segmentos ou diagnósticos.',
+    'topByNiche, topByOpportunity e topByNicheOpportunity evitam que empates escondam grupos ou interseções.',
     'DIAGNOSIS_FIRST e personalização DIAGNOSIS são condicionais a evidência VERIFIED.',
     'Scores sintéticos não representam taxa real de resposta ou conversão.',
     'Nenhuma variante autoriza envio automático ou WhatsApp sem opt-in.',
@@ -178,6 +255,7 @@ const markdown = [
   `- Cenários guardados avaliados: **${report.metadata.evaluatedRecommendationScenarios}**`,
   `- Nichos cobertos: **${report.metadata.stratification.niches}**`,
   `- Oportunidades cobertas: **${report.metadata.stratification.opportunities}**`,
+  `- Interseções nicho × oportunidade: **${report.metadata.stratification.intersections}**`,
   '- Efeitos externos: **zero**',
   '',
   '## Primeiro contato frio',
@@ -190,6 +268,7 @@ const markdown = [
   `- Bloqueados: **${cold.summary.blocked}**`,
   `- Nichos com recomendações: **${Object.values(cold.topByNiche).filter((items) => items.length > 0).length}**`,
   `- Oportunidades com recomendações: **${Object.values(cold.topByOpportunity).filter((items) => items.length > 0).length}**`,
+  `- Interseções com recomendações: **${countCrossIntersections(cold.topByNicheOpportunity)}**`,
   '',
   '## Comunicação pós-opt-in',
   '',
@@ -199,6 +278,7 @@ const markdown = [
   `- CTA: **${postOptIn.guardedPatterns.cta}**`,
   `- Elegíveis: **${postOptIn.summary.eligible}**`,
   `- Bloqueados: **${postOptIn.summary.blocked}**`,
+  `- Interseções com recomendações: **${countCrossIntersections(postOptIn.topByNicheOpportunity)}**`,
   '',
   '## Leitura correta',
   '',
@@ -208,15 +288,26 @@ const markdown = [
 
 await mkdir(outputDirectory, { recursive: true });
 await Promise.all([
-  writeFile(`${outputDirectory}/guarded-communication-recommendations.json`, `${JSON.stringify(report, null, 2)}\n`, 'utf8'),
+  writeFile(
+    `${outputDirectory}/guarded-communication-recommendations.json`,
+    `${JSON.stringify(report, null, 2)}\n`,
+    'utf8',
+  ),
   writeFile(`${outputDirectory}/guarded-communication-recommendations.md`, markdown, 'utf8'),
 ]);
 
-console.log(JSON.stringify({
-  outputDirectory,
-  evaluatedRecommendationScenarios: report.metadata.evaluatedRecommendationScenarios,
-  coldAcquisition: cold.guardedPatterns,
-  postOptIn: postOptIn.guardedPatterns,
-  coldNicheCoverage: Object.values(cold.topByNiche).filter((items) => items.length > 0).length,
-  coldOpportunityCoverage: Object.values(cold.topByOpportunity).filter((items) => items.length > 0).length,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      outputDirectory,
+      evaluatedRecommendationScenarios: report.metadata.evaluatedRecommendationScenarios,
+      coldAcquisition: cold.guardedPatterns,
+      postOptIn: postOptIn.guardedPatterns,
+      coldNicheCoverage: Object.values(cold.topByNiche).filter((items) => items.length > 0).length,
+      coldOpportunityCoverage: Object.values(cold.topByOpportunity).filter((items) => items.length > 0).length,
+      coldCrossIntersectionCoverage: countCrossIntersections(cold.topByNicheOpportunity),
+    },
+    null,
+    2,
+  ),
+);

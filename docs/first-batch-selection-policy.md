@@ -1,141 +1,167 @@
-# Política de seleção — primeiro lote manual
+# Política de seleção — prospecção manual v2
 
-## Escopo recomendado
+**Decisão de produto:** `EXPAND_TO_WEAK_DIGITAL_PRESENCE`  
+**Operação:** manual, individual, sem disparo em massa e sem follow-up automático.
 
-- **Categoria inicial:** barbearias;
-- **Região inicial:** Campinas/SP e municípios imediatamente próximos;
-- **Tamanho máximo:** cinco negócios elegíveis;
-- **Triagem inicial:** até dez candidatos;
-- **Operação:** manual, individual e sem follow-up automático.
+## 1. Escopo ampliado
 
-A escolha é operacionalmente adequada ao piloto porque já existe demonstração do segmento e familiaridade regional. Ela pode ser alterada antes da seleção de candidatos, desde que o lote permaneça restrito a uma categoria e uma região.
+O Lead Finder Brasil deixa de limitar a prospecção a negócios totalmente sem site. Um candidato pode ser selecionado quando existir oportunidade digital objetiva em qualquer um destes estados:
 
-## Critérios obrigatórios de inclusão
+- `NO_SITE`: não possui site institucional próprio;
+- `THIRD_PARTY_ONLY`: depende apenas de Google, rede social, marketplace, Linktree ou página de agenda;
+- `WEAK_SITE`: possui site, mas ele é desatualizado, incompleto, pouco funcional ou incompatível com a operação atual;
+- `BROKEN_SITE`: domínio, HTTPS, navegação, formulário, CTA ou contato apresentam falha verificável;
+- `WEAK_CONVERSION`: existe presença digital, mas faltam elementos essenciais de conversão, catálogo, orçamento, reserva, cardápio ou contato claro.
 
-O candidato deve atender a todos os critérios:
+Ter site deixa de ser motivo automático de exclusão. A oferta deve mencionar apenas problemas reais e verificáveis, sem alegações enganosas.
+
+## 2. Nichos permitidos
+
+A prospecção pode avaliar, em ondas separadas:
+
+1. barbearias, salões e estética não médica;
+2. oficinas, auto centers, funilarias e serviços automotivos;
+3. restaurantes, lanchonetes, pizzarias, cafeterias e delivery local;
+4. eletricistas, encanadores, pintores, instaladores, limpeza e manutenção;
+5. lojas locais, catálogos, moda, calçados, móveis e presentes;
+6. pet shops, banho e tosa e serviços para animais não regulados;
+7. academias, estúdios e escolas de atividades não reguladas;
+8. eventos, fotografia, decoração e serviços criativos;
+9. pequenas empresas B2B e prestadores profissionais com oferta digital clara.
+
+Excluir do piloto inicial atividades ilegais, sensíveis, políticas, financeiras reguladas, saúde sensível, jogos, armas, drogas, conteúdo adulto e outras categorias incompatíveis com as políticas das plataformas.
+
+## 3. Volume e organização
+
+- até 30 candidatos por amostra de nicho;
+- até 10 candidatos na shortlist privada;
+- no máximo 5 primeiros contatos por onda;
+- uma região principal por onda, podendo expandir para todo o Brasil após validação;
+- revisão individual antes de cada contato;
+- nenhum envio automático.
+
+## 4. Critérios mínimos de inclusão
+
+O candidato deve atender aos critérios abaixo:
 
 1. negócio aparentemente ativo;
-2. categoria compatível com o lote;
-3. localização dentro da região aprovada;
-4. presença digital inexistente, incompleta ou claramente melhorável, com evidência objetiva;
-5. contato pertencente ao próprio negócio;
-6. fonte pública pertinente ou fornecimento direto;
-7. ausência de duplicidade;
-8. ausência de bloqueio global, `do_not_contact` e `NAO_CONTATAR`;
-9. ausência de opt-out do canal selecionado;
-10. mensagem potencialmente pertinente ao contexto do negócio.
+2. identidade comercial suficientemente verificável;
+3. necessidade digital objetiva em um dos estados da seção 1;
+4. oferta compatível com a necessidade encontrada;
+5. fonte pública pertinente ou informação fornecida diretamente;
+6. ausência de duplicidade;
+7. ausência de opt-out, `do_not_contact`, `NAO_CONTATAR` ou bloqueio;
+8. mensagem curta, identificada e individualmente revisada.
 
-## Critérios de exclusão
+Uma fonte oficial coerente pode ser suficiente quando identidade, atividade e canal estão claros. Exigir segunda fonte somente em caso de ambiguidade, conflito ou risco maior.
 
-Excluir imediatamente quando houver:
+## 5. Canais
 
-- site funcional e adequado que elimine a hipótese central da oferta;
-- negócio fechado, inativo ou com informação conflitante;
-- endereço de contato pessoal ou de propriedade incerta;
-- e-mail genérico obtido de lista, vazamento ou fonte não verificável;
-- telefone público sem opt-in de WhatsApp;
-- contato de funcionário sem relação aparente com decisões do negócio;
-- dado sensível;
-- pedido anterior de não contato;
-- duplicidade no CRM;
-- evidência insuficiente;
-- qualquer dúvida relevante sobre identidade, origem ou pertinência.
+### 5.1 E-mail empresarial
 
-## Regra de canal
+Pode ser considerado para um único primeiro contato manual quando:
 
-### WhatsApp
+- está publicado como contato comercial, institucional, atendimento, orçamento ou vendas;
+- pertence ao negócio ou é usado publicamente pelo responsável para a atividade profissional;
+- a fonte e a data da consulta são registradas;
+- não existe supressão;
+- a mensagem contém identificação e opt-out simples.
 
-Permitido somente com evidência explícita atual:
+Gmail, Outlook ou outro domínio gratuito não é automaticamente pessoal. Ele pode ser classificado como `BUSINESS_USE_CONFIRMED` quando aparece de forma consistente como canal do negócio. Endereço claramente pessoal, familiar ou sem vínculo comercial permanece bloqueado.
 
-- `DIRECT_OPT_IN`;
-- `FORM_OPT_IN`;
-- `SIGNED_RECORD`.
+### 5.2 Número público de telefone ou WhatsApp
 
-Publicação do número em site, perfil social, mapa ou diretório não é opt-in.
+Um número publicado no Google, site, rede social, placa digital ou diretório pode ser registrado como `PUBLIC_BUSINESS_NUMBER_DISCOVERED` quando está apresentado como canal do negócio.
 
-### E-mail
+Esse estado permite:
 
-Permitido somente quando:
+- confirmar identidade e atividade;
+- priorizar aquisição de permissão;
+- preparar um link ou material para uso depois do opt-in;
+- registrar a fonte sem publicar o número no GitHub.
 
-- o endereço é válido e verificado;
-- a fonte é pertinente;
-- a propriedade atual foi classificada como `BUSINESS`;
-- a decisão humana atual é `APPROVED`;
-- não existe supressão do canal ou global.
+Ele não equivale a opt-in de WhatsApp. O primeiro contato via WhatsApp somente pode ocorrer após `DIRECT_OPT_IN`, `FORM_OPT_IN` ou `SIGNED_RECORD`, inclusive quando a conversa foi iniciada pelo próprio negócio.
 
-Endereço Gmail, Outlook ou similar não é automaticamente pessoal nem empresarial. A decisão depende da evidência concreta e da revisão humana.
+### 5.3 Aquisição de permissão
 
-## Pontuação de triagem
+A autorização para continuar no WhatsApp pode ser solicitada por um canal empresarial compatível, por exemplo:
 
-A pontuação serve apenas para ordenar a revisão; não autoriza contato.
+- e-mail comercial;
+- formulário de contato;
+- mensagem direta em perfil empresarial, respeitando a política da plataforma;
+- indicação, evento, parceria ou contato inbound;
+- anúncio ou página com botão de WhatsApp e texto transparente.
+
+A solicitação deve ser única, curta e sem pressão. Silêncio não é autorização.
+
+## 6. Critérios de exclusão
+
+Excluir ou manter bloqueado quando houver:
+
+- negócio inativo ou identidade conflitante;
+- dado sensível ou obtido de vazamento/lista comprada;
+- contato claramente pessoal sem uso comercial demonstrado;
+- pedido de não contato;
+- duplicidade;
+- mensagem sem relação com a necessidade encontrada;
+- tentativa de contornar política de plataforma;
+- evidência insuficiente após revisão razoável.
+
+## 7. Pontuação de triagem
+
+A pontuação ordena a revisão e não autoriza contato.
 
 | Critério | Pontos |
 |---|---:|
-| negócio ativo confirmado por duas evidências públicas coerentes | 2 |
-| ausência de site ou site claramente indisponível | 3 |
-| demonstração existente compatível com o segmento | 2 |
-| e-mail empresarial claramente publicado | 3 |
-| necessidade digital objetiva e verificável | 2 |
-| localização dentro da região principal | 1 |
-| contato ou identidade ambígua | -5 |
-| pedido de não contato ou bloqueio | exclusão |
+| negócio ativo confirmado | 2 |
+| `NO_SITE` | 3 |
+| `THIRD_PARTY_ONLY` | 2 |
+| `WEAK_SITE`, `BROKEN_SITE` ou `WEAK_CONVERSION` comprovado | 2 |
+| demonstração compatível disponível | 2 |
+| e-mail de uso comercial confirmado | 3 |
+| número público apresentado como canal comercial | 1 |
+| oportunidade específica e verificável | 2 |
+| mesma região da onda | 1 |
+| identidade ou propriedade ambígua | -4 |
+| opt-out ou bloqueio | exclusão |
 
-Priorizar candidatos com maior pontuação, mas submeter todos à ficha individual antes da decisão.
+## 8. Evidência mínima
 
-## Evidência permitida
+Registrar de forma privada:
 
-Registrar somente:
+- nome público do negócio;
+- nicho e região;
+- estado da presença digital;
+- fonte e data;
+- resumo objetivo da oportunidade;
+- classificação do canal;
+- decisão do revisor;
+- supressões e resultado.
 
-- tipo da fonte;
-- URL ou referência privada;
-- data da consulta;
-- resumo objetivo;
-- fingerprint quando necessário;
-- decisão e revisor.
+Não publicar telefone, e-mail, nome desnecessário de pessoa física, mensagens integrais, prints com PII, payload bruto ou credenciais.
 
-Não armazenar em repositório público:
+## 9. Fluxo operacional
 
-- endereço de e-mail real do lead;
-- telefone real do lead;
-- nome de pessoa física não necessário;
-- captura com dados pessoais;
-- payload bruto;
-- mensagem completa enviada;
-- credencial ou token.
+1. coletar até 30 candidatos do nicho;
+2. remover duplicados e inativos;
+3. classificar a presença digital;
+4. registrar uma oportunidade objetiva;
+5. classificar o canal disponível;
+6. consultar supressões;
+7. formar shortlist de até 10;
+8. selecionar até 5;
+9. personalizar mensagem e demonstração;
+10. obter aprovação humana por lead;
+11. executar manualmente pelo canal elegível;
+12. registrar resultado e aplicar opt-out imediatamente.
 
-## Processo de redução de dez para cinco
+## 10. Estados finais
 
-1. levantar até dez candidatos;
-2. eliminar inativos e duplicados;
-3. verificar presença digital;
-4. verificar fonte e propriedade do contato;
-5. consultar supressões;
-6. preencher a ficha individual;
-7. ordenar pelos critérios objetivos;
-8. selecionar no máximo cinco;
-9. revisar mensagem e demonstração;
-10. obter aprovação explícita de Bruno por lead.
-
-## Critério de parada
-
-Interromper toda a preparação quando ocorrer:
-
-- contato indevido;
-- opt-out não aplicado;
-- divergência de identidade;
-- exposição de PII;
-- falha de supressão;
-- qualquer efeito externo automático;
-- erro de configuração de provider;
-- impossibilidade de comprovar a origem ou a elegibilidade.
-
-## Veredito por candidato
-
-Cada candidato deve terminar em um destes estados:
-
-- `APPROVED_FOR_MANUAL_CONTACT`;
+- `APPROVED_FOR_MANUAL_EMAIL`;
+- `READY_TO_REQUEST_WHATSAPP_OPT_IN`;
+- `WHATSAPP_OPT_IN_CONFIRMED`;
 - `NEEDS_REVIEW`;
 - `REJECTED`;
 - `DO_NOT_CONTACT`.
 
-Somente o primeiro estado permite avançar para a aprovação humana final. Ainda assim, ele não autoriza envio automático.
+Nenhum desses estados autoriza automação de WhatsApp Web, disparo em massa ou envio por provider não aprovado.

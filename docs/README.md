@@ -5,6 +5,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 ## Fonte de estado atual
 
 - [Estado operacional consolidado](current-operational-status.md) — ambiente, capacidades ativas, integrações desligadas, bloqueios e prioridades atuais.
+- [Atualização pós-PR #121](issue-117-post-121-update.md) — adendo que substitui o estado de compatibilidade de migrations até a consolidação integral do documento operacional.
 - [README principal](../README.md) — visão do produto, arquitetura, execução local, segurança e mapa de documentação.
 
 ## Piloto e operação comercial
@@ -20,8 +21,15 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Política de recuperação de leads](lead-recovery-policy.md) — tratamento seguro de estados e retomadas.
 - [Avaliação de legítimo interesse do primeiro contato](first-outreach-legitimate-interest-assessment.md) — finalidade, necessidade, balanceamento, salvaguardas e decisão condicional.
 - [Ficha individual de revisão de lead](first-lead-review-sheet.md) — template privado para validar negócio, canal, supressões, mensagem e resultado.
-- [Política de seleção do primeiro lote](first-batch-selection-policy.md) — critérios de inclusão/exclusão, triagem e regra de canal.
+- [Política de seleção do primeiro lote](first-batch-selection-policy.md) — política v2 para múltiplos nichos, presença digital fraca e amostras maiores.
+- [Política de canais de prospecção v2](outreach-channel-policy-v2.md) — uso de dados públicos, e-mail profissional, aquisição de opt-in e limites do WhatsApp.
+- [Laboratório sintético de comunicação](communication-experiment-lab.md) — soluções multicanal, 1.080 testes nomeados, matriz de 14.580 cenários e limites de interpretação.
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
+- [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
+- [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.
+- [Métricas de sucesso do primeiro lote](first-batch-success-metrics.md) — separa envio confirmado, resposta comercial e qualidade operacional; define fórmulas, rubrica de copy e gates duros.
+- [Qualificação de canais do primeiro lote](lead-channel-qualification-runbook.md) — hierarquia de fontes, classificação empresarial, opt-in de WhatsApp, supressões e decisão final.
+- [Pacote de aprovação final por lead](first-batch-final-approval-packet.md) — ficha privada, gates técnicos e decisão individual antes do contato.
 
 ## WhatsApp e IA
 
@@ -42,6 +50,9 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 - [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md) — arquitetura free-tier com processamento limitado e fail-closed.
 - [Runbook Supabase + Render](runbooks/supabase-render-deployment.md) — migrations, Render Blueprint, Edge Function opcional, Cron e desligamento.
+- [Compatibilidade dos registros de migrations](migration-registry-compatibility.md) — causa raiz do registro dividido entre o runner local e o Supabase MCP, riscos e caminhos seguros.
+- [Evidências da homologação externa](external-homologation-evidence-runbook.md) — níveis de prova, GitHub Pages, Render, health checks, flags, kill switch e restart.
+- [Probe externo de homologação](../scripts/external-homologation-probe.mjs) — valida Pages, aviso público, demonstração, health checks e proteção do endpoint interno sem credenciais ou escrita.
 - [Operação com dois perfis](runbooks/dual-deployment-operations.md) — liderança, failover e prevenção de split-brain.
 - [Variáveis de ambiente](infrastructure/environment-variables.md) — variáveis ativas, secrets e defaults seguros.
 - [Gate sintético de batch](infrastructure/synthetic-batch-gate.md) — processamento determinístico em PostgreSQL descartável.
@@ -52,6 +63,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 ## Estratégia de produto
 
 - [Roadmap estratégico](PRODUCT_ROADMAP.md) — evolução desde o piloto manual até uma plataforma multicanal.
+- [Issue #98 — gate de viabilidade do segmento](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/98) — amostra de 30 barbearias concluída com decisão `PIVOT_RECOMMENDED`.
 
 ## Regras de manutenção
 

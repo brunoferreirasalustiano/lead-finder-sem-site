@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/coverage/**',
       'eslint.config.js',
       'scripts/*.ts',
+      'scripts/external-homologation-probe.mjs',
       'scripts/database/*.ts',
       'scripts/restore-suppression/*.ts',
       'deploy/supabase/functions/**/*.ts',

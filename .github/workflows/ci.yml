@@ -112,8 +112,8 @@ jobs:
           file: apps/api/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
+          cache-from: type=gha,scope=api-v2
+          cache-to: type=gha,mode=max,scope=api-v2
       - name: Build worker for AMD64 and ARM64 without publishing
         uses: docker/build-push-action@v6
         with:
@@ -121,8 +121,8 @@ jobs:
           file: apps/worker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,mode=max,scope=worker
+          cache-from: type=gha,scope=worker-v2
+          cache-to: type=gha,mode=max,scope=worker-v2
       - name: Verify production image manifests
         run: |
           for image in postgres:16-alpine caddy:2.10-alpine n8nio/n8n:1.99.1; do
@@ -157,7 +157,7 @@ jobs:
           [[ "$(docker compose -f docker-compose.yml -f docker-compose.production.yml --profile tools ps --services --status running)" == postgres ]]
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression npm run db:migrate
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression npm run db:migrate
-          docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression node --input-type=module -e "import postgres from 'postgres'; const sql=postgres(process.env.DATABASE_URL,{max:1}); const rows=await sql\`select count(*)::int count from schema_migrations\`; if(!rows[0]?.count)process.exit(2); await sql.end(); console.log(JSON.stringify({result:'RESTORE_COMPOSE_REACHABLE'}));"
+          docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression node --input-type=module -e "import postgres from 'postgres'; const sql=postgres(process.env.DATABASE_URL,{max:1}); const rows=await sql\`select count(*)::int count from public.schema_migrations\`; if(!rows[0]?.count)process.exit(2); await sql.end(); console.log(JSON.stringify({result:'RESTORE_COMPOSE_REACHABLE'}));"
           [[ "$(docker compose -f docker-compose.yml -f docker-compose.production.yml --profile tools ps --services --status running)" == postgres ]]
   integration:
     runs-on: ubuntu-latest
@@ -184,6 +184,8 @@ jobs:
       - run: npm run build
       - name: Apply migrations twice to verify version control
         run: npm run db:migrate && npm run db:migrate
+      - name: Verify split migration registry compatibility
+        run: npm run test:migration-registry
       - name: Verify Supabase Data API deny-all defaults on PostgreSQL
         run: npm run test:supabase-data-api-security
       - name: Verify manual assisted messaging on PostgreSQL 16

@@ -22,6 +22,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Ficha individual de revisão de lead](first-lead-review-sheet.md) — template privado para validar negócio, canal, supressões, mensagem e resultado.
 - [Política de seleção do primeiro lote](first-batch-selection-policy.md) — política v2 para múltiplos nichos, presença digital fraca e amostras maiores.
 - [Política de canais de prospecção v2](outreach-channel-policy-v2.md) — uso de dados públicos, e-mail profissional, aquisição de opt-in e limites do WhatsApp.
+- [Laboratório sintético de comunicação](communication-experiment-lab.md) — soluções multicanal, 1.080 testes nomeados, matriz de 14.580 cenários e limites de interpretação.
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
 - [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
 - [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.

@@ -1,24 +1,40 @@
 import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
+import { getMigrationSource } from './migration-registry-plan.js';
+import { assertImportedMigrationParity, loadMigrationRegistry } from './migration-registry.js';
+
 const url = process.env['DATABASE_URL'];
 if (!url) throw new Error('DATABASE_URL is required');
 const sql = postgres(url, { max: 1 });
+
 try {
-  await sql`create table if not exists schema_migrations (version text primary key, applied_at timestamptz not null default now())`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS public.schema_migrations (
+      version text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )`;
+
+  const registry = await loadMigrationRegistry(sql);
   const directory = new URL('../database/migrations/', import.meta.url);
-  for (const file of (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort()) {
+  const files = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
+
+  for (const file of files) {
     const version = file.replace(/\.sql$/, '');
-    const applied = await sql`select version from schema_migrations where version = ${version}`;
-    if (applied.length === 0) {
-      const migration = await readFile(new URL(file, directory), 'utf8');
-      await sql.begin(async (transaction) => {
-        await transaction.unsafe(migration);
-        await transaction`insert into schema_migrations (version) values (${version})`;
-      });
-      console.log(`Migration ${version} applied`);
-    } else {
-      console.log(`Migration ${version} already applied`);
+    const source = getMigrationSource(registry, version);
+
+    if (source !== 'PENDING') {
+      await assertImportedMigrationParity(sql, version, source);
+      console.log(`Migration ${version} already applied (source=${source})`);
+      continue;
     }
+
+    const migration = await readFile(new URL(file, directory), 'utf8');
+    await sql.begin(async (transaction) => {
+      await transaction.unsafe(migration);
+      await transaction`INSERT INTO public.schema_migrations (version) VALUES (${version})`;
+    });
+    registry.local.add(version);
+    console.log(`Migration ${version} applied (source=LOCAL)`);
   }
 } finally {
   await sql.end();

@@ -1,84 +1,122 @@
-# Especificação — compatibilidade fail-closed do runner de migrations
+# Registro de implementação — compatibilidade fail-closed do runner de migrations
+
+## Estado
+
+Implementado pela PR #121, integrado na `main` e validado pela CI #429.
+
+- `MIGRATION_RUNNER_COMPATIBILITY_COMPLETE`;
+- `MIGRATION_REAPPLY_GUARD_PROVED`;
+- issue #120 concluída.
 
 ## Contexto
 
-O banco Supabase de homologação possui dois registros legítimos:
+O Supabase de homologação possui dois registros legítimos:
 
 - `public.schema_migrations`: migrations `0001` a `0018`, aplicadas pelo runner do repositório;
 - `supabase_migrations.schema_migrations`: migrations lógicas `0019` e `0020`, aplicadas pelo Supabase MCP com versões temporais.
 
-`scripts/migrate.ts` consulta somente o primeiro registro e, no estado atual, tentaria reaplicar `0019/0020`.
+O runner anterior consultava somente o primeiro registro e poderia classificar `0019/0020` como pendentes.
 
-## Objetivo
+## Objetivo alcançado
 
-Alterar o runner e os verificadores para reconhecer migrations aplicadas por qualquer mecanismo aprovado, sem transformar ausência de histórico em sucesso silencioso e sem exigir o schema Supabase em PostgreSQL comum.
+O runner e os verificadores reconhecem migrations aplicadas por qualquer mecanismo aprovado, sem transformar ausência de histórico em sucesso silencioso e sem exigir o schema Supabase em PostgreSQL comum.
 
-## Requisitos funcionais
+## Comportamento implementado
 
-1. Criar `public.schema_migrations` como hoje quando necessário.
-2. Ler as versões locais de `public.schema_migrations.version`.
-3. Detectar se o schema e a tabela `supabase_migrations.schema_migrations` existem.
-4. Quando existirem, ler o campo lógico `name` sem depender da versão temporal.
-5. Considerar uma migration aplicada quando o nome completo do arquivo estiver:
-   - em `public.schema_migrations.version`; ou
-   - em `supabase_migrations.schema_migrations.name`.
-6. Não inserir automaticamente no registro local uma migration reconhecida apenas no registro Supabase.
-7. Não alterar nenhum registro histórico durante uma execução de verificação.
-8. Falhar quando houver:
-   - nomes duplicados conflitantes;
-   - migration lógica presente no registro Supabase sem objetos mínimos esperados;
-   - migration presente no registro local e Supabase com identificação incompatível;
-   - erro de permissão diferente de schema/tabela inexistente.
-9. Emitir relatório sanitizado com a origem de cada migration: `LOCAL`, `SUPABASE` ou `BOTH`.
-10. Preservar a execução transacional das migrations realmente pendentes.
+1. `public.schema_migrations` continua sendo criada quando necessário.
+2. As versões locais são lidas de `public.schema_migrations.version`.
+3. A existência de `supabase_migrations.schema_migrations` é detectada de forma opcional.
+4. Quando presente, o campo lógico `name` e a versão temporal são lidos.
+5. A origem de cada migration é classificada como:
+   - `LOCAL`;
+   - `SUPABASE`;
+   - `BOTH`;
+   - `PENDING`.
+6. Uma migration reconhecida somente no Supabase não é inserida automaticamente no registro local.
+7. A leitura e a verificação não alteram registros históricos.
+8. Migrations realmente pendentes continuam transacionais.
+9. Conflitos e paridade insuficiente interrompem a execução.
 
-## Paridade para migrations importadas
+## Falhas fechadas implementadas
 
-Para `0019` e `0020`, antes de aceitá-las como aplicadas via Supabase, o verificador deve conferir pelo menos:
+O runner rejeita:
+
+- nome lógico vazio;
+- versão Supabase vazia;
+- um nome lógico associado a versões incompatíveis;
+- uma versão temporal associada a nomes diferentes;
+- migration Supabase-only sem validador explícito;
+- migration importada sem objetos mínimos;
+- RLS, triggers, foreign keys ou ACL incompatíveis.
+
+## Paridade de `0019/0020`
+
+Antes de aceitá-las como aplicadas via Supabase, o runner confere:
 
 - tabelas esperadas;
-- constraints e foreign keys críticas;
-- funções e triggers esperados;
+- foreign keys críticas;
+- triggers esperados;
 - RLS ativa;
-- ACL de `service_role` limitada a `SELECT` e `INSERT`;
+- existência de `service_role`;
+- `service_role` limitado a `SELECT` e `INSERT`;
+- ausência de privilégios de mutação destrutiva;
 - ausência de acesso efetivo para `PUBLIC`, `anon` e `authenticated`.
 
-A verificação não deve expor dados de lead, contato, mensagens ou connection strings.
+A verificação não expõe dados de lead, contato, mensagem ou connection string.
 
-## Compatibilidade
+## Compatibilidade comprovada
 
-- PostgreSQL comum sem schema `supabase_migrations`: comportamento atual preservado.
-- Supabase com apenas registro local: comportamento atual preservado.
-- Supabase com registro dividido: reconhecer a origem e impedir reaplicação.
-- Banco novo: aplicar todas as migrations em ordem e registrar no histórico local.
+- PostgreSQL comum sem schema `supabase_migrations`;
+- banco com apenas registro local;
+- Supabase com registro dividido;
+- registros `BOTH` compatíveis;
+- banco novo com migrations pendentes.
 
-## Testes obrigatórios
+## Testes concluídos
 
 - somente registro local;
 - somente registro Supabase para migrations importadas;
 - registro dividido `0001–0018` local e `0019–0020` Supabase;
 - registros `BOTH` compatíveis;
-- nome conflitante;
+- nomes e versões conflitantes;
+- valores vazios;
 - schema Supabase ausente;
-- tabela Supabase inacessível;
 - migration importada sem objeto obrigatório;
 - segunda execução idempotente;
-- nenhuma escrita durante modo de verificação;
-- integração PostgreSQL descartável.
+- nenhuma escrita artificial no histórico local;
+- ausência de DDL sobre migrations importadas;
+- integração PostgreSQL descartável;
+- restart lógico e persistência;
+- restore-compose;
+- multiarch.
 
-## Fora de escopo
+## Evidência de não reaplicação
+
+O teste PostgreSQL executa o runner duas vezes no mesmo banco e comprova:
+
+- `0019/0020` reconhecidas pelo nome lógico;
+- nenhuma linha artificial adicionada ao registro local;
+- funções e triggers com OIDs preservados;
+- migrations importadas não executam DDL;
+- estado persistido permanece íntegro após restart lógico.
+
+## Fora de escopo preservado
 
 - inserir manualmente `0019/0020` em `public.schema_migrations`;
-- reaplicar migrations no banco de homologação;
-- alterar objetos atuais;
+- reaplicar migrations no Supabase real;
+- alterar objetos atuais da homologação durante a validação;
 - deploy no Render;
 - habilitar provider, webhook, egress ou contato real.
 
-## Critério de saída
+## Bloqueios posteriores à implementação
 
-- implementação revisada;
-- testes unitários e PostgreSQL verdes;
-- CI verde;
-- validação somente leitura contra snapshot sanitizado da homologação;
-- `scripts/migrate.ts` classifica `0019/0020` como aplicadas pelo Supabase e não executa DDL;
-- issue #117 permanece bloqueada até os demais gates do ambiente efetivo.
+A issue #117 permanece bloqueada até:
+
+- confirmação do `DATABASE_URL` e das flags efetivas do Render;
+- deploy controlado de SHA aprovado;
+- logs e health checks pós-deploy;
+- restart, kill switch, ausência de egress, rollback e smoke test;
+- qualificação privada e supressões por lead;
+- aprovação individual do primeiro lote.
+
+Esta implementação remove exclusivamente o bloqueio de compatibilidade do runner. Não autoriza envio real.

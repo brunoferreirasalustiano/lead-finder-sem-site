@@ -21,51 +21,38 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Build compact audit summary
+      - name: Explain vulnerable dependency
+        shell: bash
+        run: npm explain find-my-way --json > npm-explain-find-my-way.json
+      - name: Generate compatible lockfile fix
         shell: bash
         run: |
           set +e
-          npm audit --json > npm-audit.json
-          audit_status=$?
-          printf '%s' "$audit_status" > npm-audit-status.txt
-          node --input-type=module <<'NODE'
-          import { readFileSync, writeFileSync } from 'node:fs';
-
-          const report = JSON.parse(readFileSync('npm-audit.json', 'utf8'));
-          const vulnerabilities = Object.entries(report.vulnerabilities ?? {}).map(([name, item]) => ({
-            name,
-            severity: item.severity,
-            direct: item.isDirect,
-            range: item.range,
-            via: (item.via ?? []).map((entry) =>
-              typeof entry === 'string'
-                ? entry
-                : {
-                    source: entry.source,
-                    name: entry.name,
-                    severity: entry.severity,
-                    title: entry.title,
-                    url: entry.url,
-                    range: entry.range,
-                  },
-            ),
-            effects: item.effects,
-            fixAvailable: item.fixAvailable,
-          }));
-
-          const summary = JSON.stringify({ metadata: report.metadata, vulnerabilities }, null, 2);
-          writeFileSync('npm-audit-summary.json', summary);
-          console.log(summary);
-          NODE
-      - name: Upload audit summary
+          npm audit --json > npm-audit-before.json
+          before_status=$?
+          npm audit fix --package-lock-only --ignore-scripts
+          fix_status=$?
+          npm audit --json > npm-audit-after.json
+          after_status=$?
+          git diff -- package-lock.json > package-lock.diff
+          printf '%s' "$before_status" > npm-audit-before-status.txt
+          printf '%s' "$fix_status" > npm-audit-fix-status.txt
+          printf '%s' "$after_status" > npm-audit-after-status.txt
+      - name: Upload diagnostic and candidate fix
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-audit-summary
+          name: npm-audit-candidate-fix
           path: |
-            npm-audit-summary.json
-            npm-audit-status.txt
+            npm-explain-find-my-way.json
+            npm-audit-before.json
+            npm-audit-after.json
+            npm-audit-before-status.txt
+            npm-audit-fix-status.txt
+            npm-audit-after-status.txt
+            package-lock.json
+            package-lock.diff
           retention-days: 1
-      - name: Preserve audit result
+      - name: Require clean audit after compatible fix
         shell: bash
-        run: test "$(cat npm-audit-status.txt)" -eq 0
+        run: test "$(cat npm-audit-after-status.txt)" -eq 0

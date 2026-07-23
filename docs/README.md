@@ -20,7 +20,8 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Política de recuperação de leads](lead-recovery-policy.md) — tratamento seguro de estados e retomadas.
 - [Avaliação de legítimo interesse do primeiro contato](first-outreach-legitimate-interest-assessment.md) — finalidade, necessidade, balanceamento, salvaguardas e decisão condicional.
 - [Ficha individual de revisão de lead](first-lead-review-sheet.md) — template privado para validar negócio, canal, supressões, mensagem e resultado.
-- [Política de seleção do primeiro lote](first-batch-selection-policy.md) — critérios de inclusão/exclusão, triagem e regra de canal.
+- [Política de seleção do primeiro lote](first-batch-selection-policy.md) — política v2 para múltiplos nichos, presença digital fraca e amostras maiores.
+- [Política de canais de prospecção v2](outreach-channel-policy-v2.md) — uso de dados públicos, e-mail profissional, aquisição de opt-in e limites do WhatsApp.
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
 - [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
 - [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.

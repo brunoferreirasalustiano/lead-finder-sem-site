@@ -26,6 +26,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 - [Aviso de privacidade para contatos comerciais](privacy-notice-commercial-outreach.md) — transparência, dados, finalidades, direitos e opt-out durante o piloto.
 - [Evidências do ensaio sintético do primeiro lote](first-batch-synthetic-rehearsal-evidence.md) — mapeamento dos gates de mensageria manual, concorrência, restart e zero efeito externo.
 - [Controle de execução, incidentes e métricas](first-batch-execution-control.md) — estados, registros mínimos, métricas permitidas e runbook de interrupção do lote.
+- [Métricas de sucesso do primeiro lote](first-batch-success-metrics.md) — separa envio confirmado, resposta comercial e qualidade operacional; define fórmulas, rubrica de copy e gates duros.
 - [Qualificação de canais do primeiro lote](lead-channel-qualification-runbook.md) — hierarquia de fontes, classificação empresarial, opt-in de WhatsApp, supressões e decisão final.
 - [Pacote de aprovação final por lead](first-batch-final-approval-packet.md) — ficha privada, gates técnicos e decisão individual antes do contato.
 

@@ -20,27 +20,54 @@ const evaluations = variants.map((variant) =>
   }),
 );
 
-const summary = summarizeCommunicationExperiment(evaluations);
+const coldAcquisitionChannels = new Set<CommunicationChannel>(['EMAIL', 'CONTACT_FORM', 'BUSINESS_DM']);
+const postOptInChannels = new Set<CommunicationChannel>(['WHATSAPP_OPT_IN']);
 
-function topForChannel(channel: CommunicationChannel, limit = 10) {
-  return evaluations
+type RecommendationStage = 'COLD_ACQUISITION' | 'POST_OPT_IN' | 'ALL_GUARDED';
+
+function evaluationsForStage(stage: RecommendationStage): CommunicationEvaluation[] {
+  if (stage === 'COLD_ACQUISITION') {
+    return evaluations.filter((evaluation) => coldAcquisitionChannels.has(evaluation.variant.channel));
+  }
+  if (stage === 'POST_OPT_IN') {
+    return evaluations.filter((evaluation) => postOptInChannels.has(evaluation.variant.channel));
+  }
+  return evaluations;
+}
+
+function serializeEvaluation(evaluation: CommunicationEvaluation) {
+  return {
+    id: evaluation.variant.id,
+    score: evaluation.score,
+    channel: evaluation.variant.channel,
+    niche: evaluation.variant.niche,
+    opportunity: evaluation.variant.opportunity,
+    opening: evaluation.variant.opening,
+    tone: evaluation.variant.tone,
+    cta: evaluation.variant.cta,
+    personalization: evaluation.variant.personalization,
+    optOut: evaluation.variant.optOut,
+    linkPolicy: evaluation.variant.linkPolicy,
+    authorization: evaluation.variant.authorization,
+    sourceType: evaluation.variant.sourceType,
+    diagnosticEvidenceRequired: communicationRequiresDiagnosticEvidence(evaluation.variant),
+  };
+}
+
+function topForChannel(items: readonly CommunicationEvaluation[], channel: CommunicationChannel, limit = 10) {
+  return items
     .filter((evaluation) => evaluation.eligible && evaluation.variant.channel === channel)
     .sort((left, right) => right.score - left.score || left.variant.id.localeCompare(right.variant.id))
     .slice(0, limit)
-    .map((evaluation) => ({
-      id: evaluation.variant.id,
-      score: evaluation.score,
-      niche: evaluation.variant.niche,
-      opportunity: evaluation.variant.opportunity,
-      opening: evaluation.variant.opening,
-      tone: evaluation.variant.tone,
-      cta: evaluation.variant.cta,
-      personalization: evaluation.variant.personalization,
-      optOut: evaluation.variant.optOut,
-      linkPolicy: evaluation.variant.linkPolicy,
-      sourceType: evaluation.variant.sourceType,
-      diagnosticEvidenceRequired: communicationRequiresDiagnosticEvidence(evaluation.variant),
-    }));
+    .map(serializeEvaluation);
+}
+
+function topForStage(items: readonly CommunicationEvaluation[], limit = 20) {
+  return items
+    .filter((evaluation) => evaluation.eligible)
+    .sort((left, right) => right.score - left.score || left.variant.id.localeCompare(right.variant.id))
+    .slice(0, limit)
+    .map(serializeEvaluation);
 }
 
 function countValues(items: readonly CommunicationEvaluation[], field: 'codes' | 'warnings') {
@@ -53,59 +80,88 @@ function countValues(items: readonly CommunicationEvaluation[], field: 'codes' |
     .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
 }
 
-const topByChannel = Object.fromEntries(
-  communicationChannels.map((channel) => [channel, topForChannel(channel)]),
-);
+function createStageReport(stage: RecommendationStage) {
+  const items = evaluationsForStage(stage);
+  const summary = summarizeCommunicationExperiment(items);
+  const allowedChannels = stage === 'COLD_ACQUISITION'
+    ? communicationChannels.filter((channel) => coldAcquisitionChannels.has(channel))
+    : stage === 'POST_OPT_IN'
+      ? communicationChannels.filter((channel) => postOptInChannels.has(channel))
+      : communicationChannels;
+  const topByChannel = Object.fromEntries(
+    allowedChannels.map((channel) => [channel, topForChannel(items, channel)]),
+  );
+  const topVariants = topForStage(items);
+  return {
+    stage,
+    summary,
+    blockedReasons: countValues(items, 'codes'),
+    warnings: countValues(items, 'warnings'),
+    topByChannel,
+    topVariants,
+    guardedPatterns: {
+      opening: summary.byOpening[0]?.key ?? null,
+      tone: summary.byTone[0]?.key ?? null,
+      cta: summary.byCta[0]?.key ?? null,
+      channel: summary.byChannel[0]?.key ?? null,
+      requiresVerifiedDiagnosticEvidence:
+        summary.byOpening[0]?.key === 'DIAGNOSIS_FIRST' ||
+        topVariants.some((item) => item.personalization === 'DIAGNOSIS'),
+    },
+  };
+}
 
-const allTop = Object.values(topByChannel).flat();
-const guardedPatterns = {
-  opening: summary.byOpening[0]?.key ?? null,
-  tone: summary.byTone[0]?.key ?? null,
-  cta: summary.byCta[0]?.key ?? null,
-  channel: summary.byChannel[0]?.key ?? null,
-  requiresVerifiedDiagnosticEvidence:
-    summary.byOpening[0]?.key === 'DIAGNOSIS_FIRST' ||
-    allTop.some((item) => item.personalization === 'DIAGNOSIS'),
+const stages = {
+  COLD_ACQUISITION: createStageReport('COLD_ACQUISITION'),
+  POST_OPT_IN: createStageReport('POST_OPT_IN'),
+  ALL_GUARDED: createStageReport('ALL_GUARDED'),
 };
 
 const report = {
   metadata: {
-    schemaVersion: 'v1',
+    schemaVersion: 'v2',
     commit: process.env.GITHUB_HEAD_SHA ?? process.env.GITHUB_SHA ?? 'local',
     simulatedOnly: true,
     realConversionEvidence: false,
     externalEffects: { providers: false, messages: false, webhooks: false, writes: false },
     evaluatedRecommendationScenarios: evaluations.length,
   },
-  summary,
-  blockedReasons: countValues(evaluations, 'codes'),
-  warnings: countValues(evaluations, 'warnings'),
-  topByChannel,
-  guardedPatterns,
+  stages,
   interpretation: [
-    'O ranking contém somente variantes aprovadas pelos guards de canal, fonte, autorização e evidência.',
-    'DIAGNOSIS_FIRST e personalização DIAGNOSIS são recomendações condicionais a evidência VERIFIED.',
+    'COLD_ACQUISITION contém somente e-mail, formulário empresarial e DM empresarial.',
+    'POST_OPT_IN contém somente WhatsApp com autorização válida já registrada.',
+    'ALL_GUARDED é uma visão técnica consolidada e não deve ser usada para escolher o primeiro canal.',
+    'DIAGNOSIS_FIRST e personalização DIAGNOSIS são condicionais a evidência VERIFIED.',
     'Scores sintéticos não representam taxa real de resposta ou conversão.',
     'Nenhuma variante autoriza envio automático ou WhatsApp sem opt-in.',
   ],
 };
 
+const cold = stages.COLD_ACQUISITION;
+const postOptIn = stages.POST_OPT_IN;
 const markdown = [
-  '# Recomendações sintéticas guardadas',
+  '# Recomendações sintéticas por estágio',
   '',
-  `- Cenários avaliados: **${report.metadata.evaluatedRecommendationScenarios}**`,
-  `- Elegíveis após todos os guards: **${summary.eligible}**`,
-  `- Bloqueados após todos os guards: **${summary.blocked}**`,
-  `- Média heurística dos elegíveis: **${summary.averageEligibleScore}**`,
+  `- Cenários guardados avaliados: **${report.metadata.evaluatedRecommendationScenarios}**`,
   '- Efeitos externos: **zero**',
   '',
-  '## Padrões condicionais',
+  '## Primeiro contato frio',
   '',
-  `- Abertura: **${guardedPatterns.opening}**`,
-  `- Tom: **${guardedPatterns.tone}**`,
-  `- CTA: **${guardedPatterns.cta}**`,
-  `- Canal: **${guardedPatterns.channel}**`,
-  `- Evidência diagnóstica verificada exigida: **${guardedPatterns.requiresVerifiedDiagnosticEvidence ? 'SIM' : 'NÃO'}**`,
+  `- Canal recomendado: **${cold.guardedPatterns.channel}**`,
+  `- Abertura: **${cold.guardedPatterns.opening}**`,
+  `- Tom: **${cold.guardedPatterns.tone}**`,
+  `- CTA: **${cold.guardedPatterns.cta}**`,
+  `- Elegíveis: **${cold.summary.eligible}**`,
+  `- Bloqueados: **${cold.summary.blocked}**`,
+  '',
+  '## Comunicação pós-opt-in',
+  '',
+  `- Canal permitido: **${postOptIn.guardedPatterns.channel}**`,
+  `- Abertura: **${postOptIn.guardedPatterns.opening}**`,
+  `- Tom: **${postOptIn.guardedPatterns.tone}**`,
+  `- CTA: **${postOptIn.guardedPatterns.cta}**`,
+  `- Elegíveis: **${postOptIn.summary.eligible}**`,
+  `- Bloqueados: **${postOptIn.summary.blocked}**`,
   '',
   '## Leitura correta',
   '',
@@ -122,7 +178,6 @@ await Promise.all([
 console.log(JSON.stringify({
   outputDirectory,
   evaluatedRecommendationScenarios: report.metadata.evaluatedRecommendationScenarios,
-  eligible: summary.eligible,
-  blocked: summary.blocked,
-  guardedPatterns,
+  coldAcquisition: cold.guardedPatterns,
+  postOptIn: postOptIn.guardedPatterns,
 }, null, 2));

@@ -5,6 +5,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 ## Fonte de estado atual
 
 - [Estado operacional consolidado](current-operational-status.md) — ambiente, capacidades ativas, integrações desligadas, bloqueios e prioridades atuais.
+- [Atualização pós-PR #121](issue-117-post-121-update.md) — adendo que substitui o estado de compatibilidade de migrations até a consolidação integral do documento operacional.
 - [README principal](../README.md) — visão do produto, arquitetura, execução local, segurança e mapa de documentação.
 
 ## Piloto e operação comercial
@@ -49,6 +50,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 - [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md) — arquitetura free-tier com processamento limitado e fail-closed.
 - [Runbook Supabase + Render](runbooks/supabase-render-deployment.md) — migrations, Render Blueprint, Edge Function opcional, Cron e desligamento.
+- [Compatibilidade dos registros de migrations](migration-registry-compatibility.md) — causa raiz do registro dividido entre o runner local e o Supabase MCP, riscos e caminhos seguros.
 - [Evidências da homologação externa](external-homologation-evidence-runbook.md) — níveis de prova, GitHub Pages, Render, health checks, flags, kill switch e restart.
 - [Probe externo de homologação](../scripts/external-homologation-probe.mjs) — valida Pages, aviso público, demonstração, health checks e proteção do endpoint interno sem credenciais ou escrita.
 - [Operação com dois perfis](runbooks/dual-deployment-operations.md) — liderança, failover e prevenção de split-brain.

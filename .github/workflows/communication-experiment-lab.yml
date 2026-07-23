@@ -83,9 +83,14 @@ jobs:
 
           const guardedPath = 'artifacts/communication-lab/guarded-communication-recommendations.json';
           const guarded = JSON.parse(fs.readFileSync(guardedPath, 'utf8'));
-          if (guarded.metadata.schemaVersion !== 'v2') throw new Error('STAGE_AWARE_SCHEMA_V2_REQUIRED');
+          if (guarded.metadata.schemaVersion !== 'v3') throw new Error('STRATIFIED_SCHEMA_V3_REQUIRED');
           if (guarded.metadata.evaluatedRecommendationScenarios !== report.metadata.evaluatedScenarios) {
             throw new Error('GUARDED_RECOMMENDATION_SCENARIO_MISMATCH');
+          }
+          if (guarded.metadata.stratification?.niches !== 9) throw new Error('NICHE_STRATIFICATION_MISMATCH');
+          if (guarded.metadata.stratification?.opportunities !== 5) throw new Error('OPPORTUNITY_STRATIFICATION_MISMATCH');
+          if (guarded.metadata.stratification?.recommendationsPerGroup !== 3) {
+            throw new Error('RECOMMENDATIONS_PER_GROUP_MISMATCH');
           }
           if (guarded.metadata.realConversionEvidence !== false) throw new Error('GUARDED_REAL_CONVERSION_CLAIM_FORBIDDEN');
           if (Object.values(guarded.metadata.externalEffects).some(Boolean)) throw new Error('GUARDED_EXTERNAL_EFFECT_DETECTED');
@@ -109,7 +114,50 @@ jobs:
           if (postOptIn.guardedPatterns.channel !== 'WHATSAPP_OPT_IN') {
             throw new Error('POST_OPT_IN_CHANNEL_MISMATCH');
           }
+
+          const expectedNiches = [
+            'BEAUTY', 'AUTOMOTIVE', 'FOOD', 'HOME_SERVICES', 'LOCAL_RETAIL',
+            'PET', 'FITNESS_EDUCATION', 'CREATIVE_EVENTS', 'LOCAL_B2B',
+          ];
+          const expectedOpportunities = [
+            'NO_SITE', 'THIRD_PARTY_ONLY', 'WEAK_SITE', 'BROKEN_SITE', 'WEAK_CONVERSION',
+          ];
+
+          function verifyStratification(stage) {
+            if (Object.keys(stage.topByNiche ?? {}).length !== expectedNiches.length) {
+              throw new Error(`NICHE_COVERAGE_MISSING:${stage.stage}`);
+            }
+            if (Object.keys(stage.topByOpportunity ?? {}).length !== expectedOpportunities.length) {
+              throw new Error(`OPPORTUNITY_COVERAGE_MISSING:${stage.stage}`);
+            }
+            for (const niche of expectedNiches) {
+              const variants = stage.topByNiche[niche];
+              if (!Array.isArray(variants) || variants.length !== 3) {
+                throw new Error(`NICHE_RECOMMENDATIONS_MISSING:${stage.stage}:${niche}`);
+              }
+              if (new Set(variants.map(({ id }) => id)).size !== variants.length) {
+                throw new Error(`NICHE_RECOMMENDATION_DUPLICATE:${stage.stage}:${niche}`);
+              }
+              if (variants.some((variant) => variant.niche !== niche)) {
+                throw new Error(`NICHE_RECOMMENDATION_MISMATCH:${stage.stage}:${niche}`);
+              }
+            }
+            for (const opportunity of expectedOpportunities) {
+              const variants = stage.topByOpportunity[opportunity];
+              if (!Array.isArray(variants) || variants.length !== 3) {
+                throw new Error(`OPPORTUNITY_RECOMMENDATIONS_MISSING:${stage.stage}:${opportunity}`);
+              }
+              if (new Set(variants.map(({ id }) => id)).size !== variants.length) {
+                throw new Error(`OPPORTUNITY_RECOMMENDATION_DUPLICATE:${stage.stage}:${opportunity}`);
+              }
+              if (variants.some((variant) => variant.opportunity !== opportunity)) {
+                throw new Error(`OPPORTUNITY_RECOMMENDATION_MISMATCH:${stage.stage}:${opportunity}`);
+              }
+            }
+          }
+
           for (const stage of [cold, postOptIn, all]) {
+            verifyStratification(stage);
             if (!stage.guardedPatterns?.requiresVerifiedDiagnosticEvidence) {
               throw new Error(`DIAGNOSTIC_EVIDENCE_CONDITION_MISSING:${stage.stage}`);
             }
@@ -133,6 +181,8 @@ jobs:
             evaluatedGuardScenarios: report.metadata.evaluatedGuardScenarios,
             coldAcquisition: cold.summary,
             postOptIn: postOptIn.summary,
+            nicheCoverage: Object.keys(cold.topByNiche).length,
+            opportunityCoverage: Object.keys(cold.topByOpportunity).length,
           }));
           NODE
 

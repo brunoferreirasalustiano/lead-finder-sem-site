@@ -83,21 +83,46 @@ jobs:
 
           const guardedPath = 'artifacts/communication-lab/guarded-communication-recommendations.json';
           const guarded = JSON.parse(fs.readFileSync(guardedPath, 'utf8'));
-          if (guarded.metadata.schemaVersion !== 'v1') throw new Error('GUARDED_RECOMMENDATION_SCHEMA_REQUIRED');
+          if (guarded.metadata.schemaVersion !== 'v2') throw new Error('STAGE_AWARE_SCHEMA_V2_REQUIRED');
           if (guarded.metadata.evaluatedRecommendationScenarios !== report.metadata.evaluatedScenarios) {
             throw new Error('GUARDED_RECOMMENDATION_SCENARIO_MISMATCH');
           }
           if (guarded.metadata.realConversionEvidence !== false) throw new Error('GUARDED_REAL_CONVERSION_CLAIM_FORBIDDEN');
           if (Object.values(guarded.metadata.externalEffects).some(Boolean)) throw new Error('GUARDED_EXTERNAL_EFFECT_DETECTED');
-          if (!guarded.guardedPatterns?.requiresVerifiedDiagnosticEvidence) {
-            throw new Error('DIAGNOSTIC_EVIDENCE_CONDITION_MISSING');
+
+          const cold = guarded.stages?.COLD_ACQUISITION;
+          const postOptIn = guarded.stages?.POST_OPT_IN;
+          const all = guarded.stages?.ALL_GUARDED;
+          if (!cold || !postOptIn || !all) throw new Error('COMMUNICATION_STAGES_MISSING');
+          if (cold.summary.total + postOptIn.summary.total !== all.summary.total) {
+            throw new Error('STAGE_TOTALS_DO_NOT_RECONCILE');
           }
-          for (const variants of Object.values(guarded.topByChannel ?? {})) {
-            if (!Array.isArray(variants) || variants.length === 0) throw new Error('GUARDED_TOP_VARIANTS_MISSING');
-            for (const variant of variants) {
-              if (!variant.sourceType) throw new Error('GUARDED_SOURCE_TYPE_MISSING');
-              if (variant.opening === 'DIAGNOSIS_FIRST' && variant.diagnosticEvidenceRequired !== true) {
-                throw new Error('UNGUARDED_DIAGNOSIS_RECOMMENDATION');
+          if (cold.summary.byChannel.some(({ key }) => key === 'WHATSAPP_OPT_IN')) {
+            throw new Error('WHATSAPP_FORBIDDEN_IN_COLD_ACQUISITION');
+          }
+          if (Object.hasOwn(cold.topByChannel, 'WHATSAPP_OPT_IN')) {
+            throw new Error('WHATSAPP_TOP_FORBIDDEN_IN_COLD_ACQUISITION');
+          }
+          if (postOptIn.summary.byChannel.some(({ key }) => key !== 'WHATSAPP_OPT_IN')) {
+            throw new Error('NON_WHATSAPP_CHANNEL_IN_POST_OPT_IN');
+          }
+          if (postOptIn.guardedPatterns.channel !== 'WHATSAPP_OPT_IN') {
+            throw new Error('POST_OPT_IN_CHANNEL_MISMATCH');
+          }
+          for (const stage of [cold, postOptIn, all]) {
+            if (!stage.guardedPatterns?.requiresVerifiedDiagnosticEvidence) {
+              throw new Error(`DIAGNOSTIC_EVIDENCE_CONDITION_MISSING:${stage.stage}`);
+            }
+            for (const variants of Object.values(stage.topByChannel ?? {})) {
+              if (!Array.isArray(variants) || variants.length === 0) throw new Error('GUARDED_TOP_VARIANTS_MISSING');
+              for (const variant of variants) {
+                if (!variant.sourceType) throw new Error('GUARDED_SOURCE_TYPE_MISSING');
+                if (variant.opening === 'DIAGNOSIS_FIRST' && variant.diagnosticEvidenceRequired !== true) {
+                  throw new Error('UNGUARDED_DIAGNOSIS_RECOMMENDATION');
+                }
+                if (stage.stage === 'COLD_ACQUISITION' && variant.channel === 'WHATSAPP_OPT_IN') {
+                  throw new Error('COLD_ACQUISITION_WHATSAPP_VARIANT');
+                }
               }
             }
           }
@@ -106,9 +131,8 @@ jobs:
             namedCoreTests: report.metadata.namedCoreTests,
             evaluatedScenarios: report.metadata.evaluatedScenarios,
             evaluatedGuardScenarios: report.metadata.evaluatedGuardScenarios,
-            guardedRecommendationScenarios: guarded.metadata.evaluatedRecommendationScenarios,
-            guardedEligible: guarded.summary.eligible,
-            guardedBlocked: guarded.summary.blocked,
+            coldAcquisition: cold.summary,
+            postOptIn: postOptIn.summary,
           }));
           NODE
 

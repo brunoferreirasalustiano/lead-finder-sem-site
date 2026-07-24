@@ -1,0 +1,32 @@
+name: Generate toolchain lock
+on:
+  pull_request:
+    paths:
+      - package.json
+      - .github/workflows/generate-toolchain-lock.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate package lock without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Prove clean install from generated lock
+        run: npm ci
+      - name: Prove high and critical audit is clean
+        run: npm audit --audit-level=high
+      - name: Upload generated lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgraded-toolchain-package-lock-${{ github.sha }}
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7

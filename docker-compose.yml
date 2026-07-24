@@ -45,7 +45,7 @@ services:
       start_period: 10s
     networks: [internal]
   migrate:
-    build: { context: ., dockerfile: apps/api/Dockerfile }
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: tools }
     profiles: [tools]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-leadfinder}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-leadfinder}

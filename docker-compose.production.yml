@@ -35,7 +35,7 @@ services:
     networks: [database]
   restore-suppression:
     <<: *production-security
-    build: { context: ., dockerfile: apps/api/Dockerfile }
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: tools }
     profiles: [tools]
     init: true
     read_only: true

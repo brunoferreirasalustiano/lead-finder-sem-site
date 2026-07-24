@@ -11,33 +11,37 @@ const enabledRuntime = {
   authorizedPhoneE164: '+5511999999999',
 } as const;
 
+const errorCodeFrom = (action: () => unknown) => {
+  try {
+    action();
+  } catch (error) {
+    if (error instanceof OperatorChannelTestError) return error.code;
+    throw error;
+  }
+  throw new Error('Expected OperatorChannelTestError');
+};
+
 describe('operator channel test runtime', () => {
   it('fails closed when the feature is disabled', () => {
-    expect(() => resolveOperatorTestRecipient({
+    expect(errorCodeFrom(() => resolveOperatorTestRecipient({
       ...enabledRuntime,
       enabled: false,
-    })).toThrowError(expect.objectContaining<Partial<OperatorChannelTestError>>({
-      code: 'DISABLED',
-    }));
+    }))).toBe('DISABLED');
   });
 
   it('fails closed while the dedicated kill switch is engaged', () => {
-    expect(() => resolveOperatorTestRecipient({
+    expect(errorCodeFrom(() => resolveOperatorTestRecipient({
       ...enabledRuntime,
       killSwitchEnabled: true,
-    })).toThrowError(expect.objectContaining<Partial<OperatorChannelTestError>>({
-      code: 'KILL_SWITCH_ENGAGED',
-    }));
+    }))).toBe('KILL_SWITCH_ENGAGED');
   });
 
   it('rejects a missing or malformed operator recipient', () => {
-    expect(() => resolveOperatorTestRecipient({
+    expect(errorCodeFrom(() => resolveOperatorTestRecipient({
       enabled: true,
       killSwitchEnabled: false,
       authorizedPhoneE164: 'not-a-phone',
-    })).toThrowError(expect.objectContaining<Partial<OperatorChannelTestError>>({
-      code: 'INVALID_RECIPIENT',
-    }));
+    }))).toBe('INVALID_RECIPIENT');
   });
 
   it('builds the approved internal template and canonical wa.me link', () => {

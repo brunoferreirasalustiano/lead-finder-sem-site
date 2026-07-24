@@ -11,6 +11,7 @@ export default tseslint.config(
       'eslint.config.js',
       'scripts/*.ts',
       'scripts/external-homologation-probe.mjs',
+      'scripts/npm-audit-summary.mjs',
       'scripts/database/*.ts',
       'scripts/restore-suppression/*.ts',
       'deploy/supabase/functions/**/*.ts',

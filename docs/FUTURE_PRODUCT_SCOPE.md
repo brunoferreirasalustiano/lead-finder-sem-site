@@ -2,17 +2,17 @@
 
 > **Natureza deste documento:** visão estratégica e escopo futuro do produto. Este arquivo não representa prontidão operacional e não autoriza deploy, coleta externa, envio, provider, webhook, egress ou contato real.
 >
-> **Estado atual:** partes relevantes da fundação técnica já estão implementadas ou em desenvolvimento no repositório. As integrações externas, a prospecção automática real, a qualificação conversacional por IA e a operação multiempresa permanecem condicionadas aos gates técnicos, jurídicos, comerciais e operacionais documentados.
+> **Estado atual:** partes relevantes da fundação técnica já estão implementadas ou em desenvolvimento no repositório. As integrações externas, a prospecção automática real, a qualificação conversacional por IA, a operação multiempresa e a meta de 60 mensagens por dia permanecem condicionadas aos gates técnicos, jurídicos, comerciais e operacionais documentados.
 
 ## 1. Visão do produto
 
 O **Lead Finder Brasil** está sendo desenvolvido para evoluir de um laboratório de prospecção assistida para uma plataforma brasileira de inteligência comercial, capaz de:
 
 1. receber um produto, serviço ou oportunidade comercial de um cliente;
-2. configurar público-alvo, região, perfil ideal e critérios de exclusão;
+2. configurar público-alvo, território, perfil ideal e critérios de exclusão;
 3. localizar potenciais compradores ou contratantes em fontes permitidas;
 4. validar identidade, atividade, origem dos dados e compatibilidade inicial;
-5. iniciar uma abordagem controlada em canais oficialmente integrados;
+5. iniciar abordagens controladas em canais oficialmente integrados;
 6. analisar respostas com assistência de IA;
 7. realizar perguntas de qualificação previamente aprovadas;
 8. bloquear opt-out, contatos indevidos, duplicidades e perfis incompatíveis;
@@ -34,7 +34,7 @@ O produto deverá operar em três modalidades complementares.
 O cliente cadastra uma oferta e define:
 
 - segmento desejado;
-- região ou território;
+- território nacional, região, estado, cidade ou raio;
 - pessoa física ou jurídica;
 - porte, atividade ou perfil econômico;
 - problema que a oferta resolve;
@@ -85,7 +85,7 @@ Uma corretora cadastra um imóvel, empreendimento ou conjunto de unidades dispon
 
 - tipo: compra ou locação;
 - residencial, comercial, industrial ou terreno;
-- cidade, bairros e raio de interesse;
+- cidades, bairros, estados ou territórios de interesse;
 - faixa de preço;
 - área, quartos, vagas e características relevantes;
 - perfil de comprador ou locatário;
@@ -151,6 +151,24 @@ Essa vertical não limita a visão futura do produto. Ela funciona como laborat�
 - rastreabilidade;
 - aprendizado comercial.
 
+### Abrangência comercial
+
+A entrega de landing pages, sites institucionais e presença digital pode ser realizada remotamente. Por isso, a operação comercial futura dessa vertical não ficará restrita a Campinas ou a uma única região.
+
+O Lead Finder Brasil poderá pesquisar e atender empresas em **todo o território brasileiro**, segmentando campanhas por:
+
+- país;
+- estado;
+- região metropolitana;
+- cidade;
+- categoria de negócio;
+- atividade econômica;
+- tamanho da oportunidade;
+- qualidade do canal;
+- capacidade operacional disponível.
+
+Campinas e proximidades permanecem apenas como recorte do primeiro piloto controlado, não como limite do mercado do produto.
+
 ### Oportunidades digitais permitidas
 
 A ausência de um site cadastrado em uma fonte não prova que a empresa não possui site. A classificação deverá ser baseada em evidências e poderá utilizar estados como:
@@ -188,21 +206,25 @@ Referências oficiais para a implementação futura:
 - Google Places API — Nearby Search: `https://developers.google.com/maps/documentation/places/web-service/nearby-search`
 - Termos da Google Maps Platform: `https://cloud.google.com/terms/maps-platform/pt-br`
 
-### Estratégia de cobertura regional
+### Estratégia de cobertura nacional
 
 A busca ampliada deverá considerar:
 
-- divisão da região em células ou áreas menores;
-- raio configurável;
+- divisão do Brasil por estados, regiões metropolitanas, municípios e células geográficas;
+- campanhas nacionais executadas em ondas controladas;
+- alternância de cidades e nichos para evitar concentração excessiva;
+- raio configurável para negócios com atendimento local;
+- território livre para serviços entregues remotamente;
 - categorias oficiais e sinônimos regionais;
 - múltiplas consultas por atividade;
 - paginação controlada;
 - limite de custo por fonte;
-- deduplicação por identificador da fonte e identidade normalizada;
+- deduplicação nacional por identificador da fonte e identidade normalizada;
 - detecção de filiais e unidades;
 - registro da consulta que originou cada candidato;
 - data de coleta e validade da evidência;
-- amostragem para medir cobertura e falsos negativos.
+- amostragem para medir cobertura e falsos negativos;
+- distribuição da fila conforme capacidade diária de análise e abordagem.
 
 ### Análise da presença digital
 
@@ -224,70 +246,114 @@ A classificação deverá combinar sinais como:
 
 A plataforma deve registrar os sinais observados e a justificativa da classificação, evitando conclusões absolutas sem evidência.
 
-## 6. Meta inicial de 60 leads por dia
+## 6. Meta operacional futura — 60 mensagens enviadas por dia
 
-A meta da fase ampliada será processar **60 empresas candidatas por dia**.
+A meta comercial da Vertical Experimental 01 será evoluir até **60 mensagens efetivamente enviadas por dia**, em território brasileiro, para empresas que tenham passado pelos filtros definidos.
 
-Essa meta significa:
+Essa meta representa:
 
-- 60 registros descobertos ou recebidos;
-- normalizados;
-- deduplicados;
-- analisados;
-- classificados;
-- registrados com evidência mínima.
+- 60 mensagens com execução registrada como enviada pelo canal oficial;
+- destinatários empresariais distintos e elegíveis;
+- identidade e atividade validadas;
+- oportunidade digital comprovada ou suficientemente sustentada;
+- canal empresarial com origem registrada;
+- ausência de opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` ou bloqueio administrativo;
+- template aprovado e versionado;
+- respeito a limites, janelas, idempotência e frequência;
+- possibilidade clara de recusa e interrupção;
+- rastreabilidade por campanha, oferta, destinatário e resultado.
 
-Ela **não significa 60 mensagens enviadas por dia**.
+A meta de 60 não significa enviar para qualquer registro encontrado. Para entregar 60 mensagens elegíveis, o motor de descoberta deverá analisar um volume diário superior, removendo candidatos inválidos, duplicados, sem oportunidade, sem canal adequado ou bloqueados.
 
-A quantidade aprovada para contato dependerá dos gates de qualidade, canal, legitimidade, supressões e revisão humana.
-
-### Funil diário proposto
+### Funil diário de capacidade
 
 ```text
-60 candidatos analisados
-  -> remover duplicidades e unidades inválidas
-  -> validar identidade e atividade
-  -> verificar presença digital
-  -> classificar oportunidade
-  -> verificar origem e qualidade do canal
-  -> consultar supressões
-  -> revisão humana
-  -> somente os aprovados entram em fila futura de abordagem
+Volume amplo de candidatos nacionais
+  -> normalização e deduplicação
+  -> validação de identidade e atividade
+  -> verificação de presença digital
+  -> classificação da oportunidade
+  -> verificação da origem e qualidade do canal
+  -> consulta de supressões e bloqueios
+  -> aplicação dos limites da campanha
+  -> revisão humana ou regra governada aprovada
+  -> até 60 mensagens efetivamente enviadas no dia
 ```
 
-### Fases de aumento de volume
+O número de candidatos necessários será medido nos testes. Ele não será fixado por suposição, porque dependerá da taxa real de aprovação por nicho, região e fonte.
 
-#### Fase A — validação de precisão
+### Definição de mensagem enviada
 
-- pequeno lote;
+Para a meta diária, uma mensagem somente contará como enviada quando:
+
+- houver destinatário elegível;
+- a reserva idempotente tiver sido concluída;
+- o provider oficial confirmar a aceitação da tentativa;
+- o evento estiver persistido de forma auditável;
+- a mensagem não tiver sido cancelada, bloqueada ou mantida em `NOT_SENT`.
+
+Registros apenas analisados, mensagens em rascunho, filas pendentes, simulações e tentativas bloqueadas não contam para a meta.
+
+### Crescimento gradual da capacidade
+
+#### Fase A — primeiro piloto
+
+- lote pequeno e individual;
 - operação manual;
-- comparação entre classificação e revisão humana;
+- validação do canal e da mensagem;
 - medição de falsos positivos;
-- nenhum aumento de envio.
+- confirmação do opt-out;
+- nenhuma meta de escala.
 
-#### Fase B — capacidade de descoberta
+#### Fase B — capacidade inicial
 
-- até 60 candidatos analisados por dia;
-- coleta e classificação em dry-run ou shadow mode;
-- revisão de amostras;
-- nenhum contato automático.
+- aumento gradual para aproximadamente 5 a 10 mensagens por dia;
+- somente após ambiente e canal comprovados;
+- revisão humana integral;
+- acompanhamento de respostas, negativas, opt-outs e reclamações.
 
 #### Fase C — operação assistida
 
-- somente após ambiente, canais e supressões comprovados;
-- limites conservadores de abordagem;
-- revisão humana;
-- monitoramento de resposta, opt-out e reclamações;
-- expansão gradual baseada em evidência.
+- aumento para aproximadamente 15 a 30 mensagens por dia;
+- segmentação por nicho e ondas nacionais;
+- IA em classificação ou shadow mode conforme o gate aplicável;
+- revisão por amostragem somente depois de precisão comprovada;
+- kill switch e rollback testados.
 
-#### Fase D — automação governada
+#### Fase D — meta de 60 mensagens por dia
 
-- regras por tenant;
-- canais oficiais;
-- classificação por IA explicável;
+- canais oficiais estáveis;
+- infraestrutura e observabilidade comprovadas;
+- qualidade de dados mensurada;
+- limites por remetente, tenant, nicho e campanha;
+- supressões aplicadas antes de cada tentativa;
+- classificação explicável;
 - handoff humano;
-- limites por segmento, região, remetente e campanha;
-- rollback e kill switch testados.
+- monitoramento contínuo de reputação, opt-out e reclamações;
+- capacidade de reduzir ou interromper o volume automaticamente quando os indicadores ultrapassarem limites aprovados.
+
+### Meta comercial associada
+
+O objetivo de aumentar mensagens é ampliar oportunidades de:
+
+- respostas positivas;
+- autorização para apresentação de demonstrações;
+- reuniões;
+- propostas de landing pages;
+- vendas de sites;
+- contratos de hospedagem, manutenção ou serviços digitais.
+
+O projeto deverá separar claramente:
+
+- mensagens enviadas;
+- mensagens entregues;
+- respostas recebidas;
+- respostas positivas;
+- demonstrações autorizadas;
+- propostas emitidas;
+- vendas concluídas.
+
+A meta de 60 mensagens não será tratada como meta de 60 propostas. A quantidade de propostas dependerá das respostas favoráveis e da qualificação comercial real.
 
 ## 7. Abordagem inicial para empresas sem site oficial confirmado
 
@@ -295,15 +361,15 @@ A primeira abordagem deverá ser curta, individual, contextual e sem alegar como
 
 ### Proposta de mensagem inicial
 
-> Olá, tudo bem? Encontrei sua empresa ao pesquisar por **[serviço] em [região]** e não localizei um site oficial claramente vinculado ao negócio. Posso estar enganado, por isso faço esta confirmação antes de enviar qualquer material.
+> Olá, tudo bem? Encontrei sua empresa ao pesquisar por **[serviço] em [cidade/estado]** e não localizei um site oficial claramente vinculado ao negócio. Posso estar enganado, por isso faço esta confirmação antes de enviar qualquer material.
 >
-> Criamos páginas profissionais para ajudar empresas locais a apresentar seus serviços e serem encontradas com mais facilidade por futuros clientes da região. Uma landing page pode colocar seu negócio à frente de concorrentes que ainda dependem somente de redes sociais ou diretórios.
+> Criamos páginas profissionais para ajudar empresas a apresentar seus serviços e serem encontradas com mais facilidade por futuros clientes. Uma landing page pode dar mais visibilidade ao seu negócio e criar um caminho direto para pedidos de orçamento e contato.
 >
 > Posso preparar uma demonstração sem compromisso para você avaliar?
 
 ### Versão curta
 
-> Olá! Encontrei sua empresa ao pesquisar por **[serviço] em [região]** e não localizei um site oficial claramente vinculado ao negócio. Criamos landing pages para apresentar seus serviços e facilitar que novos clientes encontrem e conheçam a empresa. Posso preparar uma demonstração sem compromisso?
+> Olá! Encontrei sua empresa ao pesquisar por **[serviço] em [cidade/estado]** e não localizei um site oficial claramente vinculado ao negócio. Criamos landing pages para apresentar seus serviços e facilitar o contato de novos clientes. Posso preparar uma demonstração sem compromisso?
 
 ### Princípios da abordagem
 
@@ -314,7 +380,8 @@ A primeira abordagem deverá ser curta, individual, contextual e sem alegar como
 - não prometer posicionamento garantido no Google;
 - não alegar resultado futuro como certeza;
 - registrar opt-out imediatamente;
-- não insistir após negativa ou silêncio quando o limite definido for atingido;
+- não insistir após negativa;
+- limitar follow-ups conforme política aprovada;
 - encaminhar dúvida ou conflito para revisão humana.
 
 ## 8. Módulos futuros do Lead Finder Brasil
@@ -324,7 +391,7 @@ A primeira abordagem deverá ser curta, individual, contextual e sem alegar como
 Responsável por:
 
 - fontes de descoberta;
-- pesquisas territoriais;
+- pesquisas nacionais e territoriais;
 - importação controlada;
 - enriquecimento;
 - normalização;
@@ -377,7 +444,7 @@ Responsável por:
 
 Responsável por:
 
-- encaminhamento por região;
+- encaminhamento por território;
 - produto;
 - unidade;
 - equipe;
@@ -447,7 +514,7 @@ O projeto já possui ou já desenvolve fundações que serão reutilizadas na ev
 - backup, restore, rollback e smoke documentados;
 - perfis de implantação Supabase/Render e Oracle VPS.
 
-Essas capacidades ainda não significam que os serviços futuros estão prontos para uso comercial. Elas demonstram que a arquitetura está sendo construída para suportar progressivamente descoberta, campanhas, qualificação, roteamento, mensageria e governança.
+Essas capacidades ainda não significam que os serviços futuros estão prontos para uso comercial. Elas demonstram que a arquitetura está sendo construída para suportar progressivamente descoberta, campanhas, qualificação, roteamento, mensageria, escala nacional e governança.
 
 ## 10. Capacidades em desenvolvimento ou previstas
 
@@ -465,7 +532,7 @@ Essas capacidades ainda não significam que os serviços futuros estão prontos 
 ### Próximas capacidades
 
 - adaptador Google Places oficial;
-- cobertura territorial ampliada;
+- cobertura territorial nacional;
 - verificação externa de presença digital;
 - score de presença digital explicável;
 - interface para configuração de oferta e público;
@@ -477,7 +544,8 @@ Essas capacidades ainda não significam que os serviços futuros estão prontos 
 - WhatsApp Business Platform;
 - webhooks assinados;
 - integração com CRMs;
-- múltiplos clientes com isolamento por tenant.
+- múltiplos clientes com isolamento por tenant;
+- gestão de capacidade para até 60 mensagens diárias por operação aprovada.
 
 ### Capacidades posteriores
 
@@ -489,7 +557,8 @@ Essas capacidades ainda não significam que os serviços futuros estão prontos 
 - marketplace de pacotes por nicho;
 - aprendizado com resultados comerciais;
 - operação nacional distribuída;
-- APIs para parceiros e grandes empresas.
+- APIs para parceiros e grandes empresas;
+- escalabilidade de volume por tenant, canal e reputação.
 
 ## 11. Verticais futuras prioritárias
 
@@ -525,19 +594,20 @@ Cada vertical deverá possuir:
 - métricas de sucesso;
 - riscos e controles específicos.
 
-## 12. Métricas de qualidade
+## 12. Métricas de qualidade e escala
 
-O produto deverá evitar métricas de vaidade e separar descoberta, contato, resposta e venda.
+O produto deverá evitar métricas de vaidade e separar descoberta, contato, resposta, proposta e venda.
 
 ### Descoberta
 
 - candidatos por consulta;
 - candidatos únicos;
-- cobertura por região;
+- cobertura por estado, cidade e nicho;
 - duplicidades;
 - identidade confirmada;
 - atividade confirmada;
-- custo por candidato analisado.
+- custo por candidato analisado;
+- candidatos necessários por mensagem elegível.
 
 ### Qualificação
 
@@ -551,21 +621,25 @@ O produto deverá evitar métricas de vaidade e separar descoberta, contato, res
 
 ### Comunicação
 
-- contatos aprovados;
+- mensagens elegíveis;
 - mensagens efetivamente enviadas;
 - entregas confirmadas;
+- falhas por canal;
 - respostas;
 - respostas positivas;
 - respostas negativas;
 - opt-outs;
 - reclamações;
-- handoffs aceitos.
+- handoffs aceitos;
+- utilização da capacidade diária;
+- volume por estado, cidade, nicho e remetente.
 
 ### Resultado comercial
 
+- demonstrações autorizadas;
+- propostas emitidas;
 - reuniões;
 - visitas;
-- propostas;
 - vendas;
 - receita atribuída;
 - tempo até atendimento humano;
@@ -574,10 +648,11 @@ O produto deverá evitar métricas de vaidade e separar descoberta, contato, res
 
 ## 13. Princípios permanentes
 
-- qualidade antes de volume;
+- qualidade e elegibilidade antes do envio;
 - evidência antes de classificação;
 - canais oficiais antes de escala;
-- `NOT_SENT` enquanto o gate não estiver completo;
+- cobertura nacional sem envio indiscriminado;
+- `NOT_SENT` enquanto o gate atual não estiver completo;
 - opt-out imediato;
 - `DO_NOT_CONTACT` e `NAO_CONTATAR` prioritários;
 - IA assiste, mas não autoriza operações sensíveis sozinha;
@@ -585,9 +660,11 @@ O produto deverá evitar métricas de vaidade e separar descoberta, contato, res
 - nenhuma inferência tratada como fato;
 - nenhuma promessa comercial sem base;
 - nenhuma PII em issue, PR, log ou documentação pública;
-- nenhuma expansão de volume sem métricas de qualidade;
+- nenhuma expansão de volume sem métricas de qualidade e reputação;
 - nenhuma configuração parcial autoriza envio;
-- fail-closed como padrão.
+- fail-closed como padrão;
+- redução automática de volume diante de risco ou degradação;
+- meta de 60 mensagens somente após progressão comprovada.
 
 ## 14. Critério de sucesso da visão
 
@@ -602,17 +679,21 @@ A visão será considerada validada quando a plataforma demonstrar, em pelo meno
 7. handoff aceito pelo vendedor;
 8. reuniões, visitas ou propostas atribuíveis;
 9. operação sem contato indevido;
-10. receita recorrente e retenção inicial.
+10. receita recorrente e retenção inicial;
+11. capacidade nacional segmentada;
+12. evolução segura até 60 mensagens efetivamente enviadas por dia.
 
 ## 15. Declaração final
 
 O Lead Finder Brasil está sendo construído para transformar:
 
 ```text
-Produto disponível + público ideal + descoberta + conversa inicial
+Produto disponível + público ideal + descoberta nacional + conversa inicial
 + qualificação por IA + segurança + handoff humano
 ```
 
 em oportunidades comerciais mais acertadas.
 
-A venda de landing pages é o primeiro laboratório prático. O objetivo futuro é permitir que empresas de diferentes setores configurem suas ofertas, encontrem ou recebam potenciais clientes, filtrem o interesse e entreguem aos seus vendedores somente as conversas que merecem continuidade humana.
+A venda de landing pages é o primeiro laboratório prático e poderá atender empresas em todo o Brasil. O objetivo futuro é permitir que empresas de diferentes setores configurem suas ofertas, encontrem ou recebam potenciais clientes, filtrem o interesse e entreguem aos seus vendedores somente as conversas que merecem continuidade humana.
+
+Na Vertical Experimental 01, a meta futura é alcançar 60 mensagens efetivamente enviadas por dia, com qualidade, rastreabilidade, canais oficiais, supressões e aumento gradual baseado em evidência.

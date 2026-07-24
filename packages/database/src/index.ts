@@ -16,6 +16,7 @@ export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
+export * from './operator-channel-test.js';
 export * from './deployment-processing.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
@@ -136,7 +137,7 @@ export async function claimCollection(db: Database) {
         .for('update', { skipLocked: true })
     )[0];
     if (!job) return null;
-    await tx
+    await db
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
       .where(eq(collectionJobs.id, job.id));

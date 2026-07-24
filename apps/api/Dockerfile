@@ -6,12 +6,20 @@ COPY packages ./packages
 COPY scripts ./scripts
 COPY database ./database
 RUN npm ci && npm run build
+
+# One-shot operational tools keep the TypeScript runner and other dev tooling.
+FROM build AS tools
+
+# Runtime images receive only production dependencies.
+FROM build AS production-deps
+RUN npm prune --omit=dev
+
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 USER node
 WORKDIR /app
-COPY --from=build --chown=node:node /app/package.json ./package.json
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=production-deps --chown=node:node /app/package.json ./package.json
+COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/scripts ./scripts
 COPY --from=build --chown=node:node /app/database/migrations ./database/migrations
 COPY --from=build --chown=node:node /app/apps/api/dist ./apps/api/dist

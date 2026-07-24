@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createOperatorTestWhatsAppUrl,
   escapeHtml,
   isSafeWhatsAppUrl,
+  operatorTestConfig,
   parseApiBaseUrl,
+  parseOperatorTestPhone,
   validatePreparation,
 } from './manual-whatsapp-console.js';
 
@@ -19,6 +22,29 @@ describe('manual WhatsApp operator console', () => {
     expect(isSafeWhatsAppUrl('https://example.com/5519971519337?text=Ol%C3%A1')).toBe(false);
     expect(isSafeWhatsAppUrl('http://wa.me/5519971519337?text=Ol%C3%A1')).toBe(false);
     expect(isSafeWhatsAppUrl('https://wa.me/5519971519337')).toBe(false);
+  });
+
+  it('requires strict E.164 for the operator-only number', () => {
+    expect(parseOperatorTestPhone('+5519971519337')).toBe('+5519971519337');
+    expect(() => parseOperatorTestPhone('19 97151-9337')).toThrow(/E.164/);
+    expect(() => parseOperatorTestPhone('5519971519337')).toThrow(/E.164/);
+  });
+
+  it('creates a safe operator-only wa.me link without persisting the phone', () => {
+    const link = createOperatorTestWhatsAppUrl('+5519971519337', 'Teste interno');
+    expect(link).toBe('https://wa.me/5519971519337?text=Teste%20interno');
+    expect(isSafeWhatsAppUrl(link)).toBe(true);
+  });
+
+  it('requires an explicit authorization flag for operator test mode', () => {
+    expect(operatorTestConfig({})).toBeUndefined();
+    expect(() => operatorTestConfig({
+      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+    })).toThrow(/AUTHORIZED/);
+    expect(operatorTestConfig({
+      OPERATOR_TEST_AUTHORIZED: 'true',
+      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+    })?.maskedPhone).toBe('••••9337');
   });
 
   it('validates a safe WhatsApp preparation response', () => {

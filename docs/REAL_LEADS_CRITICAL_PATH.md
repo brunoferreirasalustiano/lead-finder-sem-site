@@ -9,8 +9,9 @@
 - contatos enviados: `0`;
 - opt-out, `DO_NOT_CONTACT` e `NAO_CONTATAR` preservados;
 - PR #128 documenta a visão futura nacional e a meta posterior de 60 mensagens efetivamente enviadas por dia;
-- a CI #470 da PR #128 falhou exclusivamente no gate `npm audit --audit-level=high` nos perfis `supabase-render` e `oracle-vps`;
-- typecheck, lint, testes, cobertura, build, integração PostgreSQL, restore-compose e multiarch foram aprovados na mesma execução.
+- a PR #130 corrigiu o advisory alto `GHSA-r28c-9q8g-f849` com atualização lockfile-only de `postcss 8.5.16` para `8.5.23`;
+- a CI #477 da PR #130 foi integralmente verde nos perfis `supabase-render` e `oracle-vps`, incluindo audit, integração PostgreSQL, restore-compose e multiarch;
+- a issue #129 foi concluída e `DEPENDENCY_AUDIT_CLEAN` foi restabelecido na `main` pelo squash `3464f91b1668fdb9f7f99b7accdac61d05867b71`.
 
 ## Objetivo imediato
 
@@ -18,16 +19,16 @@ Liberar um primeiro lote manual pequeno e auditável para validar qualidade, can
 
 ## Ordem obrigatória
 
-### Gate 1 — Dependências e CI
+### Gate 1 — Dependências e CI — concluído
 
-1. identificar o pacote, advisory, versões vulneráveis e primeira versão corrigida;
-2. classificar se a dependência está no runtime ou apenas em desenvolvimento;
-3. aplicar atualização mínima sem `--force`;
-4. manter a correção em PR separada da documentação;
-5. executar typecheck, lint, testes, cobertura, build, audit, integração, restore e multiarch aplicáveis;
-6. somente considerar concluído com CI verde nos dois perfis.
+1. pacote e advisory identificados: `postcss` / `GHSA-r28c-9q8g-f849`;
+2. dependência classificada como transitiva e apenas de desenvolvimento no lockfile;
+3. atualização mínima aplicada sem `--force`;
+4. correção mantida separada da documentação na PR #130;
+5. typecheck, lint, testes, cobertura, build, audit, integração, restore e multiarch aprovados;
+6. CI verde nos dois perfis.
 
-**Saída:** `DEPENDENCY_AUDIT_CLEAN`.
+**Saída comprovada:** `DEPENDENCY_AUDIT_CLEAN`.
 
 ### Gate 2 — Reconciliar e integrar a documentação
 
@@ -86,6 +87,8 @@ Priorizar os códigos:
 - `LF-TM-04`;
 - `LF-TM-05`;
 - `LF-TM-09`.
+
+O mapeamento privado original desses códigos não foi recuperado nas cópias atuais do tracker. Os campos de identidade, atividade, fontes e canal permanecem vazios. Portanto, a continuidade exige recuperar a origem ou substituir os códigos antigos por uma shortlist nova, verificável e registrada apenas no acervo privado.
 
 Para cada ficha:
 

@@ -10,6 +10,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 ## Piloto e operação comercial
 
+- [Caminho crítico até os primeiros leads reais](REAL_LEADS_CRITICAL_PATH.md) — sequência mínima de CI, ambiente, deploy controlado, qualificação privada, mensagem e decisão GO/NO-GO.
 - [Pacote operacional do piloto manual](pilot-manual-operations-pack.md) — critérios de elegibilidade, lote inicial, revisão humana, resultados, incidentes e métricas sem PII.
 - [Primeiro ciclo real controlado](pilot-real-controlled-runbook.md) — homologação isolada, gates, backup/restore, rollback e kill switch sem efeitos externos.
 - [Template de mensagem manual v1](pilot-real-manual-message-v1.md) — texto e checklist de aprovação humana; não autoriza envio.

@@ -5,11 +5,16 @@ COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
 RUN npm ci && npm run build
+
+# Runtime images receive only production dependencies.
+FROM build AS production-deps
+RUN npm prune --omit=dev
+
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 USER node
 WORKDIR /app
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build --chown=node:node /app/apps/worker/package.json ./apps/worker/package.json
 COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages/shared/package.json

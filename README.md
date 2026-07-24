@@ -1,10 +1,13 @@
 # Lead Finder Brasil
 
-CRM de prospecção para localizar empresas com indícios de ausência de site, validar os dados com revisão humana e organizar a oferta de landing pages e soluções digitais.
+CRM de prospecção em evolução para uma plataforma brasileira de inteligência comercial, descoberta ativa, qualificação assistida por IA e encaminhamento humano de oportunidades.
+
+A busca de empresas com indícios de ausência de site e a oferta de landing pages constituem a primeira vertical experimental do produto. A visão futura inclui múltiplos nichos, cobertura nacional e prospecção conversacional governada.
 
 > **Estado atual:** homologação fail-closed, dados sintéticos, coleta externa desligada e nenhum envio real por e-mail, WhatsApp ou IA.
 
 - [Estado operacional consolidado](docs/current-operational-status.md)
+- [Escopo futuro do produto](docs/FUTURE_PRODUCT_SCOPE.md)
 - [Índice de documentação](docs/README.md)
 - [Auditoria de segurança e privacidade](docs/security-privacy-audit.md)
 - [Threat model operacional](docs/operational-threat-model.md)
@@ -53,9 +56,10 @@ Qualquer dúvida resulta em `REVISAO_HUMANA` e impede a ação.
 
 ### Pendente ou bloqueado
 
-- reconciliação segura de supressões após restore — [PR #69](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/pull/69);
 - confirmação externa automatizada de ausência real de site;
 - enriquecimento externo de contatos;
+- adaptador oficial de Google Places;
+- cobertura nacional ampliada;
 - adaptador oficial de e-mail;
 - WhatsApp Business Cloud API;
 - webhooks externos assinados;
@@ -65,23 +69,8 @@ Qualquer dúvida resulta em `REVISAO_HUMANA` e impede a ação.
 - dashboard operacional e comercial;
 - automações completas no n8n;
 - piloto com leads reais;
-- validação do perfil Oracle em VPS real.
-
-## Bloqueio principal
-
-A PR #69 permanece Draft porque uma restauração pode reativar trabalho que deveria continuar suprimido.
-
-Ela só poderá ser integrada após corrigir:
-
-1. execução da reconciliação dentro da rede Compose;
-2. relação `campaign_outbox -> campaign_attempts -> campaign_recipients -> lead`;
-3. escopo correto de `OPT_OUT_CHANNEL`;
-4. atualização da branch sobre a `main`;
-5. testes PostgreSQL, replay, rollback transacional e revisão sem P1/P2.
-
-**Modelo Codex recomendado:** Sol, por envolver restore, supressões, outbox, concorrência e risco de contato indevido.
-
-Veredito exigido: `RESTORE_SUPPRESSION_READY_FOR_MERGE`.
+- validação do perfil Oracle em VPS real;
+- evolução gradual até a meta futura de 60 mensagens efetivamente enviadas por dia.
 
 ## Arquitetura
 
@@ -190,7 +179,7 @@ Regras do primeiro lote:
 - nenhuma lista comprada ou importação em massa;
 - nenhuma métrica inferida pela abertura de link.
 
-A execução continua bloqueada até a PR #69, o ambiente, o kill switch, o WhatsApp Business e os gates de privacidade estarem aprovados.
+O recorte regional pertence ao primeiro piloto. A visão comercial futura da vertical de landing pages é nacional, com aumento progressivo de capacidade até 60 mensagens efetivamente enviadas por dia somente após validação dos gates e dos indicadores de qualidade.
 
 Documentos:
 
@@ -228,7 +217,7 @@ Documentos:
 - Docker Engine e Docker Compose para integração local completa;
 - PostgreSQL real executado pelo Compose ou CI.
 
-O usuário atual trabalha em Windows sem Docker Desktop/WSL; por isso, integrações PostgreSQL, Compose e multiarch podem ser executadas na CI ou pelo Codex em ambiente apropriado.
+O usuário atual trabalha em Windows sem Docker Desktop/WSL; por isso, integrações PostgreSQL, Compose e multiarch podem ser executadas na CI ou por ferramenta apropriada em ambiente compatível.
 
 ## Configuração local
 
@@ -368,12 +357,11 @@ O modelo deve ser informado antes de cada trabalho do Codex, com justificativa d
 - dados OSM podem estar incompletos ou desatualizados;
 - ausência de site na fonte não confirma ausência real;
 - não existe envio real pelo runtime;
-- não existe provider Meta, e-mail ou OpenAI integrado;
+- não existe provider Meta, e-mail, Google Places ou OpenAI integrado;
 - não existe dashboard ou proposta em PDF;
 - não existe homologação Oracle real;
-- PR #69 bloqueia restore seguro e o piloto;
 - cron e Edge Function do Plano B não estão ativos por padrão;
-- o projeto não está pronto para multi-tenant ou escala comercial automática.
+- o projeto não está pronto para multi-tenant, prospecção nacional automática ou escala de 60 mensagens diárias.
 
 Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada.
 

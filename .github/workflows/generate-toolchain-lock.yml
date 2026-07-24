@@ -1,17 +1,20 @@
 name: Generate toolchain lock
 on:
-  pull_request:
+  push:
+    branches: [security/dev-toolchain-cve-2026-14257]
     paths:
       - package.json
       - .github/workflows/generate-toolchain-lock.yml
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: security/dev-toolchain-cve-2026-14257
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -22,11 +25,14 @@ jobs:
         run: npm ci
       - name: Prove high and critical audit is clean
         run: npm audit --audit-level=high
-      - name: Upload generated lockfile
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: upgraded-toolchain-package-lock-${{ github.sha }}
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Commit generated lockfile to this branch
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json is already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'security: regenerate lockfile for upgraded toolchain'
+          git push origin HEAD:security/dev-toolchain-cve-2026-14257

@@ -10,6 +10,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 ## Piloto e operação comercial
 
+- [Caminho crítico até os primeiros leads reais](REAL_LEADS_CRITICAL_PATH.md) — sequência mínima de CI, ambiente, deploy controlado, qualificação privada, mensagem e decisão GO/NO-GO.
 - [Pacote operacional do piloto manual](pilot-manual-operations-pack.md) — critérios de elegibilidade, lote inicial, revisão humana, resultados, incidentes e métricas sem PII.
 - [Primeiro ciclo real controlado](pilot-real-controlled-runbook.md) — homologação isolada, gates, backup/restore, rollback e kill switch sem efeitos externos.
 - [Template de mensagem manual v1](pilot-real-manual-message-v1.md) — texto e checklist de aprovação humana; não autoriza envio.
@@ -64,6 +65,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 ## Estratégia de produto
 
+- [Escopo futuro do produto](FUTURE_PRODUCT_SCOPE.md) — visão de prospecção ativa nacional, qualificação por IA, handoff humano e meta progressiva de 60 mensagens efetivamente enviadas por dia.
 - [Roadmap estratégico](PRODUCT_ROADMAP.md) — evolução desde o piloto manual até uma plataforma multicanal.
 - [Issue #98 — gate de viabilidade do segmento](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/98) — amostra de 30 barbearias concluída com decisão `PIVOT_RECOMMENDED`.
 

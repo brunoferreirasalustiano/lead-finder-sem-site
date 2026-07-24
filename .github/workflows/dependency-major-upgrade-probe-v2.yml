@@ -1,0 +1,49 @@
+name: Dependency major upgrade probe v2
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Generate candidate dev-tool upgrade
+        shell: bash
+        run: |
+          npm install --save-dev --package-lock-only --ignore-scripts \
+            eslint@10.8.0 \
+            @eslint/js@10.0.1 \
+            vitest@4.1.10 \
+            @vitest/coverage-v8@4.1.10
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:coverage
+      - run: npm run build
+      - name: Verify audit
+        shell: bash
+        run: |
+          npm audit --json > npm-audit-major-after.json || true
+          node -e "const r=require('./npm-audit-major-after.json'); const v=r.metadata?.vulnerabilities ?? {}; console.log(JSON.stringify(v,null,2)); if ((v.high??0)>0 || (v.critical??0)>0) process.exit(1);"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-major-upgrade-probe-v2-pr-132
+          path: |
+            package.json
+            package-lock.json
+            npm-audit-major-after.json
+          if-no-files-found: error
+          retention-days: 7

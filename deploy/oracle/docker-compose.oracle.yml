@@ -11,7 +11,7 @@ services:
     networks: [internal]
     healthcheck: { test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 10s, timeout: 5s, retries: 10 }
   migrate:
-    build: { context: ../.., dockerfile: apps/api/Dockerfile }
+    build: { context: ../.., dockerfile: apps/api/Dockerfile, target: tools }
     command: [npm, run, db:migrate]
     environment: &runtime
       DEPLOYMENT_PROFILE: oracle-vps

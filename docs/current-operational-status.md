@@ -1,43 +1,45 @@
 # Estado operacional consolidado
 
-**Última revisão:** 23 de julho de 2026  
-**Baseline integrada da `main`:** `d45c2b47cbd7e1787623fa992d9d3b727daea964`  
+**Última revisão:** 24 de julho de 2026  
+**Baseline integrada da `main`:** `218eae29bbeef28994d7d3857b9dc2805dc5f32c`  
 **Gate central:** issue #117  
 **Estado:** `REAL_MANUAL_PILOT_BLOCKED`  
 **Mensagens:** `NOT_SENT`  
 **Contatos enviados:** `0`
 
-Este documento é a fonte resumida do estado operacional atual do Lead Finder Brasil. O código, as migrations, as evidências de CI e as inspeções autenticadas são a autoridade técnica. Issues e pull requests preservam o histórico detalhado.
+Este documento resume o estado verificável do Lead Finder Brasil. O código, as migrations, as evidências de CI e as inspeções autenticadas são a autoridade técnica. Issues e pull requests preservam o histórico detalhado.
 
 ## Veredito executivo
 
-A fundação técnica para um piloto manual controlado está implementada e extensivamente validada, mas o envio real ainda não está autorizado.
+A fundação técnica para o piloto manual controlado está implementada e validada, mas nenhum contato real está autorizado.
 
 Comprovado:
 
 - mensageria manual assistida sem provider real;
-- shadow mode e defaults fail-closed;
 - autenticação e autorização por ação;
-- opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueio administrativo prioritários;
 - histórico append-only para autorização, evidência e eventos manuais;
+- opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueio administrativo prioritários;
 - Data API Supabase em postura deny-all;
-- compatibilidade fail-closed dos dois registros de migrations;
-- replay de migrations `0019/0020` bloqueado e testado;
-- audit de dependências sem vulnerabilidade alta conhecida;
-- API pública de homologação viva e pronta pelos health checks;
+- compatibilidade fail-closed dos registros local e Supabase de migrations;
+- replay de `0019/0020` bloqueado e testado;
+- audit de dependências sem vulnerabilidade alta reportada;
+- imagens finais de API e worker sem dependências de desenvolvimento;
+- migrations e restore preservados em target operacional separado;
+- branch de homologação sincronizada com a `main` anterior ao hardening;
+- API pública live e ready;
 - shortlist sanitizada e tracker privado sem PII;
-- nenhum lead aprovado para contato;
-- nenhum envio, provider, webhook ou egress de campanha habilitado.
+- zero canais `BUSINESS / APPROVED`;
+- zero mensagens e contatos enviados.
 
 Ainda bloqueia o piloto:
 
-- variáveis efetivas e `DATABASE_URL` do Render não comprovados;
-- Render executa um SHA antigo;
+- `DATABASE_URL` e flags efetivas do Render não comprovados;
+- serviço Render executando SHA antigo;
+- branch HML ainda precisa incorporar a baseline deste documento;
 - deploy controlado e gates pós-deploy não executados;
 - fichas privadas dos leads prioritários incompletas;
-- zero canais `BUSINESS / APPROVED` e zero opt-ins válidos;
-- supressões específicas ainda não consultadas por lead vinculado;
-- aprovação individual do operador ainda não emitida.
+- supressões específicas não consultadas por lead vinculado;
+- aprovação individual do operador não emitida.
 
 ## Baseline técnica
 
@@ -45,19 +47,25 @@ PRs integradas mais relevantes:
 
 - PR #118 — fundação e governança do gate manual;
 - PR #121 — compatibilidade dos registros de migrations;
-- PR #122 — atualização transitiva de segurança de `find-my-way`.
+- PR #122 — correção transitiva de `find-my-way`;
+- PR #119 — documentação consolidada do gate #117;
+- PR #123 — sincronização da branch HML;
+- PR #124 — exclusão de dependências dev das imagens de runtime.
 
-Evidências:
+Evidências recentes:
 
-- CI #429 integralmente verde para a PR #121;
-- Deployment smoke #207 verde;
-- CI #438 integralmente verde para a PR #122;
-- `npm audit --audit-level=high` verde nos perfis `oracle-vps` e `supabase-render`;
-- integração PostgreSQL, restart lógico, persistência, restore-compose e multiarch aprovados.
+- CI #429 verde para a PR #121;
+- CI #438 verde para a PR #122;
+- CI #449 verde para a PR #119;
+- CI #452 e Deployment smoke #209 verdes para a sincronização HML;
+- CI #454 e Deployment smoke #210 verdes para a PR #124;
+- primeiro multiarch da PR #124 falhou de forma isolada;
+- repetição do multiarch aprovou API, worker e manifests em AMD64/ARM64;
+- integração PostgreSQL, restart lógico, persistência e restore-compose aprovados.
 
 ## Registros de migrations
 
-O banco de homologação utiliza dois registros legítimos:
+O Supabase de homologação utiliza dois registros legítimos:
 
 - `public.schema_migrations`: `0001` a `0018`;
 - `supabase_migrations.schema_migrations`: `0019` e `0020`.
@@ -68,10 +76,10 @@ A PR #121 implementou:
 - reconhecimento por nome lógico;
 - classificação `LOCAL`, `SUPABASE`, `BOTH` ou `PENDING`;
 - rejeição de nomes ou versões incompatíveis;
-- rejeição fail-closed de migration Supabase-only sem validador explícito;
-- validação de tabelas, foreign keys, triggers, RLS e ACL de `0019/0020`;
-- execução idempotente em PostgreSQL descartável;
-- zero inserção artificial de `0019/0020` em `public.schema_migrations`;
+- rejeição fail-closed de migration Supabase-only sem validador;
+- validação de tabelas, foreign keys, triggers, RLS e ACL;
+- segunda execução idempotente;
+- zero inserção artificial de `0019/0020` no histórico local;
 - ausência de DDL sobre funções e triggers protegidos, comprovada por OID.
 
 Estados:
@@ -85,23 +93,42 @@ Regras permanentes:
 - não reaplicar `0019/0020` manualmente;
 - não inserir versões artificialmente no registro local;
 - não alterar objetos ou grants fora de migration revisada;
-- interromper a operação diante de divergência de histórico ou paridade.
+- interromper diante de divergência de histórico ou paridade.
 
-## Segurança de dependências
+## Segurança de dependências e imagens
 
-A PR #122 corrigiu o advisory alto `GHSA-c96f-x56v-gq3h` na cadeia:
+### Dependência transitiva
+
+A PR #122 corrigiu `GHSA-c96f-x56v-gq3h` na cadeia:
 
 `@lead-finder/api` → `fastify 5.10.0` → `find-my-way 9.6.0`.
 
 Correção:
 
 - `find-my-way 9.6.0 → 9.7.0`;
-- alteração final somente em `package-lock.json`;
-- atualização lockfile-only;
+- alteração lockfile-only;
 - sem `npm audit fix --force`;
-- audit final com zero vulnerabilidades reportadas.
+- audit final verde nos perfis `oracle-vps` e `supabase-render`.
 
-Estado: `DEPENDENCY_AUDIT_CLEAN`.
+### Dependências de desenvolvimento no runtime
+
+A inspeção do Render registrou warning de `glob@10.5.0 deprecated`. A análise da baseline confirmou que `glob`, `tsx` e `typescript` eram dependências de desenvolvimento, mas o `node_modules` completo do estágio de build era copiado para as imagens finais.
+
+A PR #124 implementou:
+
+- target `tools` na imagem da API para migration e restore;
+- estágio `production-deps` com `npm prune --omit=dev`;
+- API e worker copiando somente dependências de produção;
+- build final falhando caso `glob`, `tsx` ou `typescript` estejam no runtime;
+- imports e artefatos de produção validados durante o build;
+- `migrate` e `restore-suppression` usando explicitamente o target `tools`;
+- nenhuma alteração em `render.yaml`, flags, secrets ou banco.
+
+Estados:
+
+- `DEPENDENCY_AUDIT_CLEAN`;
+- `RUNTIME_DEV_DEPENDENCIES_EXCLUDED`;
+- `OPERATIONAL_TOOLS_TARGET_PRESERVED`.
 
 ## Supabase de homologação
 
@@ -113,8 +140,7 @@ Estado: `ACTIVE_HEALTHY`
 Comprovado por inspeção autenticada e somente leitura:
 
 - PostgreSQL ativo;
-- `0001–0018` no registro local;
-- `0019/0020` no registro Supabase;
+- registros `0001–0018` e `0019/0020` presentes nos mecanismos correspondentes;
 - objetos, constraints, funções, triggers, RLS e ACL esperados presentes;
 - RLS habilitada sem policies permissivas;
 - zero acesso efetivo para `PUBLIC`, `anon` e `authenticated` nas tabelas manuais;
@@ -123,37 +149,32 @@ Comprovado por inspeção autenticada e somente leitura:
 - nenhuma Edge Function ativa para envio;
 - zero registros observados nas tabelas operacionais consultadas.
 
-Tabelas verificadas sem atividade operacional:
-
-- `campaign_opt_outs`;
-- `contact_channel_authorizations`;
-- `contact_email_business_evidence`;
-- `pilot_manual_contacts`;
-- `pilot_manual_message_preparations`;
-- `pilot_manual_message_events`.
-
 A ausência de registros não substitui a consulta específica de supressões após vincular os IDs privados dos leads.
 
 ## Render de homologação
 
-Inspeção autenticada e somente leitura:
+Última inspeção autenticada e somente leitura:
 
 - workspace: `Bruno's workspace`;
+- workspace ID: `tea-d72o44oule4c73cut1l0`;
 - serviço: `lead-finder-api-hml`;
 - service ID: `srv-d9fbpp6rnols73bko9f0`;
 - região: Virginia;
-- status: `live`, não suspenso;
-- branch: `hml/render-supabase-plan-b`;
+- status: live e não suspenso;
+- branch efetiva: `hml/render-supabase-plan-b`;
 - auto-deploy: desligado;
 - health check: `/health/ready`;
-- deploy live: `dep-d9fouq3bc2fs73bl3r40`;
-- SHA implantado: `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`;
-- logs consultados: zero erros e dois warnings de dependência obsoleta;
+- SHA live: `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`;
+- SHA HML confirmado antes do hardening: `8d1e4f17f8829ca0b581511d61ef47a0a8ddbd67`;
+- zero logs recentes de nível `error` na consulta;
+- warning de `glob@10.5.0 deprecated` observado no deploy antigo;
 - nenhuma ação de deploy, restart, rollback ou alteração de variável executada.
 
-O SHA live é anterior à baseline atual da `main`. Portanto, o ambiente efetivo não comprova a versão atual.
+Veredito da inspeção:
 
-O Render MCP não disponibilizou leitura das variáveis de ambiente. Permanecem não comprovados:
+`RENDER_HML_SYNC_CONFIRMED_LIVE_OUTDATED`.
+
+O Render MCP não disponibilizou leitura das variáveis. Permanecem não comprovados:
 
 - correspondência do `DATABASE_URL` com o Supabase inspecionado;
 - `DEPLOYMENT_PROFILE=supabase-render`;
@@ -165,54 +186,27 @@ O Render MCP não disponibilizou leitura das variáveis de ambiente. Permanecem 
 - `COLLECTION_EGRESS_ENABLED=false`;
 - estado efetivo do kill switch.
 
-Configuração declarada em `render.yaml` é fail-closed, mas não substitui a comprovação do ambiente efetivo.
+Configuração declarada no repositório não substitui a comprovação do ambiente efetivo.
 
-Estado:
+Estados:
 
 - `RENDER_READ_ONLY_INSPECTION_COMPLETE`;
-- `RENDER_DEPLOYMENT_OUTDATED`;
+- `RENDER_HML_SYNC_CONFIRMED_LIVE_OUTDATED`;
 - `RENDER_EFFECTIVE_FLAGS_NOT_VERIFIED`;
 - `RENDER_DATABASE_URL_NOT_VERIFIED`;
 - `POST_DEPLOY_GATE_BLOCKED`.
-
-## Evidência pública reproduzível
-
-### GitHub Pages
-
-Comprovado:
-
-- home HTTP 200;
-- `/privacidade/` HTTP 200;
-- demonstração HTTP 200;
-- aviso de privacidade servido;
-- canonical e navegação interna válidos;
-- indexação habilitada;
-- nenhum formulário próprio;
-- nenhum Google Analytics, Tag Manager, Meta Pixel, Hotjar ou Clarity;
-- nenhum dado ou mensagem enviado pelo probe.
-
-### API Render
-
-Comprovado por probe público somente leitura:
-
-- `/health/live`: HTTP 200, `status=ok`;
-- `/health/ready`: HTTP 200, `status=ready`;
-- `/internal/operational-snapshot` sem token: HTTP 401;
-- nenhuma rota de escrita chamada;
-- nenhum provider, webhook ou envio acionado.
 
 ## Mensageria manual assistida
 
 Implementado:
 
-- contratos discriminados por canal;
 - WhatsApp somente com opt-in explícito;
 - e-mail somente com evidência `BUSINESS` e decisão humana `APPROVED`;
 - templates versionados;
 - principal autenticado e permissões por ação;
 - idempotência vinculada ao principal;
 - replay fail-closed;
-- snapshots minimizados sem telefone, e-mail ou mensagem integral;
+- snapshots sem telefone, e-mail ou mensagem integral;
 - estados `PREPARED`, `OPENED`, `CONTACT_CONFIRMED` e `RESPONSE_RECORDED`;
 - transições protegidas no serviço e PostgreSQL;
 - concorrência serializada por lead e preparação;
@@ -232,7 +226,7 @@ Prioridade absoluta:
 6. elegibilidade do contato;
 7. autorização do canal.
 
-Uma autorização posterior não reativa automaticamente um bloqueio. Reativação exige fluxo separado, explícito, auditado e permissionado, fora do piloto atual.
+Autorização posterior não reativa automaticamente um bloqueio. Reativação exige fluxo separado, explícito, auditado e permissionado, fora do piloto atual.
 
 ## Primeiro lote manual
 
@@ -242,67 +236,39 @@ Escopo:
 - manutenção e serviços técnicos;
 - Campinas/SP e proximidades;
 - contato individual e manual;
-- revisão humana por lead;
 - WhatsApp somente com opt-in explícito;
 - lead frio somente por e-mail empresarial pertinente e aprovado;
 - primeiro contato sem link, imagem, PDF, proposta ou preço;
 - opt-out imediato;
 - nenhum follow-up automático.
 
-### Shortlist privada
-
-Dez códigos sanitizados foram reduzidos para quatro prioridades:
+Prioridades privadas:
 
 - `LF-TM-01` — `WEAK_CONVERSION` + `BUSINESS_CANDIDATE`;
 - `LF-TM-04` — `WEAK_SITE` + `BUSINESS_CANDIDATE`;
 - `LF-TM-05` — `WEAK_CONVERSION` + `BUSINESS_CANDIDATE`;
 - `LF-TM-09` — `WEAK_SITE` + `BUSINESS_CANDIDATE`.
 
-Pendentes por canal `UNKNOWN`:
-
-- `LF-TM-02`;
-- `LF-TM-06`;
-- `LF-TM-08`.
-
-Inelegíveis com a evidência atual:
-
-- `LF-TM-03`;
-- `LF-TM-07`;
-- `LF-TM-10`.
-
 `BUSINESS_CANDIDATE` não equivale a `BUSINESS / APPROVED`. Todos permanecem `NOT_SENT`.
 
-Um tracker sem PII foi armazenado em área privada para registrar:
-
-- identidade e atividade;
-- região;
-- fontes mínimas;
-- diagnóstico digital;
-- classificação e decisão humana do canal;
-- opt-out por canal e global;
-- `DO_NOT_CONTACT`;
-- `NAO_CONTATAR`;
-- bloqueio administrativo;
-- versão e rubrica da mensagem;
-- aprovação individual.
+O tracker privado registra identidade, fontes, diagnóstico, canal, supressões, rubrica e aprovação individual sem publicar PII.
 
 ## Gates concluídos
 
-- fundação de mensageria manual integrada;
-- governança do primeiro contato integrada;
-- Data API deny-all comprovada;
-- migrations `0019/0020` localizadas e validadas;
-- runner compatível com os dois registros;
-- replay guard comprovado;
-- audit de dependências limpo;
-- testes de integração e restart lógico aprovados;
-- restore-compose aprovado;
-- multiarch aprovado;
-- aviso público de privacidade servido;
+- fundação de mensageria manual;
+- governança do primeiro contato;
+- Data API deny-all;
+- compatibilidade e replay guard de migrations;
+- audit de dependências;
+- exclusão de dependências dev das imagens finais;
+- target operacional de migration/restore preservado;
+- integração e restart lógico;
+- restore-compose;
+- imagens AMD64/ARM64 e manifests;
+- aviso público de privacidade;
 - API pública live e ready;
 - endpoint interno protegido;
-- pivot de barbearias concluído;
-- manutenção e serviços técnicos selecionados;
+- categoria e região do primeiro lote;
 - shortlist reduzida a quatro prioridades;
 - tracker privado preparado.
 
@@ -310,9 +276,10 @@ Um tracker sem PII foi armazenado em área privada para registrar:
 
 ### Ambiente efetivo
 
+- sincronizar a branch HML com a baseline `218eae29bbeef28994d7d3857b9dc2805dc5f32c`;
 - confirmar `DATABASE_URL` sem revelar a connection string;
-- confirmar as flags efetivas;
-- escolher SHA aprovado e com CI verde;
+- confirmar flags efetivas;
+- selecionar SHA aprovado;
 - realizar deploy controlado;
 - revisar logs e health checks pós-deploy;
 - comprovar restart;
@@ -322,34 +289,23 @@ Um tracker sem PII foi armazenado em área privada para registrar:
 
 ### Leads e canais
 
+- recuperar ou reconstruir de forma verificável o mapeamento privado LF-TM;
 - concluir até cinco fichas privadas;
-- eliminar duplicidades e homônimos;
-- confirmar identidade, atividade, cidade e diagnóstico;
-- registrar fontes mínimas;
-- classificar e-mail como `BUSINESS / APPROVED` ou rejeitar;
-- obter opt-in válido para qualquer uso de WhatsApp;
-- consultar todas as supressões por lead vinculado;
-- aplicar a decisão mais restritiva;
-- obter aprovação individual de Bruno F. Salustiano.
-
-### Mensagens
-
-- personalizar sem alegações enganosas;
+- confirmar identidade, atividade, região e diagnóstico;
+- classificar canal como `BUSINESS / APPROVED` ou rejeitar;
+- obter opt-in válido para WhatsApp;
+- consultar opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueios por lead;
 - aplicar rubrica mínima `8/10`, sem dimensão em zero;
-- manter `NOT_SENT` até o veredito final;
-- registrar envio apenas após confirmação humana;
-- registrar resposta e opt-out sem copiar conteúdo sensível.
+- obter aprovação individual de Bruno F. Salustiano.
 
 ## Próxima sequência operacional
 
-1. concluir e integrar a documentação da PR #119;
-2. confirmar banco e flags efetivas do Render sem expor secrets;
-3. executar deploy controlado e gates pós-deploy;
-4. concluir as fichas privadas dos quatro códigos prioritários;
-5. qualificar canais e consultar supressões;
-6. montar até cinco pacotes para aprovação individual;
-7. revisar o checklist final da issue #117;
-8. emitir `REAL_MANUAL_PILOT_READY` ou manter `REAL_MANUAL_PILOT_BLOCKED`.
+1. integrar esta atualização documental;
+2. sincronizar `main` com a branch HML sem deploy;
+3. manter o ambiente Render bloqueado até acesso verificável às flags e ao banco;
+4. concluir fichas privadas e supressões dos leads;
+5. revisar o checklist final da issue #117;
+6. emitir `REAL_MANUAL_PILOT_READY` ou manter `REAL_MANUAL_PILOT_BLOCKED`.
 
 ## Integrações fora do piloto
 
@@ -366,7 +322,7 @@ WhatsApp Web, Baileys, Evolution API e sessões não oficiais permanecem proibid
 
 ## Regras de documentação
 
-Não registrar em documentação pública:
+Não registrar publicamente:
 
 - tokens ou senhas;
 - connection strings;

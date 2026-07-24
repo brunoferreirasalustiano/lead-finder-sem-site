@@ -62,6 +62,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 ## Estratégia de produto
 
+- [Escopo futuro do produto](FUTURE_PRODUCT_SCOPE.md) — visão de prospecção ativa, qualificação por IA, handoff humano, pesquisa territorial ampliada e meta de 60 empresas analisadas por dia.
 - [Roadmap estratégico](PRODUCT_ROADMAP.md) — evolução desde o piloto manual até uma plataforma multicanal.
 - [Issue #98 — gate de viabilidade do segmento](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/98) — amostra de 30 barbearias concluída com decisão `PIVOT_RECOMMENDED`.
 

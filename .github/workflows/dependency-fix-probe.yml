@@ -1,0 +1,36 @@
+name: Dependency fix probe
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Apply non-major lockfile-only audit fix
+        shell: bash
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts || true
+          npm audit --json > npm-audit-after.json || true
+          node -e "const r=require('./npm-audit-after.json'); console.log(JSON.stringify(r.metadata?.vulnerabilities ?? {},null,2));"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-fix-probe-pr-132
+          path: |
+            package.json
+            package-lock.json
+            npm-audit-after.json
+          if-no-files-found: error
+          retention-days: 7

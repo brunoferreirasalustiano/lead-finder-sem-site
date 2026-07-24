@@ -1,13 +1,18 @@
 # Estado operacional consolidado
 
 **Última revisão:** 24 de julho de 2026  
-**Baseline integrada da `main`:** `218eae29bbeef28994d7d3857b9dc2805dc5f32c`  
+**Baseline funcional aprovada da `main`:** `181d914da253b106ae99d95c5c7792ef87128296`  
+**HEAD administrativa atual da `main`:** `c43372fc7fd07a3a2ed1f01ac41f8724614eadd9`  
+**Branch HML sincronizada:** `17f12a012dc0e14fa6ce42923ec1d6beb909550f`  
+**Render live observado:** `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`  
 **Gate central:** issue #117  
 **Estado:** `REAL_MANUAL_PILOT_BLOCKED`  
 **Mensagens:** `NOT_SENT`  
 **Contatos enviados:** `0`
 
 Este documento resume o estado verificável do Lead Finder Brasil. O código, as migrations, as evidências de CI e as inspeções autenticadas são a autoridade técnica. Issues e pull requests preservam o histórico detalhado.
+
+A HEAD administrativa atual contém uma criação e remoção imediata de arquivo temporário usado durante a reconciliação documental. A árvore final permaneceu equivalente à baseline funcional aprovada; nenhum código, configuração, banco, secret ou ambiente foi alterado por esses commits administrativos.
 
 ## Veredito executivo
 
@@ -25,7 +30,8 @@ Comprovado:
 - audit de dependências sem vulnerabilidade alta reportada;
 - imagens finais de API e worker sem dependências de desenvolvimento;
 - migrations e restore preservados em target operacional separado;
-- branch de homologação sincronizada com a `main` anterior ao hardening;
+- branch de homologação sincronizada com o hardening atual da `main`;
+- paridade de conteúdo entre `main` e HML comprovada após a PR #126;
 - API pública live e ready;
 - shortlist sanitizada e tracker privado sem PII;
 - zero canais `BUSINESS / APPROVED`;
@@ -35,7 +41,6 @@ Ainda bloqueia o piloto:
 
 - `DATABASE_URL` e flags efetivas do Render não comprovados;
 - serviço Render executando SHA antigo;
-- branch HML ainda precisa incorporar a baseline deste documento;
 - deploy controlado e gates pós-deploy não executados;
 - fichas privadas dos leads prioritários incompletas;
 - supressões específicas não consultadas por lead vinculado;
@@ -49,19 +54,25 @@ PRs integradas mais relevantes:
 - PR #121 — compatibilidade dos registros de migrations;
 - PR #122 — correção transitiva de `find-my-way`;
 - PR #119 — documentação consolidada do gate #117;
-- PR #123 — sincronização da branch HML;
-- PR #124 — exclusão de dependências dev das imagens de runtime.
+- PR #123 — sincronização inicial da branch HML;
+- PR #124 — exclusão de dependências dev das imagens de runtime;
+- PR #125 — registro documental do hardening de runtime;
+- PR #126 — sincronização do hardening atual na branch HML.
 
 Evidências recentes:
 
 - CI #429 verde para a PR #121;
 - CI #438 verde para a PR #122;
 - CI #449 verde para a PR #119;
-- CI #452 e Deployment smoke #209 verdes para a sincronização HML;
+- CI #452 e Deployment smoke #209 verdes para a sincronização HML inicial;
 - CI #454 e Deployment smoke #210 verdes para a PR #124;
-- primeiro multiarch da PR #124 falhou de forma isolada;
+- CI #457 verde para a atualização documental da PR #125;
+- CI #460 e Deployment smoke #212 verdes para a sincronização HML da PR #126;
+- CI #461 verde após a integração;
 - repetição do multiarch aprovou API, worker e manifests em AMD64/ARM64;
-- integração PostgreSQL, restart lógico, persistência e restore-compose aprovados.
+- integração PostgreSQL, restart lógico, persistência e restore-compose aprovados;
+- teste de mensageria manual assistida aprovado sem envio externo;
+- gate sintético de lote aprovado sem provider, webhook ou egress.
 
 ## Registros de migrations
 
@@ -112,7 +123,7 @@ Correção:
 
 ### Dependências de desenvolvimento no runtime
 
-A inspeção do Render registrou warning de `glob@10.5.0 deprecated`. A análise da baseline confirmou que `glob`, `tsx` e `typescript` eram dependências de desenvolvimento, mas o `node_modules` completo do estágio de build era copiado para as imagens finais.
+A inspeção do Render registrou warning de `glob@10.5.0 deprecated` no deploy antigo. A análise da baseline confirmou que `glob`, `tsx` e `typescript` eram dependências de desenvolvimento, mas o `node_modules` completo do estágio de build era copiado para as imagens finais.
 
 A PR #124 implementou:
 
@@ -124,11 +135,14 @@ A PR #124 implementou:
 - `migrate` e `restore-suppression` usando explicitamente o target `tools`;
 - nenhuma alteração em `render.yaml`, flags, secrets ou banco.
 
+A PR #126 sincronizou esse hardening na branch HML. O warning pode continuar visível no Render enquanto o serviço permanecer no SHA antigo; isso não comprova regressão na imagem nova.
+
 Estados:
 
 - `DEPENDENCY_AUDIT_CLEAN`;
 - `RUNTIME_DEV_DEPENDENCIES_EXCLUDED`;
-- `OPERATIONAL_TOOLS_TARGET_PRESERVED`.
+- `OPERATIONAL_TOOLS_TARGET_PRESERVED`;
+- `RENDER_HML_RUNTIME_HARDENING_SYNCED`.
 
 ## Supabase de homologação
 
@@ -162,19 +176,19 @@ A ausência de registros não substitui a consulta específica de supressões ap
 - região: Virginia;
 - status: live e não suspenso;
 - branch efetiva: `hml/render-supabase-plan-b`;
+- branch HML atual: `17f12a012dc0e14fa6ce42923ec1d6beb909550f`;
 - auto-deploy: desligado;
 - health check: `/health/ready`;
 - SHA live: `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`;
-- SHA HML confirmado antes do hardening: `8d1e4f17f8829ca0b581511d61ef47a0a8ddbd67`;
 - zero logs recentes de nível `error` na consulta;
 - warning de `glob@10.5.0 deprecated` observado no deploy antigo;
 - nenhuma ação de deploy, restart, rollback ou alteração de variável executada.
 
 Veredito da inspeção:
 
-`RENDER_HML_SYNC_CONFIRMED_LIVE_OUTDATED`.
+`RENDER_HML_RUNTIME_HARDENING_SYNCED_LIVE_OUTDATED`.
 
-O Render MCP não disponibilizou leitura das variáveis. Permanecem não comprovados:
+O conector disponível não comprovou as variáveis efetivas. Permanecem não verificados:
 
 - correspondência do `DATABASE_URL` com o Supabase inspecionado;
 - `DEPLOYMENT_PROFILE=supabase-render`;
@@ -191,14 +205,15 @@ Configuração declarada no repositório não substitui a comprovação do ambie
 Estados:
 
 - `RENDER_READ_ONLY_INSPECTION_COMPLETE`;
-- `RENDER_HML_SYNC_CONFIRMED_LIVE_OUTDATED`;
+- `RENDER_HML_RUNTIME_HARDENING_SYNCED`;
+- `RENDER_LIVE_DEPLOYMENT_OUTDATED`;
 - `RENDER_EFFECTIVE_FLAGS_NOT_VERIFIED`;
 - `RENDER_DATABASE_URL_NOT_VERIFIED`;
 - `POST_DEPLOY_GATE_BLOCKED`.
 
 ## Mensageria manual assistida
 
-Implementado:
+Implementado e aprovado em teste isolado:
 
 - WhatsApp somente com opt-in explícito;
 - e-mail somente com evidência `BUSINESS` e decisão humana `APPROVED`;
@@ -211,6 +226,8 @@ Implementado:
 - transições protegidas no serviço e PostgreSQL;
 - concorrência serializada por lead e preparação;
 - zero outbox, attempt e provider event no fluxo manual.
+
+Os testes de mensageria são sintéticos ou de integração local. Não houve envio para WhatsApp, SMTP, OpenAI, webhook ou qualquer lead real.
 
 Abrir um link não confirma envio. `CONTACT_CONFIRMED` depende de confirmação humana explícita.
 
@@ -270,17 +287,18 @@ O tracker privado registra identidade, fontes, diagnóstico, canal, supressões,
 - endpoint interno protegido;
 - categoria e região do primeiro lote;
 - shortlist reduzida a quatro prioridades;
-- tracker privado preparado.
+- tracker privado preparado;
+- branch HML sincronizada com o hardening atual da `main`;
+- testes sintéticos e de integração de mensageria aprovados sem envio real.
 
 ## Bloqueios restantes
 
 ### Ambiente efetivo
 
-- sincronizar a branch HML com a baseline `218eae29bbeef28994d7d3857b9dc2805dc5f32c`;
 - confirmar `DATABASE_URL` sem revelar a connection string;
 - confirmar flags efetivas;
 - selecionar SHA aprovado;
-- realizar deploy controlado;
+- realizar deploy controlado somente após autorização específica;
 - revisar logs e health checks pós-deploy;
 - comprovar restart;
 - testar kill switch;
@@ -300,12 +318,14 @@ O tracker privado registra identidade, fontes, diagnóstico, canal, supressões,
 
 ## Próxima sequência operacional
 
-1. integrar esta atualização documental;
-2. sincronizar `main` com a branch HML sem deploy;
-3. manter o ambiente Render bloqueado até acesso verificável às flags e ao banco;
-4. concluir fichas privadas e supressões dos leads;
+1. integrar esta reconciliação documental após CI verde;
+2. manter o Render bloqueado até comprovação das variáveis e do banco efetivos;
+3. concluir fichas privadas e supressões dos leads prioritários;
+4. preparar checklist de deploy controlado, sem executá-lo;
 5. revisar o checklist final da issue #117;
 6. emitir `REAL_MANUAL_PILOT_READY` ou manter `REAL_MANUAL_PILOT_BLOCKED`.
+
+Até 28 de julho de 2026 às 14:00, nenhuma tarefa deve depender do Codex. A retomada futura deve apenas selecionar a tarefa técnica de maior valor, com modelo Sol, Terra ou Luna indicado conforme risco e complexidade.
 
 ## Integrações fora do piloto
 

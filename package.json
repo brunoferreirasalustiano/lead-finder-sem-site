@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "audit:ci": "node scripts/npm-audit-summary.mjs",
     "test:integration": "tsx scripts/migration-0010-upgrade-test.ts && tsx scripts/migration-0012-pilot-integrity-test.ts && tsx scripts/integration-test.ts",
     "test:batch-gate": "tsx scripts/batch-synthetic-gate.integration.ts",
     "mock:overpass": "tsx scripts/mock-overpass.ts",

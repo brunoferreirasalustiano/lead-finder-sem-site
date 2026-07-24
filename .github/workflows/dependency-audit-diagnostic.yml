@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
@@ -23,6 +23,8 @@ jobs:
       SHADOW_MODE_ENABLED: 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -61,6 +63,19 @@ jobs:
             console.log(JSON.stringify({ profile, phase, metadata, findings }, null, 2));
           }
           NODE
+      - name: Commit generated lockfile update
+        if: matrix.deployment-profile == 'oracle-vps'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "No lockfile change to commit"
+            exit 0
+          fi
+          git commit -m "fix: update vulnerable postcss lockfile"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
       - name: Upload diagnostic evidence
         uses: actions/upload-artifact@v4
         with:

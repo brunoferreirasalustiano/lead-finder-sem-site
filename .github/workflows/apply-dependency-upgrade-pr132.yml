@@ -1,0 +1,58 @@
+name: Apply validated dependency upgrade PR 132
+
+on:
+  push:
+    branches:
+      - agent/manual-whatsapp-operator-console
+    paths:
+      - .github/workflows/apply-dependency-upgrade-pr132.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/manual-whatsapp-operator-console
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Generate validated dependency upgrade
+        shell: bash
+        run: |
+          npm install --save-dev --ignore-scripts \
+            eslint@10.8.0 \
+            @eslint/js@10.0.1 \
+            vitest@4.1.10 \
+            @vitest/coverage-v8@4.1.10
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:coverage
+      - run: npm run build
+      - run: npm audit --audit-level=high
+      - name: Remove temporary diagnostic workflows
+        shell: bash
+        run: |
+          rm -f \
+            .github/workflows/dependency-audit-diagnostic.yml \
+            .github/workflows/dependency-audit-pr.yml \
+            .github/workflows/dependency-fix-probe.yml \
+            .github/workflows/dependency-major-upgrade-probe.yml \
+            .github/workflows/dependency-major-upgrade-probe-v2.yml
+      - name: Commit validated files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json .github/workflows
+          git diff --cached --check
+          git commit -m "fix: upgrade development tooling dependencies"
+          git push origin HEAD:agent/manual-whatsapp-operator-console

@@ -18,23 +18,42 @@ jobs:
         with:
           ref: agent/operator-test-core-clean
       - name: Reuse reviewed hardening transform
+        id: transform
+        continue-on-error: true
         run: |
           python3 - <<'PYRUN'
           from pathlib import Path
           import textwrap
+          import traceback
 
-          workflow = Path('.github/workflows/harden-operator-core.yml').read_text()
-          prefix = "python3 - <<'PY'\n"
-          suffix = "\n          PY\n"
-          if workflow.count(prefix) != 1 or workflow.count(suffix) != 1:
-            raise SystemExit('unable to locate reviewed hardening transform')
-          script = workflow.split(prefix, 1)[1].split(suffix, 1)[0]
-          exec(compile(textwrap.dedent(script), 'operator-hardening-transform', 'exec'))
+          try:
+            workflow = Path('.github/workflows/harden-operator-core.yml').read_text()
+            prefix = "python3 - <<'PY'\n"
+            suffix = "\n          PY\n"
+            if workflow.count(prefix) != 1 or workflow.count(suffix) != 1:
+              raise RuntimeError('unable to locate reviewed hardening transform')
+            script = workflow.split(prefix, 1)[1].split(suffix, 1)[0]
+            exec(compile(textwrap.dedent(script), 'operator-hardening-transform', 'exec'))
+          except BaseException:
+            Path('hardening-error.txt').write_text(traceback.format_exc())
+            raise
           PYRUN
+      - name: Upload hardening diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-hardening-diagnostic-${{ github.sha }}
+          path: hardening-error.txt
+          if-no-files-found: ignore
+          retention-days: 3
       - name: Commit patch before full CI validation
+        if: steps.transform.outcome == 'success'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add database/migrations/0021_operator_channel_test.sql packages/database/src/operator-channel-test.ts scripts/operator-channel-test.integration.ts
           git commit -m 'security: enforce operator permissions and structured events'
           git push origin HEAD:agent/operator-test-core-clean
+      - name: Fail after diagnostic upload
+        if: steps.transform.outcome != 'success'
+        run: exit 1

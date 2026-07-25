@@ -16,7 +16,6 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "audit:ci": "node scripts/npm-audit-summary.mjs",
     "test:integration": "tsx scripts/migration-0010-upgrade-test.ts && tsx scripts/migration-0012-pilot-integrity-test.ts && tsx scripts/integration-test.ts",
     "test:batch-gate": "tsx scripts/batch-synthetic-gate.integration.ts",
     "mock:overpass": "tsx scripts/mock-overpass.ts",
@@ -39,16 +38,16 @@
     "test:migration-registry": "tsx scripts/migration-registry-compatibility.integration.ts"
   },
   "devDependencies": {
-    "@eslint/js": "^9.30.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "eslint": "^9.30.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.5",
     "prettier": "^3.5.3",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.35.0",
-    "vitest": "^3.2.4",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10",
     "zod": "^3.25.67"
   }
 }

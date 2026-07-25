@@ -3,20 +3,20 @@ CREATE TABLE IF NOT EXISTS operator_channel_test_preparations (
   channel text NOT NULL CHECK (channel = 'WHATSAPP'),
   purpose text NOT NULL DEFAULT 'OPERATOR_TEST' CHECK (purpose = 'OPERATOR_TEST'),
   recipient_fingerprint char(64) NOT NULL CHECK (recipient_fingerprint ~ '^[0-9a-f]{64}$'),
-  template_id text NOT NULL CHECK (char_length(btrim(template_id)) BETWEEN 1 AND 100),
-  template_version text NOT NULL CHECK (template_version ~ '^v[1-9][0-9]*$'),
-  operator_principal_id text NOT NULL CHECK (char_length(btrim(operator_principal_id)) BETWEEN 1 AND 100),
+  template_id text NOT NULL CHECK (template_id = 'operator-whatsapp-channel-test'),
+  template_version text NOT NULL CHECK (template_version = 'v1'),
+  operator_principal_fingerprint char(64) NOT NULL CHECK (operator_principal_fingerprint ~ '^[0-9a-f]{64}$'),
   payload_fingerprint char(64) NOT NULL CHECK (payload_fingerprint ~ '^[0-9a-f]{64}$'),
-  idempotency_key text NOT NULL CHECK (char_length(btrim(idempotency_key)) BETWEEN 1 AND 200),
+  idempotency_fingerprint char(64) NOT NULL CHECK (idempotency_fingerprint ~ '^[0-9a-f]{64}$'),
   message_fingerprint char(64) NOT NULL CHECK (message_fingerprint ~ '^[0-9a-f]{64}$'),
   result_fingerprint char(64) NOT NULL CHECK (result_fingerprint ~ '^[0-9a-f]{64}$'),
   prepared_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (operator_principal_id, idempotency_key),
-  UNIQUE (id, operator_principal_id)
+  UNIQUE (operator_principal_fingerprint, idempotency_fingerprint),
+  UNIQUE (id, operator_principal_fingerprint)
 );
 
 CREATE INDEX IF NOT EXISTS operator_channel_test_preparations_principal_idx
-  ON operator_channel_test_preparations(operator_principal_id, prepared_at DESC);
+  ON operator_channel_test_preparations(operator_principal_fingerprint, prepared_at DESC);
 CREATE INDEX IF NOT EXISTS operator_channel_test_preparations_recipient_idx
   ON operator_channel_test_preparations(recipient_fingerprint, prepared_at DESC);
 
@@ -29,13 +29,13 @@ CREATE TABLE IF NOT EXISTS operator_channel_test_events (
     (event_type = 'CONTACT_CONFIRMED' AND result IN ('SENT_CONFIRMED','NOT_SENT','OPERATIONAL_ERROR')) OR
     (event_type = 'RESPONSE_RECORDED' AND result IN ('RECEIVED_CONFIRMED','NOT_RECEIVED','READ_CONFIRMED'))
   ),
-  operator_principal_id text NOT NULL CHECK (char_length(btrim(operator_principal_id)) BETWEEN 1 AND 100),
+  operator_principal_fingerprint char(64) NOT NULL CHECK (operator_principal_fingerprint ~ '^[0-9a-f]{64}$'),
   payload_fingerprint char(64) NOT NULL CHECK (payload_fingerprint ~ '^[0-9a-f]{64}$'),
-  idempotency_key text NOT NULL CHECK (char_length(btrim(idempotency_key)) BETWEEN 1 AND 200),
+  idempotency_fingerprint char(64) NOT NULL CHECK (idempotency_fingerprint ~ '^[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (preparation_id, event_type, idempotency_key),
-  FOREIGN KEY (preparation_id, operator_principal_id)
-    REFERENCES operator_channel_test_preparations(id, operator_principal_id) ON DELETE RESTRICT
+  UNIQUE (preparation_id, event_type, idempotency_fingerprint),
+  FOREIGN KEY (preparation_id, operator_principal_fingerprint)
+    REFERENCES operator_channel_test_preparations(id, operator_principal_fingerprint) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS operator_channel_test_events_preparation_idx
@@ -123,11 +123,9 @@ CREATE TRIGGER operator_channel_test_events_append_only
 
 CREATE OR REPLACE FUNCTION create_operator_channel_test_preparation(
   p_recipient_fingerprint char(64),
-  p_template_id text,
-  p_template_version text,
-  p_operator_principal_id text,
+  p_operator_principal_fingerprint char(64),
   p_payload_fingerprint char(64),
-  p_idempotency_key text,
+  p_idempotency_fingerprint char(64),
   p_message_fingerprint char(64),
   p_result_fingerprint char(64)
 )
@@ -138,11 +136,11 @@ SET search_path = pg_catalog, public
 AS $$
   INSERT INTO public.operator_channel_test_preparations(
     channel, purpose, recipient_fingerprint, template_id, template_version,
-    operator_principal_id, payload_fingerprint, idempotency_key,
+    operator_principal_fingerprint, payload_fingerprint, idempotency_fingerprint,
     message_fingerprint, result_fingerprint
   ) VALUES (
-    'WHATSAPP', 'OPERATOR_TEST', p_recipient_fingerprint, p_template_id, p_template_version,
-    p_operator_principal_id, p_payload_fingerprint, p_idempotency_key,
+    'WHATSAPP', 'OPERATOR_TEST', p_recipient_fingerprint, 'operator-whatsapp-channel-test', 'v1',
+    p_operator_principal_fingerprint, p_payload_fingerprint, p_idempotency_fingerprint,
     p_message_fingerprint, p_result_fingerprint
   )
   RETURNING operator_channel_test_preparations.id, operator_channel_test_preparations.prepared_at;
@@ -152,9 +150,9 @@ CREATE OR REPLACE FUNCTION append_operator_channel_test_event(
   p_preparation_id uuid,
   p_event_type text,
   p_result text,
-  p_operator_principal_id text,
+  p_operator_principal_fingerprint char(64),
   p_payload_fingerprint char(64),
-  p_idempotency_key text
+  p_idempotency_fingerprint char(64)
 )
 RETURNS TABLE(id uuid, created_at timestamptz)
 LANGUAGE sql
@@ -162,9 +160,9 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
   INSERT INTO public.operator_channel_test_events(
-    preparation_id, event_type, result, operator_principal_id, payload_fingerprint, idempotency_key
+    preparation_id, event_type, result, operator_principal_fingerprint, payload_fingerprint, idempotency_fingerprint
   ) VALUES (
-    p_preparation_id, p_event_type, p_result, p_operator_principal_id, p_payload_fingerprint, p_idempotency_key
+    p_preparation_id, p_event_type, p_result, p_operator_principal_fingerprint, p_payload_fingerprint, p_idempotency_fingerprint
   )
   RETURNING operator_channel_test_events.id, operator_channel_test_events.created_at;
 $$;
@@ -174,23 +172,23 @@ ALTER TABLE operator_channel_test_events ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE operator_channel_test_preparations, operator_channel_test_events FROM PUBLIC;
 REVOKE ALL ON FUNCTION validate_operator_channel_test_transition(), reject_operator_channel_test_history_mutation() FROM PUBLIC;
-REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, text, text, text, char, text, char, char) FROM PUBLIC;
-REVOKE ALL ON FUNCTION append_operator_channel_test_event(uuid, text, text, text, char, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, char, char, char, char, char) FROM PUBLIC;
+REVOKE ALL ON FUNCTION append_operator_channel_test_event(uuid, text, text, char, char, char) FROM PUBLIC;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     EXECUTE 'REVOKE ALL ON TABLE operator_channel_test_preparations, operator_channel_test_events FROM anon';
-    EXECUTE 'REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, text, text, text, char, text, char, char), append_operator_channel_test_event(uuid, text, text, text, char, text) FROM anon';
+    EXECUTE 'REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, char, char, char, char, char), append_operator_channel_test_event(uuid, text, text, char, char, char) FROM anon';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     EXECUTE 'REVOKE ALL ON TABLE operator_channel_test_preparations, operator_channel_test_events FROM authenticated';
-    EXECUTE 'REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, text, text, text, char, text, char, char), append_operator_channel_test_event(uuid, text, text, text, char, text) FROM authenticated';
+    EXECUTE 'REVOKE ALL ON FUNCTION create_operator_channel_test_preparation(char, char, char, char, char, char), append_operator_channel_test_event(uuid, text, text, char, char, char) FROM authenticated';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     EXECUTE 'REVOKE ALL ON TABLE operator_channel_test_preparations, operator_channel_test_events FROM service_role';
     EXECUTE 'GRANT SELECT ON TABLE operator_channel_test_preparations, operator_channel_test_events TO service_role';
-    EXECUTE 'GRANT EXECUTE ON FUNCTION create_operator_channel_test_preparation(char, text, text, text, char, text, char, char), append_operator_channel_test_event(uuid, text, text, text, char, text) TO service_role';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION create_operator_channel_test_preparation(char, char, char, char, char, char), append_operator_channel_test_event(uuid, text, text, char, char, char) TO service_role';
   END IF;
 END
 $$;

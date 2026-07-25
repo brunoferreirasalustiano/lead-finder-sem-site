@@ -59,6 +59,20 @@ const canonical = (value: unknown): unknown => {
 const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
+const fingerprint = (key: string, domain: string, value: string) =>
+  createHmac('sha256', key).update(`${domain}\u0000${value}`).digest('hex');
+
+const fingerprintKeyFor = (runtime: OperatorTestRuntime) => {
+  const fingerprintKey = runtime.fingerprintKey?.trim();
+  if (!fingerprintKey || fingerprintKey.length < 32) {
+    throw new OperatorChannelTestError(
+      'Operator test fingerprint key is invalid',
+      'INVALID_FINGERPRINT_KEY',
+    );
+  }
+  return fingerprintKey;
+};
+
 const requirePermission = (auth: AuthorizationContext, permission: string) => {
   if (!isTrustedAuthorizationContext(auth) || !auth.permissions.has(permission)) {
     throw new OperatorChannelTestError('Operator test permission denied', 'FORBIDDEN');
@@ -70,13 +84,7 @@ export function resolveOperatorTestRecipient(runtime: OperatorTestRuntime) {
   if (runtime.killSwitchEnabled) {
     throw new OperatorChannelTestError('Operator test kill switch is engaged', 'KILL_SWITCH_ENGAGED');
   }
-  const fingerprintKey = runtime.fingerprintKey?.trim();
-  if (!fingerprintKey || fingerprintKey.length < 32) {
-    throw new OperatorChannelTestError(
-      'Operator test fingerprint key is invalid',
-      'INVALID_FINGERPRINT_KEY',
-    );
-  }
+  const fingerprintKey = fingerprintKeyFor(runtime);
   const normalized = normalizePhoneE164(runtime.authorizedPhoneE164);
   if (!normalized.ok) {
     throw new OperatorChannelTestError('Authorized operator recipient is invalid', 'INVALID_RECIPIENT');
@@ -84,13 +92,7 @@ export function resolveOperatorTestRecipient(runtime: OperatorTestRuntime) {
   return {
     e164: normalized.e164,
     digits: normalized.digits,
-    fingerprint: createHmac('sha256', fingerprintKey)
-      .update(JSON.stringify(canonical({
-        channel: 'WHATSAPP',
-        purpose: 'OPERATOR_TEST',
-        value: normalized.e164,
-      })))
-      .digest('hex'),
+    fingerprint: fingerprint(fingerprintKey, 'OPERATOR_TEST:RECIPIENT', normalized.e164),
   } as const;
 }
 
@@ -118,6 +120,9 @@ export async function prepareOperatorWhatsAppTest(
 ) {
   requirePermission(auth, 'operator-test:prepare');
   const built = buildOperatorTestPreparation(runtime);
+  const fingerprintKey = fingerprintKeyFor(runtime);
+  const principalFingerprint = fingerprint(fingerprintKey, 'OPERATOR_TEST:PRINCIPAL', auth.principalId);
+  const idempotencyFingerprint = fingerprint(fingerprintKey, 'OPERATOR_TEST:IDEMPOTENCY', input.idempotencyKey);
   if (
     input.templateId !== built.template.id
     || input.templateVersion !== built.template.version
@@ -131,12 +136,12 @@ export async function prepareOperatorWhatsAppTest(
     templateId: input.templateId,
     templateVersion: input.templateVersion,
     recipientFingerprint: built.recipient.fingerprint,
-    principalId: auth.principalId,
+    principalFingerprint,
   });
 
   return db.transaction(async (tx) => {
     await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`operator-channel-test:${auth.principalId}:${input.idempotencyKey}`},0))`,
+      sql`select pg_advisory_xact_lock(hashtextextended(${`operator-channel-test:${principalFingerprint}:${idempotencyFingerprint}`},0))`,
     );
 
     const prior = await tx.execute(
@@ -152,7 +157,8 @@ export async function prepareOperatorWhatsAppTest(
       }[]>`select id,recipient_fingerprint,payload_fingerprint,template_id,template_version,
           message_fingerprint,result_fingerprint,prepared_at
           from operator_channel_test_preparations
-          where operator_principal_id=${auth.principalId} and idempotency_key=${input.idempotencyKey}`,
+          where operator_principal_fingerprint=${principalFingerprint}::char(64)
+            and idempotency_fingerprint=${idempotencyFingerprint}::char(64)`,
     );
 
     if (prior[0] && prior[0].payload_fingerprint !== payloadFingerprint) {
@@ -208,8 +214,8 @@ export async function prepareOperatorWhatsAppTest(
       await tx.execute(
         sql<{ id: string; prepared_at: Date }[]>`select id,prepared_at
           from public.create_operator_channel_test_preparation(
-            ${built.recipient.fingerprint}::char(64),${built.template.id},${built.template.version},
-            ${auth.principalId},${payloadFingerprint}::char(64),${input.idempotencyKey},
+            ${built.recipient.fingerprint}::char(64),${principalFingerprint}::char(64),
+            ${payloadFingerprint}::char(64),${idempotencyFingerprint}::char(64),
             ${built.prepared.fingerprint}::char(64),${resultFingerprint}::char(64)
           )`,
       )
@@ -300,11 +306,14 @@ async function operatorTestEvent(
 ) {
   requirePermission(auth, requiredPermission);
   const recipient = resolveOperatorTestRecipient(runtime);
+  const fingerprintKey = fingerprintKeyFor(runtime);
+  const principalFingerprint = fingerprint(fingerprintKey, 'OPERATOR_TEST:PRINCIPAL', auth.principalId);
+  const idempotencyFingerprint = fingerprint(fingerprintKey, 'OPERATOR_TEST:IDEMPOTENCY', idempotencyKey);
   const payloadFingerprint = digest({
     preparationId,
     eventType,
     result,
-    principalId: auth.principalId,
+    principalFingerprint,
   });
 
   return db.transaction(async (tx) => {
@@ -317,18 +326,18 @@ async function operatorTestEvent(
         id: string;
         payload_fingerprint: string;
         created_at: Date;
-        operator_principal_id: string;
-      }[]>`select id,payload_fingerprint,created_at,operator_principal_id
+        operator_principal_fingerprint: string;
+      }[]>`select id,payload_fingerprint,created_at,operator_principal_fingerprint
           from operator_channel_test_events
           where preparation_id=${preparationId}::uuid
             and event_type=${eventType}
-            and idempotency_key=${idempotencyKey}`,
+            and idempotency_fingerprint=${idempotencyFingerprint}::char(64)`,
     );
 
     if (
       prior[0]
       && (
-        prior[0].operator_principal_id !== auth.principalId
+        prior[0].operator_principal_fingerprint !== principalFingerprint
         || prior[0].payload_fingerprint !== payloadFingerprint
       )
     ) {
@@ -339,8 +348,8 @@ async function operatorTestEvent(
       await tx.execute(
         sql<{
           recipient_fingerprint: string;
-          operator_principal_id: string;
-        }[]>`select recipient_fingerprint,operator_principal_id
+          operator_principal_fingerprint: string;
+        }[]>`select recipient_fingerprint,operator_principal_fingerprint
             from operator_channel_test_preparations
             where id=${preparationId}::uuid for update`,
       )
@@ -350,7 +359,7 @@ async function operatorTestEvent(
       throw new OperatorChannelTestError('Operator test preparation not found', 'NOT_FOUND');
     }
     if (
-      preparation.operator_principal_id !== auth.principalId
+      preparation.operator_principal_fingerprint !== principalFingerprint
       || preparation.recipient_fingerprint !== recipient.fingerprint
     ) {
       throw new OperatorChannelTestError('Operator test preparation is not valid for this runtime', 'INVALID_STATE');
@@ -362,9 +371,9 @@ async function operatorTestEvent(
         event_type: string;
         result: OperatorTestResult | null;
         created_at: Date;
-        operator_principal_id: string;
+        operator_principal_fingerprint: string;
         payload_fingerprint: string;
-      }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint
+      }[]>`select id,event_type,result,created_at,operator_principal_fingerprint,payload_fingerprint
           from operator_channel_test_events
           where preparation_id=${preparationId}::uuid
           order by created_at,id`,
@@ -373,7 +382,7 @@ async function operatorTestEvent(
     const sameType = existing.find((item) => item.event_type === eventType);
     if (sameType) {
       if (
-        sameType.operator_principal_id !== auth.principalId
+        sameType.operator_principal_fingerprint !== principalFingerprint
         || sameType.result !== (result ?? null)
         || sameType.payload_fingerprint !== payloadFingerprint
       ) {
@@ -409,8 +418,8 @@ async function operatorTestEvent(
       await tx.execute(
         sql<{ id: string; created_at: Date }[]>`select id,created_at
           from public.append_operator_channel_test_event(
-            ${preparationId}::uuid,${eventType},${result ?? null},${auth.principalId},
-            ${payloadFingerprint}::char(64),${idempotencyKey}
+            ${preparationId}::uuid,${eventType},${result ?? null},${principalFingerprint}::char(64),
+            ${payloadFingerprint}::char(64),${idempotencyFingerprint}::char(64)
           )`,
       )
     )[0]!;

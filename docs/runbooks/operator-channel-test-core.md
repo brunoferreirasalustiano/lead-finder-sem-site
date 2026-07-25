@@ -1,9 +1,11 @@
 # Operator channel test core
 
-The OPERATOR_TEST core stores only scalar audit data: template identity, principal
-identity, idempotency keys, timestamps, and SHA-256/HMAC fingerprints. It never
-persists a phone number, message body, WhatsApp URL, recipient value, or generic
-JSON payload.
+The OPERATOR_TEST core stores only fixed template identity, timestamps, and
+SHA-256/HMAC fingerprints. It never persists a phone number, message body,
+WhatsApp URL, recipient value, principal value, idempotency key, or generic JSON
+payload. PostgreSQL integration tests attempt those raw values through both table
+inserts and the SQL write functions, then inspect every persisted row to prove
+they are absent.
 
 Application authorization is the boundary for `operator-test:prepare`,
 `operator-test:open`, `operator-test:confirm`, and `operator-test:response`.

@@ -158,8 +158,8 @@ try {
           has_table_privilege('service_role', 'public.operator_channel_test_preparations', 'INSERT') AS "preparationInsert",
           has_table_privilege('service_role', 'public.operator_channel_test_events', 'INSERT') AS "eventInsert",
           has_table_privilege('service_role', 'public.operator_channel_test_preparations', 'SELECT') AS "preparationSelect",
-          has_function_privilege('service_role', 'public.create_operator_channel_test_preparation(character,text,text,text,character,text,character,character)', 'EXECUTE') AS "preparationFunction",
-          has_function_privilege('service_role', 'public.append_operator_channel_test_event(uuid,text,text,text,character,text)', 'EXECUTE') AS "eventFunction"`
+          has_function_privilege('service_role', 'public.create_operator_channel_test_preparation(character,character,character,character,character,character)', 'EXECUTE') AS "preparationFunction",
+          has_function_privilege('service_role', 'public.append_operator_channel_test_event(uuid,text,text,character,character,character)', 'EXECUTE') AS "eventFunction"`
     )[0]!;
     assert.deepEqual(operatorPrivileges, {
       preparationInsert: false,

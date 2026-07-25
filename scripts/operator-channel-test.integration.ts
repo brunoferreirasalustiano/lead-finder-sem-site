@@ -103,21 +103,26 @@ try {
   const persisted = (
     await raw<{
       recipient_fingerprint: string;
+      operator_principal_fingerprint: string;
+      idempotency_fingerprint: string;
       message_fingerprint: string;
       result_fingerprint: string;
-    }[]>`select recipient_fingerprint,message_fingerprint,result_fingerprint
+    }[]>`select recipient_fingerprint,operator_principal_fingerprint,idempotency_fingerprint,
+         message_fingerprint,result_fingerprint
          from operator_channel_test_preparations where id=${first.preparationId}::uuid`
   )[0]!;
   assert.equal(persisted.recipient_fingerprint, first.recipientFingerprint);
+  assert.match(persisted.operator_principal_fingerprint, /^[0-9a-f]{64}$/);
+  assert.match(persisted.idempotency_fingerprint, /^[0-9a-f]{64}$/);
   assert.match(persisted.message_fingerprint, /^[0-9a-f]{64}$/);
   assert.match(persisted.result_fingerprint, /^[0-9a-f]{64}$/);
   pass('02 persistence contains scalar fingerprints only');
 
   await assert.rejects(
     raw`insert into operator_channel_test_events(
-          preparation_id,event_type,result,operator_principal_id,payload_fingerprint,idempotency_key
+          preparation_id,event_type,result,operator_principal_fingerprint,payload_fingerprint,idempotency_fingerprint
         ) values(
-          ${first.preparationId}::uuid,'OPENED',null,'different-operator',${'a'.repeat(64)},${randomUUID()}
+          ${first.preparationId}::uuid,'OPENED',null,${'d'.repeat(64)},${'a'.repeat(64)},${'b'.repeat(64)}
         )`,
   );
   pass('03 PostgreSQL rejects a divergent event principal');
@@ -125,19 +130,58 @@ try {
   await serviceRole.unsafe('SET ROLE service_role');
   await assert.rejects(
     serviceRole`insert into operator_channel_test_preparations(
-      channel,purpose,recipient_fingerprint,template_id,template_version,operator_principal_id,
-      payload_fingerprint,idempotency_key,message_fingerprint,result_fingerprint
+      channel,purpose,recipient_fingerprint,template_id,template_version,operator_principal_fingerprint,
+      payload_fingerprint,idempotency_fingerprint,message_fingerprint,result_fingerprint
     ) values(
       'WHATSAPP','OPERATOR_TEST',${'a'.repeat(64)},'operator-whatsapp-channel-test','v1',
-      'service-role-direct',${'b'.repeat(64)},${randomUUID()},${'c'.repeat(64)},${'d'.repeat(64)}
+      ${'b'.repeat(64)},${'c'.repeat(64)},${'d'.repeat(64)},${'e'.repeat(64)}
     )`,
   );
   pass('04 service_role direct INSERT is rejected');
 
+  const piiValues = [
+    runtime.authorizedPhoneE164,
+    '5511999999999',
+    first.link,
+    first.message,
+    'operator@example.test',
+    auth.principalId,
+    preparationKey,
+  ];
+  for (const piiValue of piiValues) {
+    await assert.rejects(
+      raw`select * from public.create_operator_channel_test_preparation(
+        ${piiValue}::char(64),${'a'.repeat(64)}::char(64),${'b'.repeat(64)}::char(64),
+        ${'c'.repeat(64)}::char(64),${'d'.repeat(64)}::char(64),${'e'.repeat(64)}::char(64)
+      )`,
+    );
+  }
+  await assert.rejects(
+    raw`select * from public.append_operator_channel_test_event(
+      ${first.preparationId}::uuid,'OPENED',null,${auth.principalId}::char(64),
+      ${'a'.repeat(64)}::char(64),${'b'.repeat(64)}::char(64)
+    )`,
+  );
+  pass('05 SQL functions reject raw phone, URL, message, email, principal, and idempotency values');
+
+  const storedValues = await raw<{ value: string }[]>`
+    select value
+    from (
+      select to_jsonb(preparation)::text as value
+      from operator_channel_test_preparations preparation
+      union all
+      select to_jsonb(event)::text as value
+      from operator_channel_test_events event
+    ) stored`;
+  for (const piiValue of piiValues) {
+    assert.equal(storedValues.some(({ value }) => value.includes(piiValue)), false);
+  }
+  pass('06 persisted rows contain no raw phone, URL, message, principal, or idempotency value');
+
   const replay = await prepareOperatorWhatsAppTest(db, input(preparationKey), auth, runtime);
   assert.equal(replay.preparationId, first.preparationId);
   assert.equal(replay.replayed, true);
-  pass('05 preparation replay is idempotent');
+  pass('07 preparation replay is idempotent');
 
   await expectCode(
     prepareOperatorWhatsAppTest(
@@ -148,7 +192,7 @@ try {
     ),
     'IDEMPOTENCY_CONFLICT',
   );
-  pass('06 changed recipient conflicts with prior key');
+  pass('08 changed recipient conflicts with prior key');
 
   const concurrentKey = randomUUID();
   const concurrent = await Promise.all(
@@ -157,7 +201,7 @@ try {
   );
   assert.equal(new Set(concurrent.map((item) => item.preparationId)).size, 1);
   assert.equal(concurrent.filter((item) => !item.replayed).length, 1);
-  pass('07 concurrent preparation collapses to one record');
+  pass('09 concurrent preparation collapses to one record');
 
   const orderProbe = await prepareOperatorWhatsAppTest(db, input(), auth, runtime);
   await expectCode(
@@ -172,13 +216,13 @@ try {
   );
   await assert.rejects(
     raw`insert into operator_channel_test_events(
-          preparation_id,event_type,result,operator_principal_id,payload_fingerprint,idempotency_key
+          preparation_id,event_type,result,operator_principal_fingerprint,payload_fingerprint,idempotency_fingerprint
         ) values(
           ${orderProbe.preparationId}::uuid,'CONTACT_CONFIRMED','SENT_CONFIRMED',
-          ${auth.principalId},${'a'.repeat(64)},${randomUUID()}
+          ${persisted.operator_principal_fingerprint},${'a'.repeat(64)},${'b'.repeat(64)}
         )`,
   );
-  pass('08 service and PostgreSQL reject out-of-order confirmation');
+  pass('10 service and PostgreSQL reject out-of-order confirmation');
 
   const opened = await recordOperatorTestOpen(
     db,
@@ -198,7 +242,7 @@ try {
   );
   assert.equal(openedReplay.eventId, opened.eventId);
   assert.equal(openedReplay.replayed, true);
-  pass('09 OPENED is idempotent');
+  pass('11 OPENED is idempotent');
 
   const confirmed = await confirmOperatorTestResult(
     db,
@@ -218,7 +262,7 @@ try {
     ),
     'INVALID_STATE',
   );
-  pass('10 contradictory confirmation is rejected');
+  pass('12 contradictory confirmation is rejected');
 
   const response = await recordOperatorTestResponse(
     db,
@@ -228,7 +272,7 @@ try {
     runtime,
   );
   assert.equal(response.result, 'RECEIVED_CONFIRMED');
-  pass('11 response is accepted only after SENT_CONFIRMED');
+  pass('13 response is accepted only after SENT_CONFIRMED');
 
   const notSent = await prepareOperatorWhatsAppTest(db, input(), auth, runtime);
   await recordOperatorTestOpen(db, notSent.preparationId, { idempotencyKey: 'open-not-sent' }, auth, runtime);
@@ -249,7 +293,7 @@ try {
     ),
     'INVALID_STATE',
   );
-  pass('12 NOT_SENT cannot produce a response event');
+  pass('14 NOT_SENT cannot produce a response event');
 
   await assert.rejects(
     raw`update operator_channel_test_preparations set template_version='v2'
@@ -258,7 +302,7 @@ try {
   await assert.rejects(
     raw`delete from operator_channel_test_events where preparation_id=${first.preparationId}::uuid`,
   );
-  pass('13 preparation and event history are append-only');
+  pass('15 preparation and event history are append-only');
 
   const columns = await raw<{ column_name: string; data_type: string }[]>`
     select column_name,data_type from information_schema.columns
@@ -275,7 +319,8 @@ try {
     false,
   );
   assert.equal(columns.some(({ data_type }) => data_type === 'jsonb'), false);
-  pass('14 schema has no raw destination, message, URL, or JSON column');
+  assert.equal(columns.some(({ column_name }) => /operator_principal_id|idempotency_key/i.test(column_name)), false);
+  pass('16 schema has no raw destination, message, URL, JSON, principal, or idempotency column');
 
   console.log(JSON.stringify({
     result: 'OPERATOR_CHANNEL_TEST_INTEGRATION_PASS',

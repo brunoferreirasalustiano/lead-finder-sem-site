@@ -34,16 +34,7 @@ jobs:
       - run: npm test
       - run: npm run test:coverage
       - run: npm run build
-      - name: Run blocking npm audit with sanitized evidence
-        run: npm run audit:ci
-      - name: Upload npm audit evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-audit-${{ matrix.deployment-profile }}-${{ github.sha }}
-          path: artifacts/npm-audit-summary.json
-          if-no-files-found: warn
-          retention-days: 14
+      - run: npm audit --audit-level=high
       - run: git diff --check
       - name: Validate Plan B descriptors and Edge Function
         run: |

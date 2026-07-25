@@ -22,9 +22,15 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
+          def replace_exact(text: str, old: str, new: str, expected: int = 1) -> str:
+            count = text.count(old)
+            if count != expected:
+              raise SystemExit(f'expected {expected} matches, found {count}: {old[:80]}')
+            return text.replace(old, new)
+
           source_path = Path('packages/database/src/operator-channel-test.ts')
           source = source_path.read_text()
-          replacements = [
+          unique_replacements = [
             (
               "import type { AuthorizationContext } from '@lead-finder/shared';",
               "import { isTrustedAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';",
@@ -46,18 +52,6 @@ jobs:
               "  input.idempotencyKey,\n  auth,\n  runtime,\n  'operator-test:open',\n);",
             ),
             (
-              "    idempotencyKey: string;\n    observation?: string | undefined;\n  },",
-              "    idempotencyKey: string;\n  },",
-            ),
-            (
-              "  input.idempotencyKey,\n  input.observation,\n  auth,\n  runtime,\n);",
-              "  input.idempotencyKey,\n  auth,\n  runtime,\n  'operator-test:confirm',\n);",
-            ),
-            (
-              "  input.idempotencyKey,\n  input.observation,\n  auth,\n  runtime,\n);",
-              "  input.idempotencyKey,\n  auth,\n  runtime,\n  'operator-test:response',\n);",
-            ),
-            (
               "  idempotencyKey: string,\n  observation: string | undefined,\n  auth: AuthorizationContext,\n  runtime: OperatorTestRuntime,\n) {\n  const recipient = resolveOperatorTestRecipient(runtime);\n  const normalizedObservation = clean(observation);",
               "  idempotencyKey: string,\n  auth: AuthorizationContext,\n  runtime: OperatorTestRuntime,\n  requiredPermission: string,\n) {\n  requirePermission(auth, requiredPermission);\n  const recipient = resolveOperatorTestRecipient(runtime);",
             ),
@@ -70,19 +64,38 @@ jobs:
               "          preparation_id,event_type,result,operator_principal_id,payload_fingerprint,idempotency_key\n        ) values(\n          ${preparationId}::uuid,${eventType},${result ?? null},${auth.principalId},\n          ${payloadFingerprint},${idempotencyKey}",
             ),
           ]
-          for old, new in replacements:
-            count = source.count(old)
-            if count != 1:
-              raise SystemExit(f'expected one source match, found {count}: {old[:80]}')
-            source = source.replace(old, new)
+          for old, new in unique_replacements:
+            source = replace_exact(source, old, new)
+
+          source = replace_exact(
+            source,
+            "    idempotencyKey: string;\n    observation?: string | undefined;\n  },",
+            "    idempotencyKey: string;\n  },",
+            expected=2,
+          )
+          shared_call = "  input.idempotencyKey,\n  input.observation,\n  auth,\n  runtime,\n);"
+          if source.count(shared_call) != 2:
+            raise SystemExit(f'expected 2 event call matches, found {source.count(shared_call)}')
+          source = source.replace(
+            shared_call,
+            "  input.idempotencyKey,\n  auth,\n  runtime,\n  'operator-test:confirm',\n);",
+            1,
+          )
+          source = source.replace(
+            shared_call,
+            "  input.idempotencyKey,\n  auth,\n  runtime,\n  'operator-test:response',\n);",
+            1,
+          )
           source_path.write_text(source)
 
           migration_path = Path('database/migrations/0021_operator_channel_test.sql')
           migration = migration_path.read_text()
-          old_column = "  observation text CHECK (observation IS NULL OR char_length(observation) <= 500),\n"
-          if migration.count(old_column) != 1:
-            raise SystemExit(f'expected one observation column, found {migration.count(old_column)}')
-          migration_path.write_text(migration.replace(old_column, ''))
+          migration = replace_exact(
+            migration,
+            "  observation text CHECK (observation IS NULL OR char_length(observation) <= 500),\n",
+            '',
+          )
+          migration_path.write_text(migration)
 
           integration_path = Path('scripts/operator-channel-test.integration.ts')
           integration = integration_path.read_text()
@@ -114,9 +127,8 @@ jobs:
   pass('00 untrusted or unauthorized contexts are rejected');
 
 """
-          if integration.count(marker) != 1:
-            raise SystemExit(f'expected one integration marker, found {integration.count(marker)}')
-          integration_path.write_text(integration.replace(marker, inserted))
+          integration = replace_exact(integration, marker, inserted)
+          integration_path.write_text(integration)
           PY
       - run: npm ci
       - run: npm run typecheck

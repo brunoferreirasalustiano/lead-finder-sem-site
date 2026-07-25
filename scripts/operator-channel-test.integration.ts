@@ -53,6 +53,26 @@ const pass = (name: string) => passed.push(name);
 try {
   await raw`truncate operator_channel_test_events,operator_channel_test_preparations restart identity cascade`;
 
+  const unauthorized = createAuthorizationContext({
+    principalId: 'operator-test-without-permission',
+    permissions: new Set(),
+    authenticationMethod: 'integration-test',
+  });
+  await expectCode(
+    prepareOperatorWhatsAppTest(db, input(), unauthorized, runtime),
+    'FORBIDDEN',
+  );
+  const forged = {
+    principalId: 'forged-operator-test',
+    permissions: new Set(['operator-test:prepare']),
+    authenticationMethod: 'forged',
+  } as Parameters<typeof prepareOperatorWhatsAppTest>[2];
+  await expectCode(
+    prepareOperatorWhatsAppTest(db, input(), forged, runtime),
+    'FORBIDDEN',
+  );
+  pass('00 untrusted or unauthorized contexts are rejected');
+
   const preparationKey = randomUUID();
   const first = await prepareOperatorWhatsAppTest(db, input(preparationKey), auth, runtime);
   assert.equal(first.state, 'PREPARED');

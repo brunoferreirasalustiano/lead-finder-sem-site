@@ -5,7 +5,7 @@ import {
   DeterministicFakeMessagingProvider,
 } from '@lead-finder/messaging';
 import { createWhatsAppManualUrl, normalizePhoneE164 } from '@lead-finder/whatsapp';
-import type { AuthorizationContext } from '@lead-finder/shared';
+import { isTrustedAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 
 export type OperatorTestConfirmationResult =
@@ -35,7 +35,8 @@ export class OperatorChannelTestError extends Error {
       | 'KILL_SWITCH_ENGAGED'
       | 'INVALID_RECIPIENT'
       | 'INVALID_FINGERPRINT_KEY'
-      | 'IDEMPOTENCY_CONFLICT',
+      | 'IDEMPOTENCY_CONFLICT'
+      | 'FORBIDDEN',
   ) {
     super(message);
   }
@@ -58,14 +59,11 @@ const canonical = (value: unknown): unknown => {
 const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
-const clean = (value: string | undefined) =>
-  Array.from(value ?? '', (character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? ' ' : character;
-  })
-    .join('')
-    .trim()
-    .slice(0, 500) || undefined;
+const requirePermission = (auth: AuthorizationContext, permission: string) => {
+  if (!isTrustedAuthorizationContext(auth) || !auth.permissions.has(permission)) {
+    throw new OperatorChannelTestError('Operator test permission denied', 'FORBIDDEN');
+  }
+};
 
 export function resolveOperatorTestRecipient(runtime: OperatorTestRuntime) {
   if (!runtime.enabled) throw new OperatorChannelTestError('Operator test is disabled', 'DISABLED');
@@ -118,6 +116,7 @@ export async function prepareOperatorWhatsAppTest(
   auth: AuthorizationContext,
   runtime: OperatorTestRuntime,
 ) {
+  requirePermission(auth, 'operator-test:prepare');
   const built = buildOperatorTestPreparation(runtime);
   if (
     input.templateId !== built.template.id
@@ -238,9 +237,9 @@ export const recordOperatorTestOpen = (
   'OPENED',
   undefined,
   input.idempotencyKey,
-  undefined,
   auth,
   runtime,
+  'operator-test:open',
 );
 
 export const confirmOperatorTestResult = (
@@ -249,7 +248,6 @@ export const confirmOperatorTestResult = (
   input: {
     result: OperatorTestConfirmationResult;
     idempotencyKey: string;
-    observation?: string | undefined;
   },
   auth: AuthorizationContext,
   runtime: OperatorTestRuntime,
@@ -259,9 +257,9 @@ export const confirmOperatorTestResult = (
   'CONTACT_CONFIRMED',
   input.result,
   input.idempotencyKey,
-  input.observation,
   auth,
   runtime,
+  'operator-test:confirm',
 );
 
 export const recordOperatorTestResponse = (
@@ -270,7 +268,6 @@ export const recordOperatorTestResponse = (
   input: {
     result: OperatorTestResponseResult;
     idempotencyKey: string;
-    observation?: string | undefined;
   },
   auth: AuthorizationContext,
   runtime: OperatorTestRuntime,
@@ -280,9 +277,9 @@ export const recordOperatorTestResponse = (
   'RESPONSE_RECORDED',
   input.result,
   input.idempotencyKey,
-  input.observation,
   auth,
   runtime,
+  'operator-test:response',
 );
 
 async function operatorTestEvent(
@@ -291,17 +288,16 @@ async function operatorTestEvent(
   eventType: 'OPENED' | 'CONTACT_CONFIRMED' | 'RESPONSE_RECORDED',
   result: OperatorTestResult | undefined,
   idempotencyKey: string,
-  observation: string | undefined,
   auth: AuthorizationContext,
   runtime: OperatorTestRuntime,
+  requiredPermission: string,
 ) {
+  requirePermission(auth, requiredPermission);
   const recipient = resolveOperatorTestRecipient(runtime);
-  const normalizedObservation = clean(observation);
   const payloadFingerprint = digest({
     preparationId,
     eventType,
     result,
-    observation: normalizedObservation,
     principalId: auth.principalId,
   });
 
@@ -406,10 +402,10 @@ async function operatorTestEvent(
     const saved = (
       await tx.execute(
         sql<{ id: string; created_at: Date }[]>`insert into operator_channel_test_events(
-          preparation_id,event_type,result,operator_principal_id,observation,payload_fingerprint,idempotency_key
+          preparation_id,event_type,result,operator_principal_id,payload_fingerprint,idempotency_key
         ) values(
           ${preparationId}::uuid,${eventType},${result ?? null},${auth.principalId},
-          ${normalizedObservation ?? null},${payloadFingerprint},${idempotencyKey}
+          ${payloadFingerprint},${idempotencyKey}
         ) returning id,created_at`,
       )
     )[0]!;

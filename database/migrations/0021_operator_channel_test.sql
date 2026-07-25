@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS operator_channel_test_events (
     (event_type = 'RESPONSE_RECORDED' AND result IN ('RECEIVED_CONFIRMED','NOT_RECEIVED','READ_CONFIRMED'))
   ),
   operator_principal_id text NOT NULL CHECK (char_length(btrim(operator_principal_id)) BETWEEN 1 AND 100),
-  observation text CHECK (observation IS NULL OR char_length(observation) <= 500),
   payload_fingerprint char(64) NOT NULL CHECK (payload_fingerprint ~ '^[0-9a-f]{64}$'),
   idempotency_key text NOT NULL CHECK (char_length(btrim(idempotency_key)) BETWEEN 1 AND 200),
   created_at timestamptz NOT NULL DEFAULT now(),

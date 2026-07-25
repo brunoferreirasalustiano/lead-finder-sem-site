@@ -120,6 +120,13 @@ export const approvedTemplates = {
     approved: true,
     body: 'Olá! Aqui é o Bruno F. Salustiano, da Lead Finder Brasil. Você autorizou nosso contato por WhatsApp sobre soluções digitais para a [EMPRESA]. Preparei uma ideia relacionada ao segmento de vocês. Posso enviar a demonstração para avaliação, sem compromisso? Caso não queira continuar, é só me avisar que encerro o contato e registro o bloqueio.',
   }),
+  operatorWhatsappTestV1: templateSchema.parse({
+    id: 'operator-whatsapp-channel-test',
+    version: 'v1',
+    channel: 'WHATSAPP',
+    approved: true,
+    body: 'Olá! Este é um teste interno autorizado do canal manual de WhatsApp do Lead Finder Brasil. Nenhum lead real está envolvido. Confirme o recebimento apenas para validar o fluxo técnico.',
+  }),
   emailV1: templateSchema.parse({
     id: 'pilot-email-first-contact',
     version: 'v1',

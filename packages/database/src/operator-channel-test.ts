@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
   approvedTemplates,
@@ -22,6 +22,7 @@ export type OperatorTestRuntime = Readonly<{
   enabled: boolean;
   killSwitchEnabled: boolean;
   authorizedPhoneE164?: string | undefined;
+  fingerprintKey?: string | undefined;
 }>;
 
 export class OperatorChannelTestError extends Error {
@@ -33,6 +34,7 @@ export class OperatorChannelTestError extends Error {
       | 'DISABLED'
       | 'KILL_SWITCH_ENGAGED'
       | 'INVALID_RECIPIENT'
+      | 'INVALID_FINGERPRINT_KEY'
       | 'IDEMPOTENCY_CONFLICT',
   ) {
     super(message);
@@ -70,6 +72,13 @@ export function resolveOperatorTestRecipient(runtime: OperatorTestRuntime) {
   if (runtime.killSwitchEnabled) {
     throw new OperatorChannelTestError('Operator test kill switch is engaged', 'KILL_SWITCH_ENGAGED');
   }
+  const fingerprintKey = runtime.fingerprintKey?.trim();
+  if (!fingerprintKey || fingerprintKey.length < 32) {
+    throw new OperatorChannelTestError(
+      'Operator test fingerprint key is invalid',
+      'INVALID_FINGERPRINT_KEY',
+    );
+  }
   const normalized = normalizePhoneE164(runtime.authorizedPhoneE164);
   if (!normalized.ok) {
     throw new OperatorChannelTestError('Authorized operator recipient is invalid', 'INVALID_RECIPIENT');
@@ -77,11 +86,13 @@ export function resolveOperatorTestRecipient(runtime: OperatorTestRuntime) {
   return {
     e164: normalized.e164,
     digits: normalized.digits,
-    fingerprint: digest({
-      channel: 'WHATSAPP',
-      purpose: 'OPERATOR_TEST',
-      value: normalized.e164,
-    }),
+    fingerprint: createHmac('sha256', fingerprintKey)
+      .update(JSON.stringify(canonical({
+        channel: 'WHATSAPP',
+        purpose: 'OPERATOR_TEST',
+        value: normalized.e164,
+      })))
+      .digest('hex'),
   } as const;
 }
 

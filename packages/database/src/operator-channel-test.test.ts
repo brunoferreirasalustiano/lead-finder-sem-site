@@ -9,6 +9,7 @@ const enabledRuntime = {
   enabled: true,
   killSwitchEnabled: false,
   authorizedPhoneE164: '+5511999999999',
+  fingerprintKey: 'operator-test-fingerprint-key-0001',
 } as const;
 
 const errorCodeFrom = (action: () => unknown) => {
@@ -36,11 +37,26 @@ describe('operator channel test runtime', () => {
     }))).toBe('KILL_SWITCH_ENGAGED');
   });
 
+  it('fails closed when the fingerprint key is missing or too short', () => {
+    expect(errorCodeFrom(() => resolveOperatorTestRecipient({
+      enabled: true,
+      killSwitchEnabled: false,
+      authorizedPhoneE164: '+5511999999999',
+    }))).toBe('INVALID_FINGERPRINT_KEY');
+    expect(errorCodeFrom(() => resolveOperatorTestRecipient({
+      enabled: true,
+      killSwitchEnabled: false,
+      authorizedPhoneE164: '+5511999999999',
+      fingerprintKey: 'short-key',
+    }))).toBe('INVALID_FINGERPRINT_KEY');
+  });
+
   it('rejects a missing or malformed operator recipient', () => {
     expect(errorCodeFrom(() => resolveOperatorTestRecipient({
       enabled: true,
       killSwitchEnabled: false,
       authorizedPhoneE164: 'not-a-phone',
+      fingerprintKey: enabledRuntime.fingerprintKey,
     }))).toBe('INVALID_RECIPIENT');
   });
 
@@ -66,6 +82,12 @@ describe('operator channel test runtime', () => {
 
     expect(first.fingerprint).toBe(second.fingerprint);
     expect(first.fingerprint).not.toBe(other.fingerprint);
+    const rotatedKey = resolveOperatorTestRecipient({
+      ...enabledRuntime,
+      fingerprintKey: 'operator-test-fingerprint-key-0002',
+    });
+
     expect(first.fingerprint).not.toContain('5511999999999');
+    expect(first.fingerprint).not.toBe(rotatedKey.fingerprint);
   });
 });

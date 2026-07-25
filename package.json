@@ -23,6 +23,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "dev:api": "tsx watch apps/api/src/index.ts",
     "dev:worker": "tsx watch apps/worker/src/index.ts",
+    "operator:whatsapp": "tsx scripts/manual-whatsapp-console.ts",
     "test:pilot": "tsx scripts/integration-test.ts",
     "test:pilot:restart": "tsx scripts/pilot-restart-test.ts",
     "pilot:real:preflight": "tsx scripts/pilot-real-preflight.ts",

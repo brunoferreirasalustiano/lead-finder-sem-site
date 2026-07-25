@@ -23,7 +23,6 @@ jobs:
         run: |
           python3 - <<'PYRUN'
           from pathlib import Path
-          import textwrap
           import traceback
 
           try:
@@ -32,8 +31,13 @@ jobs:
             suffix = "\n          PY\n"
             if workflow.count(prefix) != 1 or workflow.count(suffix) != 1:
               raise RuntimeError('unable to locate reviewed hardening transform')
-            script = workflow.split(prefix, 1)[1].split(suffix, 1)[0]
-            exec(compile(textwrap.dedent(script), 'operator-hardening-transform', 'exec'))
+            extracted = workflow.split(prefix, 1)[1].split(suffix, 1)[0]
+            lines = extracted.splitlines()
+            script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines
+            )
+            exec(compile(script, 'operator-hardening-transform', 'exec'))
           except BaseException:
             Path('hardening-error.txt').write_text(traceback.format_exc())
             raise

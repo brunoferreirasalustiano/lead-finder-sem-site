@@ -36,6 +36,8 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 
 - [Arquitetura de mensageria WhatsApp + IA](whatsapp-ai-messaging-architecture.md) — providers, revisão humana, idempotência, webhooks e kill switch.
 - [Checklist de implementação WhatsApp + IA](whatsapp-ai-implementation-checklist.md) — fundação, manual assistido, shadow, sandbox e gate real.
+- [Console local de WhatsApp manual](runbooks/manual-whatsapp-operator-console.md) — teste pessoal isolado, preparação autenticada do piloto, botão `wa.me`, confirmação humana e execução somente em loopback.
+- [Sandbox oficial da Meta Cloud API](runbooks/meta-whatsapp-cloud-api-sandbox.md) — ativos administrativos, allowlist do operador, secrets e gate antes da integração real.
 - [Registro de riscos de WhatsApp e IA](whatsapp-ai-risk-register.md) — riscos, controles, evidências e estados.
 - [Issue #79 — onboarding Meta e OpenAI](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/79) — contas, IDs, secrets, sandbox, retenção e gates externos.
 

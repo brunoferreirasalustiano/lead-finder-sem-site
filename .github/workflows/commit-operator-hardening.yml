@@ -4,6 +4,10 @@ on:
     branches: [agent/operator-test-core-clean]
     paths:
       - .github/workflows/commit-operator-hardening.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/commit-operator-hardening.yml
 permissions:
   contents: write
 jobs:

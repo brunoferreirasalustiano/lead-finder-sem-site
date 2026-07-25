@@ -1,0 +1,42 @@
+name: Add operator integration step
+on:
+  push:
+    branches: [agent/operator-test-api]
+    paths:
+      - .github/workflows/add-operator-integration-step.yml
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/operator-test-api
+      - name: Add exact CI step
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text()
+          old = """      - name: Verify manual assisted messaging on PostgreSQL 16
+        run: npm run test:manual-messaging
+      - name: Run automated synthetic batch gate on PostgreSQL
+"""
+          new = """      - name: Verify manual assisted messaging on PostgreSQL 16
+        run: npm run test:manual-messaging
+      - name: Verify operator channel test on PostgreSQL 16
+        run: npm run test:operator-channel
+      - name: Run automated synthetic batch gate on PostgreSQL
+"""
+          if text.count(old) != 1:
+            raise SystemExit(f'expected one CI insertion point, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+          PY
+      - name: Commit CI integration step
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/ci.yml
+          git commit -m 'ci: run operator channel PostgreSQL integration'
+          git push origin HEAD:agent/operator-test-api

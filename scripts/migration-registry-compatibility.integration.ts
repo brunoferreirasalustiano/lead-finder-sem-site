@@ -146,6 +146,29 @@ try {
     const after = await snapshotProtectedObjects(db);
     assert.deepEqual(after, before);
 
+    const operatorPrivileges = (
+      await db<{
+        preparationInsert: boolean;
+        eventInsert: boolean;
+        preparationSelect: boolean;
+        preparationFunction: boolean;
+        eventFunction: boolean;
+      }[]>`
+        SELECT
+          has_table_privilege('service_role', 'public.operator_channel_test_preparations', 'INSERT') AS "preparationInsert",
+          has_table_privilege('service_role', 'public.operator_channel_test_events', 'INSERT') AS "eventInsert",
+          has_table_privilege('service_role', 'public.operator_channel_test_preparations', 'SELECT') AS "preparationSelect",
+          has_function_privilege('service_role', 'public.create_operator_channel_test_preparation(character,character,character,character,character,character)', 'EXECUTE') AS "preparationFunction",
+          has_function_privilege('service_role', 'public.append_operator_channel_test_event(uuid,text,text,character,character,character)', 'EXECUTE') AS "eventFunction"`
+    )[0]!;
+    assert.deepEqual(operatorPrivileges, {
+      preparationInsert: false,
+      eventInsert: false,
+      preparationSelect: true,
+      preparationFunction: true,
+      eventFunction: true,
+    });
+
     console.log(
       JSON.stringify({
         result: 'MIGRATION_REGISTRY_COMPATIBILITY_PASS',
@@ -153,6 +176,7 @@ try {
         runnerExecutions: 2,
         localHistoryWrites: 0,
         protectedObjectsChanged: 0,
+        operatorTestLeastPrivilegeVerified: true,
       }),
     );
   } finally {

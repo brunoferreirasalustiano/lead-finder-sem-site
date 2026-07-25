@@ -144,10 +144,13 @@ export async function prepareOperatorWhatsAppTest(
         id: string;
         recipient_fingerprint: string;
         payload_fingerprint: string;
+        template_id: string;
+        template_version: string;
+        message_fingerprint: string;
         result_fingerprint: string;
-        result_snapshot: unknown;
         prepared_at: Date;
-      }[]>`select id,recipient_fingerprint,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at
+      }[]>`select id,recipient_fingerprint,payload_fingerprint,template_id,template_version,
+          message_fingerprint,result_fingerprint,prepared_at
           from operator_channel_test_preparations
           where operator_principal_id=${auth.principalId} and idempotency_key=${input.idempotencyKey}`,
     );
@@ -158,18 +161,22 @@ export async function prepareOperatorWhatsAppTest(
 
     if (prior[0]) {
       const persisted = prior[0];
-      if (digest(persisted.result_snapshot) !== persisted.result_fingerprint) {
+      const resultFingerprint = digest({
+        channel: 'WHATSAPP',
+        purpose: 'OPERATOR_TEST',
+        templateId: persisted.template_id,
+        templateVersion: persisted.template_version,
+        recipientFingerprint: persisted.recipient_fingerprint,
+        messageFingerprint: persisted.message_fingerprint,
+      });
+      if (resultFingerprint !== persisted.result_fingerprint) {
         throw new OperatorChannelTestError('Persisted operator test snapshot is invalid', 'INVALID_STATE');
       }
-      const snapshot = persisted.result_snapshot as Record<string, unknown>;
       if (
-        snapshot['channel'] !== 'WHATSAPP'
-        || snapshot['purpose'] !== 'OPERATOR_TEST'
-        || snapshot['templateId'] !== built.template.id
-        || snapshot['templateVersion'] !== built.template.version
-        || snapshot['recipientFingerprint'] !== built.recipient.fingerprint
-        || snapshot['messageFingerprint'] !== built.prepared.fingerprint
+        persisted.template_id !== built.template.id
+        || persisted.template_version !== built.template.version
         || persisted.recipient_fingerprint !== built.recipient.fingerprint
+        || persisted.message_fingerprint !== built.prepared.fingerprint
       ) {
         throw new OperatorChannelTestError('Persisted operator test cannot be reconstructed', 'INVALID_STATE');
       }
@@ -188,24 +195,23 @@ export async function prepareOperatorWhatsAppTest(
       };
     }
 
-    const snapshot = {
+    const resultFingerprint = digest({
       channel: 'WHATSAPP',
       purpose: 'OPERATOR_TEST',
       templateId: built.template.id,
       templateVersion: built.template.version,
       recipientFingerprint: built.recipient.fingerprint,
       messageFingerprint: built.prepared.fingerprint,
-    };
+    });
 
     const saved = (
       await tx.execute(
-        sql<{ id: string; prepared_at: Date }[]>`insert into operator_channel_test_preparations(
-          channel,purpose,recipient_fingerprint,template_id,template_version,
-          operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot
-        ) values(
-          'WHATSAPP','OPERATOR_TEST',${built.recipient.fingerprint},${built.template.id},${built.template.version},
-          ${auth.principalId},${payloadFingerprint},${input.idempotencyKey},${digest(snapshot)},${JSON.stringify(snapshot)}::jsonb
-        ) returning id,prepared_at`,
+        sql<{ id: string; prepared_at: Date }[]>`select id,prepared_at
+          from public.create_operator_channel_test_preparation(
+            ${built.recipient.fingerprint}::char(64),${built.template.id},${built.template.version},
+            ${auth.principalId},${payloadFingerprint}::char(64),${input.idempotencyKey},
+            ${built.prepared.fingerprint}::char(64),${resultFingerprint}::char(64)
+          )`,
       )
     )[0]!;
 
@@ -401,12 +407,11 @@ async function operatorTestEvent(
 
     const saved = (
       await tx.execute(
-        sql<{ id: string; created_at: Date }[]>`insert into operator_channel_test_events(
-          preparation_id,event_type,result,operator_principal_id,payload_fingerprint,idempotency_key
-        ) values(
-          ${preparationId}::uuid,${eventType},${result ?? null},${auth.principalId},
-          ${payloadFingerprint},${idempotencyKey}
-        ) returning id,created_at`,
+        sql<{ id: string; created_at: Date }[]>`select id,created_at
+          from public.append_operator_channel_test_event(
+            ${preparationId}::uuid,${eventType},${result ?? null},${auth.principalId},
+            ${payloadFingerprint}::char(64),${idempotencyKey}
+          )`,
       )
     )[0]!;
 

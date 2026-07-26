@@ -92,7 +92,7 @@ describe('operator test HTTP API', () => {
     await app.close();
   });
 
-  it('prepares through the isolated core and never accepts a missing idempotency key', async () => {
+  it('prepares through the isolated core, requires idempotency and returns only safe metadata', async () => {
     const { app, operations } = await createApp(['operator-test:prepare']);
     const missingKey = await app.inject({
       method: 'POST',
@@ -109,7 +109,20 @@ describe('operator test HTTP API', () => {
       payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
     });
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ preparationId, state: 'PREPARED', replayed: false });
+    expect(response.json()).toEqual({
+      preparationId,
+      state: 'PREPARED',
+      purpose: 'OPERATOR_TEST',
+      channel: 'WHATSAPP',
+      templateId: 'operator-whatsapp-channel-test',
+      templateVersion: 'v1',
+      preparedAt: '2026-07-26T00:00:00.000Z',
+      replayed: false,
+    });
+    expect(response.body).not.toContain('Internal operator test');
+    expect(response.body).not.toContain('wa.me');
+    expect(response.body).not.toContain('5511999999999');
+    expect(response.body).not.toContain('a'.repeat(64));
     expect(operations.prepare).toHaveBeenCalledTimes(1);
     const call = operations.prepare.mock.calls[0]!;
     expect(call[1]).toEqual({

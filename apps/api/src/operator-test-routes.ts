@@ -13,10 +13,6 @@ import { authorizationContextFor } from './auth.js';
 
 const preparationIdSchema = z.string().uuid();
 const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/);
-const prepareSchema = z.object({
-  templateId: z.literal('operator-whatsapp-channel-test'),
-  templateVersion: z.literal('v1'),
-}).strict();
 const confirmationSchema = z.object({
   result: z.enum(['SENT_CONFIRMED', 'NOT_SENT', 'OPERATIONAL_ERROR']),
 }).strict();
@@ -79,7 +75,7 @@ export function registerOperatorTestRoutes(
   };
 
   app.post('/operator-tests/whatsapp/preparations', async (request, reply) => {
-    const body = prepareSchema.safeParse(request.body);
+    const body = emptySchema.safeParse(request.body ?? {});
     const idempotencyKey = idempotencyKeyFor(request);
     if (!body.success || !idempotencyKey.success) {
       return reply.status(400).send({ error: 'Invalid request', code: 'INVALID_OPERATOR_TEST_REQUEST' });
@@ -87,7 +83,11 @@ export function registerOperatorTestRoutes(
     return execute(reply, async () => {
       const result = await operations.prepare(
         db,
-        { ...body.data, idempotencyKey: idempotencyKey.data },
+        {
+          templateId: 'operator-whatsapp-channel-test',
+          templateVersion: 'v1',
+          idempotencyKey: idempotencyKey.data,
+        },
         authorizationContextFor(request),
         runtime,
       );

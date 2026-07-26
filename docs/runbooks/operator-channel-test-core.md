@@ -28,9 +28,12 @@ Every route requires its matching `operator-test:*` permission and an
 `Idempotency-Key` containing only 16–128 ASCII letters, digits, `_` or `-`.
 `pilot:*` and `manual-messaging:*` permissions do not authorize these routes.
 The API does not call Meta, WhatsApp, SMTP, OpenAI, a webhook or any messaging
-provider. The authorized preparation response may contain the fixed internal
-message and a canonical `wa.me` link for the authenticated operator; those values
-are never persisted or logged by the API.
+provider. Preparation responses contain only technical state, the fixed template
+identity, timestamps and replay information. They never return the phone,
+recipient fingerprint, message body or `wa.me` URL. The localhost console must
+reconstruct the approved fixed message and canonical link from its own private,
+untracked operator configuration, then use the API only to persist preparation
+and human-confirmed events.
 
 Configuration is fail-closed:
 

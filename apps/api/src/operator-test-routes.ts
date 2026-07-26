@@ -71,7 +71,12 @@ export function registerOperatorTestRoutes(
   runtime: OperatorTestRuntime,
   overrides: Partial<OperatorTestOperations> = {},
 ) {
-  const operations = { ...defaultOperations, ...overrides };
+  const operations: OperatorTestOperations = {
+    prepare: overrides.prepare ?? defaultOperations.prepare,
+    open: overrides.open ?? defaultOperations.open,
+    confirm: overrides.confirm ?? defaultOperations.confirm,
+    response: overrides.response ?? defaultOperations.response,
+  };
 
   app.post('/operator-tests/whatsapp/preparations', async (request, reply) => {
     const body = prepareSchema.safeParse(request.body);

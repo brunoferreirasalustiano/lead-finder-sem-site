@@ -58,7 +58,7 @@ describe('operator test API configuration', () => {
       OPERATOR_TEST_ENABLED: 'true',
       OPERATOR_TEST_WHATSAPP_E164: '+5511999999999',
       OPERATOR_TEST_FINGERPRINT_KEY: 'short',
-    })).toContain('Too small');
+    })).toContain('OPERATOR_TEST_FINGERPRINT_KEY');
   });
 
   it('accepts only explicitly configured operator test permissions', () => {

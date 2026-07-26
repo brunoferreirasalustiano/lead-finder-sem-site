@@ -1,6 +1,7 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
 import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
+import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { hostname } from 'node:os';
 
@@ -47,6 +48,12 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
       dailyLimit: config.DAILY_LEAD_LIMIT, executionSource: 'supabase-render', policy }),
   }),
   corsAllowedOrigins: config.CORS_ALLOWED_ORIGINS,
+});
+registerOperatorTestRoutes(app, db, {
+  enabled: config.OPERATOR_TEST_ENABLED,
+  killSwitchEnabled: config.OPERATOR_TEST_KILL_SWITCH_ENABLED,
+  authorizedPhoneE164: config.OPERATOR_TEST_WHATSAPP_E164,
+  fingerprintKey: config.OPERATOR_TEST_FINGERPRINT_KEY,
 });
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {

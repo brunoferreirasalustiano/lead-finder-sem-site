@@ -21,6 +21,10 @@ export const apiAuthPermissions = [
   'manual-messaging:open',
   'manual-messaging:confirm',
   'manual-messaging:opt-out',
+  'operator-test:prepare',
+  'operator-test:open',
+  'operator-test:confirm',
+  'operator-test:response',
 ] as const;
 export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
 
@@ -31,7 +35,7 @@ const apiAuthPermissionsFromEnvironment = z.string().superRefine((value, context
     context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS must not contain empty entries' });
     return;
   }
-  if (entries.some((entry) => entry.trim() !== entry || !/^[a-z]+(?::[a-z][a-z-]*)+$/.test(entry))) {
+  if (entries.some((entry) => entry.trim() !== entry || !/^[a-z][a-z-]*(?::[a-z][a-z-]*)+$/.test(entry))) {
     context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS contains a malformed permission' });
   }
   const duplicates = entries.filter((entry, index) => entries.indexOf(entry) !== index);
@@ -51,6 +55,11 @@ const integerFromEnvironment = (name: string, minimum: number, maximum: number, 
     .transform(Number)
     .pipe(z.number().int().min(minimum).max(maximum));
 
+const optionalEnvironmentString = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(
+  (value) => value === '' ? undefined : value,
+  schema.optional(),
+);
+
 const commonSchema = z.object({
   DEPLOYMENT_PROFILE: z.enum(['oracle-vps', 'supabase-render']).default('oracle-vps'),
   DATABASE_URL: z.string().url().startsWith('postgresql://'),
@@ -62,10 +71,7 @@ const commonSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.enum(['true', 'false']).default('false'),
   ).transform((value) => value === 'true'),
-  OVERPASS_API_URL: z.preprocess(
-    (value) => value === '' ? undefined : value,
-    z.string().trim().url().optional(),
-  ),
+  OVERPASS_API_URL: optionalEnvironmentString(z.string().trim().url()),
 });
 
 const requireCollectionEndpoint = (
@@ -103,6 +109,14 @@ const apiSchema = commonSchema.extend({
   SHADOW_MODE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   PILOT_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   REAL_PROVIDER_CONFIGURED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  OPERATOR_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  OPERATOR_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  OPERATOR_TEST_WHATSAPP_E164: optionalEnvironmentString(
+    z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'OPERATOR_TEST_WHATSAPP_E164 must use E.164 format'),
+  ),
+  OPERATOR_TEST_FINGERPRINT_KEY: optionalEnvironmentString(
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_TEST_FINGERPRINT_KEY must contain printable non-space ASCII characters only'),
+  ),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
@@ -110,6 +124,29 @@ const apiSchema = commonSchema.extend({
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  const operatorTestSecretsConfigured = configuration.OPERATOR_TEST_WHATSAPP_E164 !== undefined
+    || configuration.OPERATOR_TEST_FINGERPRINT_KEY !== undefined;
+  if (!configuration.OPERATOR_TEST_ENABLED && operatorTestSecretsConfigured) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_ENABLED'],
+      message: 'OPERATOR_TEST_ENABLED must be true when operator test secrets are configured',
+    });
+  }
+  if (configuration.OPERATOR_TEST_ENABLED && !configuration.OPERATOR_TEST_WHATSAPP_E164) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_WHATSAPP_E164'],
+      message: 'OPERATOR_TEST_WHATSAPP_E164 is required when OPERATOR_TEST_ENABLED=true',
+    });
+  }
+  if (configuration.OPERATOR_TEST_ENABLED && !configuration.OPERATOR_TEST_FINGERPRINT_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_FINGERPRINT_KEY'],
+      message: 'OPERATOR_TEST_FINGERPRINT_KEY is required when OPERATOR_TEST_ENABLED=true',
+    });
+  }
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
     const unsafe = !configuration.DRY_RUN || configuration.REAL_SEND_ENABLED
       || configuration.REAL_PROVIDERS_ENABLED || configuration.COLLECTION_EGRESS_ENABLED

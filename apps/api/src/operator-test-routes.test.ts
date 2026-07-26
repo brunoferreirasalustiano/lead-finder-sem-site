@@ -1,7 +1,11 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  confirmOperatorTestResult,
   OperatorChannelTestError,
+  prepareOperatorWhatsAppTest,
+  recordOperatorTestOpen,
+  recordOperatorTestResponse,
   type Database,
   type OperatorTestRuntime,
 } from '@lead-finder/database';
@@ -19,7 +23,7 @@ const runtime: OperatorTestRuntime = {
 const db = {} as Database;
 
 const defaultOperations = () => ({
-  prepare: vi.fn(async () => ({
+  prepare: vi.fn(async (..._args: Parameters<typeof prepareOperatorWhatsAppTest>) => ({
     preparationId,
     state: 'PREPARED' as const,
     purpose: 'OPERATOR_TEST' as const,
@@ -32,24 +36,24 @@ const defaultOperations = () => ({
     preparedAt: new Date('2026-07-26T00:00:00.000Z'),
     replayed: false,
   })),
-  open: vi.fn(async () => ({
+  open: vi.fn(async (..._args: Parameters<typeof recordOperatorTestOpen>) => ({
     eventId: '22222222-2222-4222-8222-222222222222',
     state: 'OPENED' as const,
     result: undefined,
     createdAt: new Date('2026-07-26T00:01:00.000Z'),
     replayed: false,
   })),
-  confirm: vi.fn(async (_db: Database, _id: string, input: { result: 'SENT_CONFIRMED' | 'NOT_SENT' | 'OPERATIONAL_ERROR' }) => ({
+  confirm: vi.fn(async (...args: Parameters<typeof confirmOperatorTestResult>) => ({
     eventId: '33333333-3333-4333-8333-333333333333',
     state: 'CONTACT_CONFIRMED' as const,
-    result: input.result,
+    result: args[2].result,
     createdAt: new Date('2026-07-26T00:02:00.000Z'),
     replayed: false,
   })),
-  response: vi.fn(async (_db: Database, _id: string, input: { result: 'RECEIVED_CONFIRMED' | 'NOT_RECEIVED' | 'READ_CONFIRMED' }) => ({
+  response: vi.fn(async (...args: Parameters<typeof recordOperatorTestResponse>) => ({
     eventId: '44444444-4444-4444-8444-444444444444',
     state: 'RESPONSE_RECORDED' as const,
-    result: input.result,
+    result: args[2].result,
     createdAt: new Date('2026-07-26T00:03:00.000Z'),
     replayed: false,
   })),
@@ -174,7 +178,7 @@ describe('operator test HTTP API', () => {
 
   it('returns sanitized errors without exposing private configuration', async () => {
     const operations = defaultOperations();
-    operations.prepare.mockImplementation(async () => {
+    operations.prepare.mockImplementation(async (..._args: Parameters<typeof prepareOperatorWhatsAppTest>) => {
       throw new OperatorChannelTestError(
         'Kill switch blocked +5511999999999 with secret operator-test-fingerprint-key-0001',
         'KILL_SWITCH_ENGAGED',

@@ -49,11 +49,14 @@ const localRequest = (
   req.end();
 });
 
+const FICTIONAL_E164 = '+12025550100';
+const FICTIONAL_DIGITS = '12025550100';
+
 const config = {
   LEAD_FINDER_API_URL: 'https://api.example.com',
   API_AUTH_TOKEN: 'x'.repeat(32),
   OPERATOR_TEST_AUTHORIZED: 'true',
-  OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+  OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
 };
 
 afterEach(() => {
@@ -74,13 +77,13 @@ describe('operator test console', () => {
       ...config,
       API_AUTH_TOKEN: 'short',
     })).toThrow(/32 characters/);
-    expect(() => parseOperatorPhone('19 97151-9337')).toThrow(/E.164/);
-    expect(resolveOperatorConsoleConfig(config).maskedPhone).toBe('••••9337');
+    expect(() => parseOperatorPhone('202 555-0100')).toThrow(/E.164/);
+    expect(resolveOperatorConsoleConfig(config).maskedPhone).toBe('••••0100');
   });
 
   it('creates only a canonical wa.me URL with the fixed local message', () => {
-    const link = createOperatorWhatsAppUrl('+5519971519337', 'Teste interno');
-    expect(link).toBe('https://wa.me/5519971519337?text=Teste%20interno');
+    const link = createOperatorWhatsAppUrl(FICTIONAL_E164, 'Teste interno');
+    expect(link).toBe(`https://wa.me/${FICTIONAL_DIGITS}?text=Teste%20interno`);
     expect(isSafeWhatsAppUrl(link, 'Teste interno')).toBe(true);
     expect(isSafeWhatsAppUrl(`${link}&source=test`, 'Teste interno')).toBe(false);
   });
@@ -140,8 +143,8 @@ describe('operator test console', () => {
       const address = server.address() as AddressInfo;
       const home = await localRequest(address.port, '/');
       expect(home.status).toBe(200);
-      expect(home.body).toContain('••••9337');
-      expect(home.body).not.toContain('5519971519337');
+      expect(home.body).toContain('••••0100');
+      expect(home.body).not.toContain(FICTIONAL_DIGITS);
       expect(home.body).not.toContain('wa.me');
 
       const csrf = home.body.match(/name="csrf" value="([^"]+)"/)?.[1];
@@ -155,7 +158,7 @@ describe('operator test console', () => {
       );
       expect(prepared.status).toBe(200);
       expect(prepared.body).toContain(preparationId);
-      expect(prepared.body).not.toContain('5519971519337');
+      expect(prepared.body).not.toContain(FICTIONAL_DIGITS);
       expect(prepared.body).not.toContain('wa.me');
 
       const prepareCall = apiFetch.mock.calls[0];
@@ -169,7 +172,7 @@ describe('operator test console', () => {
         new URLSearchParams({ csrf: csrf ?? '', preparationId }).toString(),
       );
       expect(opened.status).toBe(303);
-      expect(opened.headers.location).toMatch(/^https:\/\/wa\.me\/5519971519337\?text=/);
+      expect(opened.headers.location).toMatch(new RegExp(`^https://wa\\.me/${FICTIONAL_DIGITS}\\?text=`));
       expect(apiFetch.mock.calls[1]?.[0]).toBe(
         `https://api.example.com/operator-test-preparations/${preparationId}/open`,
       );
@@ -205,7 +208,7 @@ describe('operator test console', () => {
       templateVersion: 'v1',
       preparedAt: '2026-07-26T00:00:00.000Z',
       replayed: false,
-      link: 'https://wa.me/5519971519337?text=unexpected',
+      link: `https://wa.me/${FICTIONAL_DIGITS}?text=unexpected`,
     }), { status: 201, headers: { 'content-type': 'application/json' } }));
 
     const port = 48_000 + Math.floor(Math.random() * 5_000);
@@ -227,7 +230,7 @@ describe('operator test console', () => {
       );
       expect(response.status).toBe(422);
       expect(response.body).toContain('INVALID_OPERATOR_PREPARATION_RESPONSE');
-      expect(response.body).not.toContain('wa.me/5519971519337');
+      expect(response.body).not.toContain(`wa.me/${FICTIONAL_DIGITS}`);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -2,41 +2,31 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { approvedTemplates } from '@lead-finder/messaging';
+import { z } from 'zod';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
 const BODY_LIMIT_BYTES = 8_192;
-const PREPARATION_KEYS = new Set([
-  'preparationId',
-  'state',
-  'purpose',
-  'channel',
-  'templateId',
-  'templateVersion',
-  'preparedAt',
-  'replayed',
-]);
 const RESPONSE_ACTIONS = [
   ['RECEIVED_CONFIRMED', 'Confirmar resposta recebida'],
   ['READ_CONFIRMED', 'Confirmar leitura'],
   ['NOT_RECEIVED', 'Registrar ausência de resposta'],
 ] as const;
 
-export const OPERATOR_TEST_MESSAGE =
-  'Olá! Este é um teste interno autorizado do canal manual de WhatsApp do Lead Finder Brasil.\n\n' +
-  'Nenhum lead real está envolvido. Não é necessário responder.';
+const operatorPreparationSchema = z.object({
+  preparationId: z.string().uuid(),
+  state: z.literal('PREPARED'),
+  purpose: z.literal('OPERATOR_TEST'),
+  channel: z.literal('WHATSAPP'),
+  templateId: z.literal('operator-whatsapp-channel-test'),
+  templateVersion: z.literal('v1'),
+  preparedAt: z.string().datetime({ offset: true }),
+  replayed: z.boolean(),
+}).strict();
 
-type OperatorPreparation = Readonly<{
-  preparationId: string;
-  state: 'PREPARED';
-  purpose: 'OPERATOR_TEST';
-  channel: 'WHATSAPP';
-  templateId: 'operator-whatsapp-channel-test';
-  templateVersion: 'v1';
-  preparedAt: string;
-  replayed: boolean;
-}>;
+type OperatorPreparation = z.infer<typeof operatorPreparationSchema>;
 
 type ActivePreparation = OperatorPreparation & Readonly<{
   maskedPhone: string;
@@ -100,7 +90,7 @@ export function isSafeWhatsAppUrl(value: string, expectedMessage: string): boole
 
 export function createOperatorWhatsAppUrl(
   phoneValue: string,
-  message = OPERATOR_TEST_MESSAGE,
+  message = approvedTemplates.operatorWhatsappTestV1.body,
 ): string {
   const phone = parseOperatorPhone(phoneValue);
   if (message.length < 1 || message.length > 2_000) {
@@ -128,32 +118,17 @@ export function resolveOperatorConsoleConfig(environment: NodeJS.ProcessEnv): Co
     apiBaseUrl: parseApiBaseUrl(apiUrl),
     apiToken,
     maskedPhone: `••••${phone.slice(-4)}`,
-    message: OPERATOR_TEST_MESSAGE,
+    message: approvedTemplates.operatorWhatsappTestV1.body,
     link: createOperatorWhatsAppUrl(phone),
   };
 }
 
 export function validateOperatorPreparation(value: unknown): OperatorPreparation {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  const result = operatorPreparationSchema.safeParse(value);
+  if (!result.success) {
     throw new Error('INVALID_OPERATOR_PREPARATION_RESPONSE');
   }
-  const item = value as Record<string, unknown>;
-  if (
-    Object.keys(item).some((key) => !PREPARATION_KEYS.has(key))
-    || typeof item['preparationId'] !== 'string'
-    || !UUID_PATTERN.test(item['preparationId'])
-    || item['state'] !== 'PREPARED'
-    || item['purpose'] !== 'OPERATOR_TEST'
-    || item['channel'] !== 'WHATSAPP'
-    || item['templateId'] !== 'operator-whatsapp-channel-test'
-    || item['templateVersion'] !== 'v1'
-    || typeof item['preparedAt'] !== 'string'
-    || Number.isNaN(Date.parse(item['preparedAt']))
-    || typeof item['replayed'] !== 'boolean'
-  ) {
-    throw new Error('INVALID_OPERATOR_PREPARATION_RESPONSE');
-  }
-  return item as OperatorPreparation;
+  return result.data;
 }
 
 const page = (title: string, body: string) => `<!doctype html>

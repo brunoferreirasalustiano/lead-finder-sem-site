@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { approvedTemplates } from '@lead-finder/messaging';
 import {
   createOperatorWhatsAppUrl,
   isSafeWhatsAppUrl,
@@ -81,14 +82,18 @@ describe('operator test console', () => {
     expect(resolveOperatorConsoleConfig(config).maskedPhone).toBe('••••0100');
   });
 
-  it('creates only a canonical wa.me URL with the fixed local message', () => {
-    const link = createOperatorWhatsAppUrl(FICTIONAL_E164, 'Teste interno');
-    expect(link).toBe(`https://wa.me/${FICTIONAL_DIGITS}?text=Teste%20interno`);
-    expect(isSafeWhatsAppUrl(link, 'Teste interno')).toBe(true);
-    expect(isSafeWhatsAppUrl(`${link}&source=test`, 'Teste interno')).toBe(false);
+  it('uses the API-approved template body for the local message and wa.me URL', () => {
+    const message = approvedTemplates.operatorWhatsappTestV1.body;
+    const resolved = resolveOperatorConsoleConfig(config);
+    const link = createOperatorWhatsAppUrl(FICTIONAL_E164);
+    expect(resolved.message).toBe(message);
+    expect(link).toBe(`https://wa.me/${FICTIONAL_DIGITS}?text=${encodeURIComponent(message)}`);
+    expect(isSafeWhatsAppUrl(link, message)).toBe(true);
+    expect(isSafeWhatsAppUrl(`${link}&source=test`, message)).toBe(false);
+    expect(message).not.toContain('Não é necessário responder');
   });
 
-  it('accepts only the sanitized fixed preparation contract', () => {
+  it('accepts only the strict operator preparation response contract', () => {
     const value = {
       preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
       state: 'PREPARED',
@@ -100,14 +105,36 @@ describe('operator test console', () => {
       replayed: false,
     };
     expect(validateOperatorPreparation(value).purpose).toBe('OPERATOR_TEST');
-    expect(() => validateOperatorPreparation({
-      ...value,
-      message: 'should never come from the API',
-    })).toThrow('INVALID_OPERATOR_PREPARATION_RESPONSE');
-    expect(() => validateOperatorPreparation({
-      ...value,
-      recipientFingerprint: 'a'.repeat(64),
-    })).toThrow('INVALID_OPERATOR_PREPARATION_RESPONSE');
+    expect(validateOperatorPreparation(value).preparationId).toBe(value.preparationId);
+
+    const invalidValues: unknown[] = [
+      { ...value, preparationId: 'invalid-uuid' },
+      { ...value, preparedAt: '0' },
+      { ...value, preparedAt: 'July 26, 2026' },
+      { ...value, preparedAt: '2026-02-30T00:00:00.000Z' },
+      { ...value, message: 'should never come from the API' },
+      { ...value, phone: FICTIONAL_E164 },
+      { ...value, url: 'https://wa.me/example' },
+      { ...value, link: 'https://wa.me/example' },
+      { ...value, recipientFingerprint: 'a'.repeat(64) },
+      { ...value, fingerprint: 'a'.repeat(64) },
+      { ...value, templateId: 'different-template' },
+      { ...value, templateVersion: 'v2' },
+      { ...value, purpose: 'DIFFERENT_PURPOSE' },
+      { ...value, channel: 'EMAIL' },
+      { ...value, state: 'OPENED' },
+      { ...value, replayed: 'false' },
+      null,
+      [],
+      'invalid',
+      1,
+      true,
+    ];
+    for (const invalidValue of invalidValues) {
+      expect(() => validateOperatorPreparation(invalidValue)).toThrow(
+        'INVALID_OPERATOR_PREPARATION_RESPONSE',
+      );
+    }
   });
 
   it('prepares, opens and confirms through the API while keeping phone and link local', async () => {
@@ -173,6 +200,13 @@ describe('operator test console', () => {
       );
       expect(opened.status).toBe(303);
       expect(opened.headers.location).toMatch(new RegExp(`^https://wa\\.me/${FICTIONAL_DIGITS}\\?text=`));
+      expect(new URL(String(opened.headers.location)).searchParams.get('text')).toBe(
+        approvedTemplates.operatorWhatsappTestV1.body,
+      );
+      expect(isSafeWhatsAppUrl(
+        String(opened.headers.location),
+        approvedTemplates.operatorWhatsappTestV1.body,
+      )).toBe(true);
       expect(apiFetch.mock.calls[1]?.[0]).toBe(
         `https://api.example.com/operator-test-preparations/${preparationId}/open`,
       );
@@ -193,6 +227,15 @@ describe('operator test console', () => {
         `https://api.example.com/operator-test-preparations/${preparationId}/confirm`,
       );
       expect(apiFetch).toHaveBeenCalledTimes(3);
+      for (const [, init] of apiFetch.mock.calls) {
+        const requestBody = JSON.parse(String((init as RequestInit | undefined)?.body));
+        expect(requestBody).not.toHaveProperty('phone');
+        expect(requestBody).not.toHaveProperty('message');
+        expect(requestBody).not.toHaveProperty('url');
+        expect(requestBody).not.toHaveProperty('link');
+      }
+      expect(JSON.parse(String((prepareCall?.[1] as RequestInit | undefined)?.body))).toEqual({});
+      expect((prepareCall?.[1] as RequestInit | undefined)?.headers).toHaveProperty('idempotency-key');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

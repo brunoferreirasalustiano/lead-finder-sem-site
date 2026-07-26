@@ -91,7 +91,16 @@ export function registerOperatorTestRoutes(
         authorizationContextFor(request),
         runtime,
       );
-      return reply.status(result.replayed ? 200 : 201).send(result);
+      return reply.status(result.replayed ? 200 : 201).send({
+        preparationId: result.preparationId,
+        state: result.state,
+        purpose: result.purpose,
+        channel: result.channel,
+        templateId: result.templateId,
+        templateVersion: result.templateVersion,
+        preparedAt: result.preparedAt,
+        replayed: result.replayed,
+      });
     });
   });
 

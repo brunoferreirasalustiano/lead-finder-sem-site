@@ -78,7 +78,7 @@ describe('operator test HTTP API', () => {
     const unauthenticated = await app.inject({
       method: 'POST',
       url: '/operator-tests/whatsapp/preparations',
-      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+      payload: {},
     });
     expect(unauthenticated.statusCode).toBe(401);
 
@@ -86,7 +86,7 @@ describe('operator test HTTP API', () => {
       method: 'POST',
       url: '/operator-tests/whatsapp/preparations',
       headers,
-      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+      payload: {},
     });
     expect(forbidden.statusCode).toBe(403);
     await app.close();
@@ -98,15 +98,23 @@ describe('operator test HTTP API', () => {
       method: 'POST',
       url: '/operator-tests/whatsapp/preparations',
       headers: { authorization: `Bearer ${token}` },
-      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+      payload: {},
     });
     expect(missingKey.statusCode).toBe(400);
+
+    const clientSelectedTemplate = await app.inject({
+      method: 'POST',
+      url: '/operator-tests/whatsapp/preparations',
+      headers,
+      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+    });
+    expect(clientSelectedTemplate.statusCode).toBe(400);
 
     const response = await app.inject({
       method: 'POST',
       url: '/operator-tests/whatsapp/preparations',
       headers,
-      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+      payload: {},
     });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toEqual({
@@ -202,7 +210,7 @@ describe('operator test HTTP API', () => {
       method: 'POST',
       url: '/operator-tests/whatsapp/preparations',
       headers,
-      payload: { templateId: 'operator-whatsapp-channel-test', templateVersion: 'v1' },
+      payload: {},
     });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({

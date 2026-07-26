@@ -1,354 +1,284 @@
 # Estado operacional consolidado
 
-**Última revisão:** 24 de julho de 2026  
-**Baseline funcional aprovada da `main`:** `181d914da253b106ae99d95c5c7792ef87128296`  
-**HEAD administrativa atual da `main`:** `c43372fc7fd07a3a2ed1f01ac41f8724614eadd9`  
-**Branch HML sincronizada:** `17f12a012dc0e14fa6ce42923ec1d6beb909550f`  
-**Render live observado:** `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`  
+**Última revisão:** 25 de julho de 2026  
+**`main` aprovada:** `35e1b2087abd61aa9b407afa1536259d4c8226a8`  
+**Branch HML:** `hml/render-supabase-plan-b`  
+**HEAD HML após PR #143:** `1c61444809cbe7b33def071bb1bd352c6234906e`  
 **Gate central:** issue #117  
-**Estado:** `REAL_MANUAL_PILOT_BLOCKED`  
+**Estado comercial:** `REAL_MANUAL_PILOT_BLOCKED=true`  
 **Mensagens:** `NOT_SENT`  
 **Contatos enviados:** `0`
 
-Este documento resume o estado verificável do Lead Finder Brasil. O código, as migrations, as evidências de CI e as inspeções autenticadas são a autoridade técnica. Issues e pull requests preservam o histórico detalhado.
-
-A HEAD administrativa atual contém uma criação e remoção imediata de arquivo temporário usado durante a reconciliação documental. A árvore final permaneceu equivalente à baseline funcional aprovada; nenhum código, configuração, banco, secret ou ambiente foi alterado por esses commits administrativos.
+Este documento contém o estado operacional verificável atual. Pull requests, issues, migrations, CI e inspeções autenticadas preservam as evidências detalhadas.
 
 ## Veredito executivo
 
-A fundação técnica para o piloto manual controlado está implementada e validada, mas nenhum contato real está autorizado.
+A base de código está íntegra, testada e sincronizada com a branch de homologação. O núcleo persistente `OPERATOR_TEST` está implementado e endurecido, mas ainda não está disponível de ponta a ponta no ambiente hospedado.
 
-Comprovado:
-
-- mensageria manual assistida sem provider real;
-- autenticação e autorização por ação;
-- histórico append-only para autorização, evidência e eventos manuais;
-- opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueio administrativo prioritários;
-- Data API Supabase em postura deny-all;
-- compatibilidade fail-closed dos registros local e Supabase de migrations;
-- replay de `0019/0020` bloqueado e testado;
-- audit de dependências sem vulnerabilidade alta reportada;
-- imagens finais de API e worker sem dependências de desenvolvimento;
-- migrations e restore preservados em target operacional separado;
-- branch de homologação sincronizada com o hardening atual da `main`;
-- paridade de conteúdo entre `main` e HML comprovada após a PR #126;
-- API pública live e ready;
-- shortlist sanitizada e tracker privado sem PII;
-- zero canais `BUSINESS / APPROVED`;
-- zero mensagens e contatos enviados.
-
-Ainda bloqueia o piloto:
-
-- `DATABASE_URL` e flags efetivas do Render não comprovados;
-- serviço Render executando SHA antigo;
-- deploy controlado e gates pós-deploy não executados;
-- fichas privadas dos leads prioritários incompletas;
-- supressões específicas não consultadas por lead vinculado;
-- aprovação individual do operador não emitida.
-
-## Baseline técnica
-
-PRs integradas mais relevantes:
-
-- PR #118 — fundação e governança do gate manual;
-- PR #121 — compatibilidade dos registros de migrations;
-- PR #122 — correção transitiva de `find-my-way`;
-- PR #119 — documentação consolidada do gate #117;
-- PR #123 — sincronização inicial da branch HML;
-- PR #124 — exclusão de dependências dev das imagens de runtime;
-- PR #125 — registro documental do hardening de runtime;
-- PR #126 — sincronização do hardening atual na branch HML.
-
-Evidências recentes:
-
-- CI #429 verde para a PR #121;
-- CI #438 verde para a PR #122;
-- CI #449 verde para a PR #119;
-- CI #452 e Deployment smoke #209 verdes para a sincronização HML inicial;
-- CI #454 e Deployment smoke #210 verdes para a PR #124;
-- CI #457 verde para a atualização documental da PR #125;
-- CI #460 e Deployment smoke #212 verdes para a sincronização HML da PR #126;
-- CI #461 verde após a integração;
-- repetição do multiarch aprovou API, worker e manifests em AMD64/ARM64;
-- integração PostgreSQL, restart lógico, persistência e restore-compose aprovados;
-- teste de mensageria manual assistida aprovado sem envio externo;
-- gate sintético de lote aprovado sem provider, webhook ou egress.
-
-## Registros de migrations
-
-O Supabase de homologação utiliza dois registros legítimos:
-
-- `public.schema_migrations`: `0001` a `0018`;
-- `supabase_migrations.schema_migrations`: `0019` e `0020`.
-
-A PR #121 implementou:
-
-- leitura dos dois registros;
-- reconhecimento por nome lógico;
-- classificação `LOCAL`, `SUPABASE`, `BOTH` ou `PENDING`;
-- rejeição de nomes ou versões incompatíveis;
-- rejeição fail-closed de migration Supabase-only sem validador;
-- validação de tabelas, foreign keys, triggers, RLS e ACL;
-- segunda execução idempotente;
-- zero inserção artificial de `0019/0020` no histórico local;
-- ausência de DDL sobre funções e triggers protegidos, comprovada por OID.
+O projeto não está quebrado, porém não está autorizado para operação comercial real.
 
 Estados:
 
-- `MIGRATION_REGISTRY_SPLIT_VERIFIED`;
-- `MIGRATION_RUNNER_COMPATIBILITY_COMPLETE`;
-- `MIGRATION_REAPPLY_GUARD_PROVED`.
+- `CODEBASE_HEALTHY`;
+- `CI_GREEN`;
+- `MAIN_HML_SYNCED`;
+- `OPERATOR_TEST_CORE_READY`;
+- `OPERATOR_TEST_END_TO_END_NOT_READY`;
+- `RENDER_NEW_CODE_NOT_DEPLOYED`;
+- `MIGRATION_0021_NOT_APPLIED`;
+- `LEAST_PRIVILEGE_DATABASE_ROLE_PENDING`;
+- `REAL_MANUAL_PILOT_BLOCKED`;
+- `MESSAGES_NOT_SENT`.
 
-Regras permanentes:
+## Baseline técnica atual
 
-- não reaplicar `0019/0020` manualmente;
-- não inserir versões artificialmente no registro local;
-- não alterar objetos ou grants fora de migration revisada;
-- interromper diante de divergência de histórico ou paridade.
+PRs recentes integradas:
 
-## Segurança de dependências e imagens
+- PR #139 — atualização do toolchain de desenvolvimento e audit sem vulnerabilidades;
+- PR #141 — console local isolada para operação manual de WhatsApp;
+- PR #140 — núcleo persistente, append-only e fail-closed `OPERATOR_TEST`;
+- PR #142 — sincronização da console local na HML;
+- PR #143 — sincronização do núcleo endurecido `OPERATOR_TEST` na HML.
 
-### Dependência transitiva
+A branch HML contém todo o conteúdo atual da `main` e preserva apenas commits administrativos próprios. A comparação após a PR #143 apresentou `behind_by=0` e nenhuma diferença de arquivos em relação à `main`.
 
-A PR #122 corrigiu `GHSA-c96f-x56v-gq3h` na cadeia:
+## Evidência de CI
 
-`@lead-finder/api` → `fastify 5.10.0` → `find-my-way 9.6.0`.
+A CI #548 foi concluída com sucesso após a integração das mudanças atuais.
 
-Correção:
+Aprovado:
 
-- `find-my-way 9.6.0 → 9.7.0`;
-- alteração lockfile-only;
-- sem `npm audit fix --force`;
-- audit final verde nos perfis `oracle-vps` e `supabase-render`.
+- `npm ci`;
+- typecheck;
+- lint;
+- testes unitários;
+- cobertura;
+- build;
+- audit de dependências;
+- `git diff --check`;
+- validação dos perfis `supabase-render` e `oracle-vps`;
+- aplicação dupla das migrations em PostgreSQL descartável;
+- compatibilidade dos registros local e Supabase de migrations;
+- Data API deny-all;
+- mensageria manual assistida;
+- `OPERATOR_TEST` em PostgreSQL;
+- gate sintético de lote;
+- reconciliação de supressões;
+- segundo passe de prontidão;
+- persistência após restart lógico;
+- restore-compose;
+- API e worker em AMD64 e ARM64;
+- manifests multiarch.
 
-### Dependências de desenvolvimento no runtime
+Os testes são sintéticos ou executados em infraestrutura descartável. Nenhuma mensagem real foi enviada.
 
-A inspeção do Render registrou warning de `glob@10.5.0 deprecated` no deploy antigo. A análise da baseline confirmou que `glob`, `tsx` e `typescript` eram dependências de desenvolvimento, mas o `node_modules` completo do estágio de build era copiado para as imagens finais.
+## Segurança do núcleo `OPERATOR_TEST`
 
-A PR #124 implementou:
+Implementado pela migration incremental `0021_operator_channel_test.sql` e pelo módulo de banco correspondente.
 
-- target `tools` na imagem da API para migration e restore;
-- estágio `production-deps` com `npm prune --omit=dev`;
-- API e worker copiando somente dependências de produção;
-- build final falhando caso `glob`, `tsx` ou `typescript` estejam no runtime;
-- imports e artefatos de produção validados durante o build;
-- `migrate` e `restore-suppression` usando explicitamente o target `tools`;
-- nenhuma alteração em `render.yaml`, flags, secrets ou banco.
+Controles comprovados:
 
-A PR #126 sincronizou esse hardening na branch HML. O warning pode continuar visível no Render enquanto o serviço permanecer no SHA antigo; isso não comprova regressão na imagem nova.
+- propósito fixo `OPERATOR_TEST`;
+- canal fixo `WHATSAPP`;
+- template fixo `operator-whatsapp-channel-test` versão `v1`;
+- telefone, principal e chave de idempotência protegidos por HMAC-SHA256 com separação de domínio;
+- persistência somente de UUIDs, enums, timestamps e fingerprints escalares;
+- ausência de telefone, mensagem, URL, principal e idempotency key em formato bruto;
+- FK composta vinculando cada evento ao mesmo principal da preparação;
+- histórico append-only;
+- transições protegidas no serviço e no PostgreSQL;
+- locks transacionais e constraints para idempotência e concorrência;
+- `service_role` sem `INSERT` direto nas tabelas;
+- escrita somente por funções SQL allowlisted;
+- `search_path` fixo;
+- `PUBLIC`, `anon` e `authenticated` sem acesso;
+- testes negativos de PII e inspeção integral dos registros persistidos.
 
-Estados:
+Sequência permitida:
 
-- `DEPENDENCY_AUDIT_CLEAN`;
-- `RUNTIME_DEV_DEPENDENCIES_EXCLUDED`;
-- `OPERATIONAL_TOOLS_TARGET_PRESERVED`;
-- `RENDER_HML_RUNTIME_HARDENING_SYNCED`.
+`PREPARED → OPENED → CONTACT_CONFIRMED → RESPONSE_RECORDED`
+
+Regras:
+
+- confirmação exige `OPENED`;
+- resposta exige `SENT_CONFIRMED`;
+- `NOT_SENT` não pode produzir resposta;
+- replays divergentes e estados contraditórios falham fechados.
+
+## Limitação arquitetural do banco
+
+A homologação ainda utiliza uma conexão PostgreSQL privilegiada. Um proprietário do banco pode ultrapassar grants, alterar funções ou modificar objetos.
+
+Antes de ativar o novo fluxo hospedado, criar uma role dedicada de runtime com privilégio mínimo, sem poderes de owner, DDL ou bypass de RLS.
+
+A role deve possuir somente:
+
+- conexão ao banco correto;
+- `USAGE` nos schemas necessários;
+- `SELECT` estritamente necessário;
+- `EXECUTE` nas funções allowlisted;
+- nenhuma permissão direta de `INSERT`, `UPDATE` ou `DELETE` nas tabelas `OPERATOR_TEST`;
+- nenhuma permissão de criação ou alteração de objetos.
+
+Nenhuma alteração de credencial ou role foi realizada pelas PRs #140–#143.
 
 ## Supabase de homologação
 
 Projeto: `lead-finder-brasil-homologacao`  
 Project ref: `ondvzdvlwntrnieodifi`  
 Região: `sa-east-1`  
-Estado: `ACTIVE_HEALTHY`
+Estado previamente observado: `ACTIVE_HEALTHY`
 
-Comprovado por inspeção autenticada e somente leitura:
+Comprovado:
 
-- PostgreSQL ativo;
-- registros `0001–0018` e `0019/0020` presentes nos mecanismos correspondentes;
-- objetos, constraints, funções, triggers, RLS e ACL esperados presentes;
-- RLS habilitada sem policies permissivas;
-- zero acesso efetivo para `PUBLIC`, `anon` e `authenticated` nas tabelas manuais;
-- `service_role` limitado a `SELECT` e `INSERT` nas tabelas append-only;
-- `CREATE` revogado no schema público;
-- nenhuma Edge Function ativa para envio;
-- zero registros observados nas tabelas operacionais consultadas.
+- `DATABASE_URL` do Render corresponde ao projeto de homologação;
+- senha do banco foi rotacionada após exposição acidental;
+- connection string do Render foi atualizada;
+- `/health/live` retornou HTTP 200;
+- `/health/ready` retornou HTTP 200 com `status=ready`;
+- endpoint interno sem token retornou HTTP 401;
+- nenhum erro recente foi observado após a rotação;
+- incidente de credencial encerrado.
 
-A ausência de registros não substitui a consulta específica de supressões após vincular os IDs privados dos leads.
+Não registrar neste repositório a connection string, senha, token ou valores equivalentes.
+
+Registros de migration previamente comprovados:
+
+- `public.schema_migrations`: `0001` a `0018`;
+- `supabase_migrations.schema_migrations`: `0019` e `0020`.
+
+Regras permanentes:
+
+- não reaplicar `0019/0020` manualmente;
+- não inserir versões artificialmente no registro local;
+- interromper diante de conflito entre os registros;
+- aplicar `0021` somente por procedimento revisado, transacional e reversível;
+- validar objetos, grants, RLS e histórico imediatamente após a aplicação.
+
+A migration `0021` ainda não foi aplicada no Supabase hospedado.
 
 ## Render de homologação
 
-Última inspeção autenticada e somente leitura:
+Serviço:
 
 - workspace: `Bruno's workspace`;
-- workspace ID: `tea-d72o44oule4c73cut1l0`;
 - serviço: `lead-finder-api-hml`;
-- service ID: `srv-d9fbpp6rnols73bko9f0`;
-- região: Virginia;
-- status: live e não suspenso;
-- branch efetiva: `hml/render-supabase-plan-b`;
-- branch HML atual: `17f12a012dc0e14fa6ce42923ec1d6beb909550f`;
-- auto-deploy: desligado;
+- branch: `hml/render-supabase-plan-b`;
+- auto-deploy: `off`;
 - health check: `/health/ready`;
-- SHA live: `49242ca6c8c0eb5f7792b99ea82f5af7db7d1c76`;
-- zero logs recentes de nível `error` na consulta;
-- warning de `glob@10.5.0 deprecated` observado no deploy antigo;
-- nenhuma ação de deploy, restart, rollback ou alteração de variável executada.
+- região: Virginia.
 
-Veredito da inspeção:
+Valores efetivos verificados manualmente:
 
-`RENDER_HML_RUNTIME_HARDENING_SYNCED_LIVE_OUTDATED`.
-
-O conector disponível não comprovou as variáveis efetivas. Permanecem não verificados:
-
-- correspondência do `DATABASE_URL` com o Supabase inspecionado;
 - `DEPLOYMENT_PROFILE=supabase-render`;
+- `NODE_ENV=production`;
 - `DRY_RUN=true`;
 - `SHADOW_MODE_ENABLED=true`;
 - `REAL_SEND_ENABLED=false`;
 - `REAL_PROVIDERS_ENABLED=false`;
 - `REAL_PROVIDER_CONFIGURED=false`;
 - `COLLECTION_EGRESS_ENABLED=false`;
-- estado efetivo do kill switch.
+- `API_AUTH_PERMISSIONS=pilot:read`;
+- `CORS_ALLOWED_ORIGINS` em origem deliberadamente inválida para acesso browser fail-closed.
 
-Configuração declarada no repositório não substitui a comprovação do ambiente efetivo.
+Secrets configurados sem divulgação de valores:
+
+- `DATABASE_URL`;
+- `API_AUTH_TOKEN`;
+- `INTERNAL_CRON_SECRET`.
+
+A identidade exata do deploy realizado durante a rotação da credencial não foi preservada como evidência confiável. Portanto, não afirmar que o Render executa o SHA atual da HML.
 
 Estados:
 
-- `RENDER_READ_ONLY_INSPECTION_COMPLETE`;
-- `RENDER_HML_RUNTIME_HARDENING_SYNCED`;
-- `RENDER_LIVE_DEPLOYMENT_OUTDATED`;
-- `RENDER_EFFECTIVE_FLAGS_NOT_VERIFIED`;
-- `RENDER_DATABASE_URL_NOT_VERIFIED`;
-- `POST_DEPLOY_GATE_BLOCKED`.
+- `RENDER_CONFIGURATION_FAIL_CLOSED`;
+- `RENDER_AUTO_DEPLOY_OFF`;
+- `RENDER_DATABASE_TARGET_VERIFIED`;
+- `RENDER_LIVE_CODE_IDENTITY_NOT_VERIFIED`;
+- `RENDER_NEW_OPERATOR_TEST_CODE_NOT_DEPLOYED`.
 
-## Mensageria manual assistida
+## Integração ponta a ponta pendente
 
-Implementado e aprovado em teste isolado:
+A PR #140 não incluiu:
 
-- WhatsApp somente com opt-in explícito;
-- e-mail somente com evidência `BUSINESS` e decisão humana `APPROVED`;
-- templates versionados;
-- principal autenticado e permissões por ação;
-- idempotência vinculada ao principal;
-- replay fail-closed;
-- snapshots sem telefone, e-mail ou mensagem integral;
-- estados `PREPARED`, `OPENED`, `CONTACT_CONFIRMED` e `RESPONSE_RECORDED`;
-- transições protegidas no serviço e PostgreSQL;
-- concorrência serializada por lead e preparação;
-- zero outbox, attempt e provider event no fluxo manual.
+- rotas HTTP da API para `OPERATOR_TEST`;
+- parser das novas configurações;
+- matriz de autorização das novas rotas;
+- ligação da console local com o núcleo persistente;
+- configuração dos secrets específicos de fingerprint;
+- aplicação da migration `0021` no Supabase;
+- deploy do código novo no Render;
+- teste manual hospedado.
 
-Os testes de mensageria são sintéticos ou de integração local. Não houve envio para WhatsApp, SMTP, OpenAI, webhook ou qualquer lead real.
+Criar uma PR separada para essa integração. Ela deve permanecer fail-closed e não pode reutilizar as permissões do piloto comercial.
 
-Abrir um link não confirma envio. `CONTACT_CONFIRMED` depende de confirmação humana explícita.
+Permissões previstas:
 
-## Supressões e revogação
+- `operator-test:prepare`;
+- `operator-test:open`;
+- `operator-test:confirm`;
+- `operator-test:response`.
 
-Prioridade absoluta:
+O escopo deve continuar isolado de leads, campanhas, piloto comercial, outbox e providers.
 
-1. opt-out global;
-2. opt-out por canal;
-3. `DO_NOT_CONTACT`;
-4. `NAO_CONTATAR`;
-5. bloqueio administrativo;
-6. elegibilidade do contato;
-7. autorização do canal.
+## Piloto comercial
 
-Autorização posterior não reativa automaticamente um bloqueio. Reativação exige fluxo separado, explícito, auditado e permissionado, fora do piloto atual.
+O piloto permanece bloqueado independentemente do teste fechado do operador.
 
-## Primeiro lote manual
+Pendências:
 
-Escopo:
-
-- até cinco negócios;
-- manutenção e serviços técnicos;
-- Campinas/SP e proximidades;
-- contato individual e manual;
-- WhatsApp somente com opt-in explícito;
-- lead frio somente por e-mail empresarial pertinente e aprovado;
-- primeiro contato sem link, imagem, PDF, proposta ou preço;
-- opt-out imediato;
-- nenhum follow-up automático.
-
-Prioridades privadas:
-
-- `LF-TM-01` — `WEAK_CONVERSION` + `BUSINESS_CANDIDATE`;
-- `LF-TM-04` — `WEAK_SITE` + `BUSINESS_CANDIDATE`;
-- `LF-TM-05` — `WEAK_CONVERSION` + `BUSINESS_CANDIDATE`;
-- `LF-TM-09` — `WEAK_SITE` + `BUSINESS_CANDIDATE`.
-
-`BUSINESS_CANDIDATE` não equivale a `BUSINESS / APPROVED`. Todos permanecem `NOT_SENT`.
-
-O tracker privado registra identidade, fontes, diagnóstico, canal, supressões, rubrica e aprovação individual sem publicar PII.
-
-## Gates concluídos
-
-- fundação de mensageria manual;
-- governança do primeiro contato;
-- Data API deny-all;
-- compatibilidade e replay guard de migrations;
-- audit de dependências;
-- exclusão de dependências dev das imagens finais;
-- target operacional de migration/restore preservado;
-- integração e restart lógico;
-- restore-compose;
-- imagens AMD64/ARM64 e manifests;
-- aviso público de privacidade;
-- API pública live e ready;
-- endpoint interno protegido;
-- categoria e região do primeiro lote;
-- shortlist reduzida a quatro prioridades;
-- tracker privado preparado;
-- branch HML sincronizada com o hardening atual da `main`;
-- testes sintéticos e de integração de mensageria aprovados sem envio real.
-
-## Bloqueios restantes
-
-### Ambiente efetivo
-
-- confirmar `DATABASE_URL` sem revelar a connection string;
-- confirmar flags efetivas;
-- selecionar SHA aprovado;
-- realizar deploy controlado somente após autorização específica;
-- revisar logs e health checks pós-deploy;
-- comprovar restart;
-- testar kill switch;
-- comprovar ausência observada de egress Meta, SMTP, OpenAI e webhooks;
-- comprovar backup/restore aplicável, rollback e smoke test.
-
-### Leads e canais
-
-- recuperar ou reconstruir de forma verificável o mapeamento privado LF-TM;
+- recuperar ou reconstruir o mapeamento privado dos candidatos;
 - concluir até cinco fichas privadas;
 - confirmar identidade, atividade, região e diagnóstico;
 - classificar canal como `BUSINESS / APPROVED` ou rejeitar;
 - obter opt-in válido para WhatsApp;
 - consultar opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueios por lead;
 - aplicar rubrica mínima `8/10`, sem dimensão em zero;
-- obter aprovação individual de Bruno F. Salustiano.
+- obter aprovação individual de Bruno F. Salustiano;
+- emitir veredito explícito `REAL_MANUAL_PILOT_READY`.
 
-## Próxima sequência operacional
+`BUSINESS_CANDIDATE` não autoriza contato.
 
-1. integrar esta reconciliação documental após CI verde;
-2. manter o Render bloqueado até comprovação das variáveis e do banco efetivos;
-3. concluir fichas privadas e supressões dos leads prioritários;
-4. preparar checklist de deploy controlado, sem executá-lo;
-5. revisar o checklist final da issue #117;
-6. emitir `REAL_MANUAL_PILOT_READY` ou manter `REAL_MANUAL_PILOT_BLOCKED`.
+## Performance futura
 
-Até 28 de julho de 2026 às 14:00, nenhuma tarefa deve depender do Codex. A retomada futura deve apenas selecionar a tarefa técnica de maior valor, com modelo Sol, Terra ou Luna indicado conforme risco e complexidade.
+A revisão dos advisors identificou foreign keys sem índice de cobertura. Isso não bloqueia o primeiro lote pequeno, mas deve ser analisado antes de ampliar volume.
 
-## Integrações fora do piloto
+Não criar ou remover índices apenas com base em advisors de um banco quase vazio. Exigir plano de consulta, padrão de acesso e benchmark.
 
-Continuam desligadas:
+Issue de acompanhamento: #134.
+
+## Próxima sequência autorizável
+
+1. reconciliar issues #92, #117 e #135 com este estado;
+2. criar plano e issue para role PostgreSQL de privilégio mínimo;
+3. implementar em PR isolada as rotas e configurações `OPERATOR_TEST`;
+4. validar CI integralmente;
+5. preparar aplicação transacional da migration `0021` e rollback;
+6. preparar deploy manual do SHA aprovado, sem auto-deploy;
+7. executar somente após checklist e autorização operacional final;
+8. validar health, logs, ACLs, PII, kill switch, restart e ausência de egress;
+9. realizar um único teste fechado com destino pertencente ao operador;
+10. manter leads reais e mensagens comerciais bloqueados.
+
+## Regras invariáveis
+
+Continuam desligados:
 
 - WhatsApp Cloud API;
-- SMTP ou provider oficial de e-mail;
+- SMTP/provider de e-mail;
 - OpenAI para rascunhos;
-- webhooks assinados;
+- webhooks;
 - follow-ups automáticos;
-- n8n para campanhas reais.
+- n8n para campanhas reais;
+- qualquer automação de WhatsApp Web.
 
-WhatsApp Web, Baileys, Evolution API e sessões não oficiais permanecem proibidos.
-
-## Regras de documentação
-
-Não registrar publicamente:
+Nunca publicar:
 
 - tokens ou senhas;
 - connection strings;
 - telefone ou e-mail de lead;
-- mensagens integrais;
+- mensagem integral;
 - payload bruto;
 - prints com PII.
 
-Toda alteração de arquitetura, flags, ambiente, segurança, provider, piloto ou estado deve atualizar este documento, o runbook afetado, a issue correspondente e as evidências de CI.
+Toda alteração de arquitetura, ambiente, segurança, provider, piloto ou estado deve atualizar este documento, as issues relacionadas e as evidências de CI.

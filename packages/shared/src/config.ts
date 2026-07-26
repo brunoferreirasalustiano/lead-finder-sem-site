@@ -35,7 +35,7 @@ const apiAuthPermissionsFromEnvironment = z.string().superRefine((value, context
     context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS must not contain empty entries' });
     return;
   }
-  if (entries.some((entry) => entry.trim() !== entry || !/^[a-z]+(?::[a-z][a-z-]*)+$/.test(entry))) {
+  if (entries.some((entry) => entry.trim() !== entry || !/^[a-z][a-z-]*(?::[a-z][a-z-]*)+$/.test(entry))) {
     context.addIssue({ code: 'custom', message: 'API_AUTH_PERMISSIONS contains a malformed permission' });
   }
   const duplicates = entries.filter((entry, index) => entries.indexOf(entry) !== index);

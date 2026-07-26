@@ -22,12 +22,12 @@ const runtime: OperatorTestRuntime = {
 };
 const db = {} as Database;
 
-const defaultOperations = () => ({
-  prepare: vi.fn(async (..._args: Parameters<typeof prepareOperatorWhatsAppTest>) => ({
+const defaultOperations = () => {
+  const prepare = vi.fn<typeof prepareOperatorWhatsAppTest>().mockResolvedValue({
     preparationId,
-    state: 'PREPARED' as const,
-    purpose: 'OPERATOR_TEST' as const,
-    channel: 'WHATSAPP' as const,
+    state: 'PREPARED',
+    purpose: 'OPERATOR_TEST',
+    channel: 'WHATSAPP',
     templateId: 'operator-whatsapp-channel-test',
     templateVersion: 'v1',
     recipientFingerprint: 'a'.repeat(64),
@@ -35,29 +35,30 @@ const defaultOperations = () => ({
     link: 'https://wa.me/5511999999999?text=Internal%20operator%20test',
     preparedAt: new Date('2026-07-26T00:00:00.000Z'),
     replayed: false,
-  })),
-  open: vi.fn(async (..._args: Parameters<typeof recordOperatorTestOpen>) => ({
+  });
+  const open = vi.fn<typeof recordOperatorTestOpen>().mockResolvedValue({
     eventId: '22222222-2222-4222-8222-222222222222',
-    state: 'OPENED' as const,
+    state: 'OPENED',
     result: undefined,
     createdAt: new Date('2026-07-26T00:01:00.000Z'),
     replayed: false,
-  })),
-  confirm: vi.fn(async (...args: Parameters<typeof confirmOperatorTestResult>) => ({
+  });
+  const confirm = vi.fn<typeof confirmOperatorTestResult>().mockImplementation((...args) => Promise.resolve({
     eventId: '33333333-3333-4333-8333-333333333333',
-    state: 'CONTACT_CONFIRMED' as const,
+    state: 'CONTACT_CONFIRMED',
     result: args[2].result,
     createdAt: new Date('2026-07-26T00:02:00.000Z'),
     replayed: false,
-  })),
-  response: vi.fn(async (...args: Parameters<typeof recordOperatorTestResponse>) => ({
+  }));
+  const response = vi.fn<typeof recordOperatorTestResponse>().mockImplementation((...args) => Promise.resolve({
     eventId: '44444444-4444-4444-8444-444444444444',
-    state: 'RESPONSE_RECORDED' as const,
+    state: 'RESPONSE_RECORDED',
     result: args[2].result,
     createdAt: new Date('2026-07-26T00:03:00.000Z'),
     replayed: false,
-  })),
-});
+  }));
+  return { prepare, open, confirm, response };
+};
 
 async function createApp(permissions: readonly Permission[], operations = defaultOperations()) {
   const app = Fastify({ logger: false });
@@ -199,12 +200,10 @@ describe('operator test HTTP API', () => {
 
   it('returns sanitized errors without exposing private configuration', async () => {
     const operations = defaultOperations();
-    operations.prepare.mockImplementation(async (..._args: Parameters<typeof prepareOperatorWhatsAppTest>) => {
-      throw new OperatorChannelTestError(
-        'Kill switch blocked +5511999999999 with secret operator-test-fingerprint-key-0001',
-        'KILL_SWITCH_ENGAGED',
-      );
-    });
+    operations.prepare.mockRejectedValue(new OperatorChannelTestError(
+      'Kill switch blocked +5511999999999 with secret operator-test-fingerprint-key-0001',
+      'KILL_SWITCH_ENGAGED',
+    ));
     const { app } = await createApp(['operator-test:prepare'], operations);
     const response = await app.inject({
       method: 'POST',

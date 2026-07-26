@@ -14,6 +14,9 @@ import {
   validatePreparation,
 } from './manual-whatsapp-console.js';
 
+const FICTIONAL_E164 = '+12025550100';
+const FICTIONAL_DIGITS = '12025550100';
+
 type LocalResponse = Readonly<{
   status: number;
   headers: Record<string, string | string[] | undefined>;
@@ -71,43 +74,43 @@ describe('manual WhatsApp operator console', () => {
 
   it('accepts only a canonical wa.me destination with exactly the displayed message', () => {
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Ol%C3%A1',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1`,
       'Olá',
     )).toBe(true);
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Outro',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Outro`,
       'Olá',
     )).toBe(false);
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Ol%C3%A1&source=test',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1&source=test`,
       'Olá',
     )).toBe(false);
-    expect(isSafeWhatsAppUrl('https://example.com/5519971519337?text=Ol%C3%A1')).toBe(false);
-    expect(isSafeWhatsAppUrl('http://wa.me/5519971519337?text=Ol%C3%A1')).toBe(false);
-    expect(isSafeWhatsAppUrl('https://wa.me/5519971519337')).toBe(false);
+    expect(isSafeWhatsAppUrl(`https://example.com/${FICTIONAL_DIGITS}?text=Ol%C3%A1`)).toBe(false);
+    expect(isSafeWhatsAppUrl(`http://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1`)).toBe(false);
+    expect(isSafeWhatsAppUrl(`https://wa.me/${FICTIONAL_DIGITS}`)).toBe(false);
   });
 
   it('requires strict E.164 for the operator-only number', () => {
-    expect(parseOperatorTestPhone('+5519971519337')).toBe('+5519971519337');
-    expect(() => parseOperatorTestPhone('19 97151-9337')).toThrow(/E.164/);
-    expect(() => parseOperatorTestPhone('5519971519337')).toThrow(/E.164/);
+    expect(parseOperatorTestPhone(FICTIONAL_E164)).toBe(FICTIONAL_E164);
+    expect(() => parseOperatorTestPhone('202 555-0100')).toThrow(/E.164/);
+    expect(() => parseOperatorTestPhone(FICTIONAL_DIGITS)).toThrow(/E.164/);
   });
 
   it('creates a safe operator-only wa.me link without persisting the phone', () => {
-    const link = createOperatorTestWhatsAppUrl('+5519971519337', 'Teste interno');
-    expect(link).toBe('https://wa.me/5519971519337?text=Teste%20interno');
+    const link = createOperatorTestWhatsAppUrl(FICTIONAL_E164, 'Teste interno');
+    expect(link).toBe(`https://wa.me/${FICTIONAL_DIGITS}?text=Teste%20interno`);
     expect(isSafeWhatsAppUrl(link, 'Teste interno')).toBe(true);
   });
 
   it('requires an explicit authorization flag for operator test mode', () => {
     expect(operatorTestConfig({})).toBeUndefined();
     expect(() => operatorTestConfig({
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
     })).toThrow(/AUTHORIZED/);
     expect(operatorTestConfig({
       OPERATOR_TEST_AUTHORIZED: 'true',
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
-    })?.maskedPhone).toBe('••••9337');
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
+    })?.maskedPhone).toBe('••••0100');
   });
 
   it('validates a safe WhatsApp preparation response', () => {
@@ -118,7 +121,7 @@ describe('manual WhatsApp operator console', () => {
       templateId: 'pilot-whatsapp-first-contact',
       templateVersion: 'v1',
       message: 'Teste',
-      link: 'https://wa.me/5519971519337?text=Teste',
+      link: `https://wa.me/${FICTIONAL_DIGITS}?text=Teste`,
       replayed: false,
     });
     expect(preparation.channel).toBe('WHATSAPP');
@@ -132,7 +135,7 @@ describe('manual WhatsApp operator console', () => {
       templateId: 'pilot-whatsapp-first-contact',
       templateVersion: 'v1',
       message: 'Texto exibido',
-      link: 'https://wa.me/5519971519337?text=Outro%20texto',
+      link: `https://wa.me/${FICTIONAL_DIGITS}?text=Outro%20texto`,
       replayed: false,
     })).toThrow('INVALID_PREPARATION_RESPONSE');
   });
@@ -156,7 +159,7 @@ describe('manual WhatsApp operator console', () => {
     const server = startManualWhatsAppConsole({
       MANUAL_WHATSAPP_CONSOLE_PORT: String(port),
       OPERATOR_TEST_AUTHORIZED: 'true',
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
     });
 
     try {
@@ -176,7 +179,7 @@ describe('manual WhatsApp operator console', () => {
         new URLSearchParams({ csrf: csrf ?? '' }).toString(),
       );
       expect(opened.status).toBe(303);
-      expect(opened.headers.location).toMatch(/^https:\/\/wa\.me\/5519971519337\?text=/);
+      expect(opened.headers.location).toMatch(new RegExp(`^https://wa\\.me/${FICTIONAL_DIGITS}\\?text=`));
       expect(apiFetch).not.toHaveBeenCalled();
     } finally {
       apiFetch.mockRestore();

@@ -20,6 +20,12 @@ const guardedQualificationId = randomUUID();
 const guardedTimelineId = randomUUID();
 let stage = 'INITIALIZE';
 
+const safeAssertionDetail = (error: unknown) => {
+  const message = error instanceof Error ? error.message : '';
+  return /^(?:expected key missing|forbidden key persisted): [A-Za-z][A-Za-z0-9_]*$/.test(message)
+    ? message
+    : 'UNCLASSIFIED_ASSERTION';
+};
 const writeFailureEvidence = async (error: unknown) => {
   const candidate = error as { name?: unknown; code?: unknown };
   await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
@@ -29,6 +35,7 @@ const writeFailureEvidence = async (error: unknown) => {
     stage,
     errorName: typeof candidate?.name === 'string' ? candidate.name : 'UNKNOWN',
     errorCode: typeof candidate?.code === 'string' ? candidate.code : 'UNKNOWN',
+    detail: safeAssertionDetail(error),
   }, null, 2));
 };
 

@@ -120,22 +120,43 @@ try {
   assert.equal(memberships[0]?.count, 0);
 
   stage = 'VERIFY_TABLE_ACL';
-  const tablePrivileges = await owner<{ name: string; privilege: string }[]>`
-    SELECT table_record.relname AS name, privilege.privilege_type AS privilege
+  const tablePrivileges = await owner<{
+    name: string;
+    canSelect: boolean;
+    canInsert: boolean;
+    canUpdate: boolean;
+    canDelete: boolean;
+    canTruncate: boolean;
+    canReferences: boolean;
+    canTrigger: boolean;
+  }[]>`
+    SELECT
+      table_record.relname AS name,
+      has_table_privilege(${roleName}, table_record.oid, 'SELECT') AS "canSelect",
+      has_table_privilege(${roleName}, table_record.oid, 'INSERT') AS "canInsert",
+      has_table_privilege(${roleName}, table_record.oid, 'UPDATE') AS "canUpdate",
+      has_table_privilege(${roleName}, table_record.oid, 'DELETE') AS "canDelete",
+      has_table_privilege(${roleName}, table_record.oid, 'TRUNCATE') AS "canTruncate",
+      has_table_privilege(${roleName}, table_record.oid, 'REFERENCES') AS "canReferences",
+      has_table_privilege(${roleName}, table_record.oid, 'TRIGGER') AS "canTrigger"
     FROM pg_class table_record
     JOIN pg_namespace namespace_record ON namespace_record.oid = table_record.relnamespace
-    CROSS JOIN LATERAL aclexplode(
-      coalesce(table_record.relacl, acldefault('r', table_record.relowner))
-    ) privilege
-    JOIN pg_roles grantee ON grantee.oid = privilege.grantee
     WHERE namespace_record.nspname = 'public'
       AND table_record.relkind IN ('r', 'p')
-      AND grantee.rolname = ${roleName}
-    ORDER BY table_record.relname, privilege.privilege_type`;
+      AND (
+        has_table_privilege(${roleName}, table_record.oid, 'SELECT')
+        OR has_table_privilege(${roleName}, table_record.oid, 'INSERT')
+        OR has_table_privilege(${roleName}, table_record.oid, 'UPDATE')
+        OR has_table_privilege(${roleName}, table_record.oid, 'DELETE')
+        OR has_table_privilege(${roleName}, table_record.oid, 'TRUNCATE')
+        OR has_table_privilege(${roleName}, table_record.oid, 'REFERENCES')
+        OR has_table_privilege(${roleName}, table_record.oid, 'TRIGGER')
+      )
+    ORDER BY table_record.relname`;
   assert.deepEqual(tablePrivileges, [
-    { name: 'operator_channel_test_events', privilege: 'SELECT' },
-    { name: 'operator_channel_test_preparations', privilege: 'SELECT' },
-    { name: 'schema_migrations', privilege: 'SELECT' },
+    { name: 'operator_channel_test_events', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
+    { name: 'operator_channel_test_preparations', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
+    { name: 'schema_migrations', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
   ]);
 
   stage = 'VERIFY_FUNCTION_ACL';

@@ -105,7 +105,7 @@ async function insertChain(prefix: string) {
     ) VALUES (
       ${deadLetterId}::uuid, ${outboxId}::uuid, 0, ${`${prefix}-correlation`},
       ${db.json({ body: marker, destination: 'sensitive@example.test' })},
-      ${marker}, 'SIMULATED_FAILURE', 1, 0, ${now}::timestamptz
+      ${marker}, 'SIMULATED_EXECUTION_FAILED', 1, 0, ${now}::timestamptz
     )`;
 
   return { recipientId, attemptId, outboxId, providerEventId, deadLetterId };
@@ -146,7 +146,7 @@ const verifyPayloads = (payloads: Awaited<ReturnType<typeof readPayloads>>) => {
   assertReferenceOnly(payloads.deadLetter.payload, [
     'schemaVersion', 'deadLetterId', 'outboxId', 'cycle', 'errorCode', 'attempts', 'claimGeneration',
   ]);
-  assert.equal(payloads.deadLetter.error, 'SIMULATED_FAILURE');
+  assert.equal(payloads.deadLetter.error, 'SIMULATED_EXECUTION_FAILED');
 };
 
 try {

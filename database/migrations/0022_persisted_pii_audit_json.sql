@@ -77,10 +77,10 @@ BEGIN
   IF p_event_type = 'ASSIGNMENT_UPDATED' THEN
     RETURN jsonb_strip_nulls(jsonb_build_object(
       'schemaVersion', 1,
-      'leadId', p_value -> 'id',
-      'priority', COALESCE(p_value -> 'crmPriority', p_value -> 'crm_priority'),
-      'nextActionAt', COALESCE(p_value -> 'crmNextActionAt', p_value -> 'crm_next_action_at'),
-      'version', COALESCE(p_value -> 'crmVersion', p_value -> 'crm_version'),
+      'leadId', COALESCE(p_value -> 'id', p_value -> 'leadId', p_value -> 'lead_id'),
+      'priority', COALESCE(p_value -> 'crmPriority', p_value -> 'crm_priority', p_value -> 'priority'),
+      'nextActionAt', COALESCE(p_value -> 'crmNextActionAt', p_value -> 'crm_next_action_at', p_value -> 'nextActionAt'),
+      'version', COALESCE(p_value -> 'crmVersion', p_value -> 'crm_version', p_value -> 'version'),
       'updatedAt', COALESCE(p_value -> 'updatedAt', p_value -> 'updated_at')
     ));
   END IF;
@@ -88,7 +88,7 @@ BEGIN
   IF p_event_type IN ('OPPORTUNITY_CREATED', 'OPPORTUNITY_UPDATED') THEN
     RETURN jsonb_strip_nulls(jsonb_build_object(
       'schemaVersion', 1,
-      'opportunityId', p_value -> 'id',
+      'opportunityId', COALESCE(p_value -> 'id', p_value -> 'opportunityId', p_value -> 'opportunity_id'),
       'leadId', COALESCE(p_value -> 'leadId', p_value -> 'lead_id'),
       'amount', p_value -> 'amount',
       'currency', p_value -> 'currency',
@@ -104,7 +104,7 @@ BEGIN
   IF p_event_type = 'NOTE_ADDED' THEN
     RETURN jsonb_strip_nulls(jsonb_build_object(
       'schemaVersion', 1,
-      'noteId', p_value -> 'id',
+      'noteId', COALESCE(p_value -> 'id', p_value -> 'noteId', p_value -> 'note_id'),
       'leadId', COALESCE(p_value -> 'leadId', p_value -> 'lead_id'),
       'opportunityId', COALESCE(p_value -> 'opportunityId', p_value -> 'opportunity_id'),
       'createdAt', COALESCE(p_value -> 'createdAt', p_value -> 'created_at')
@@ -124,7 +124,7 @@ BEGIN
   IF p_event_type IN ('TASK_CREATED', 'TASK_COMPLETED', 'TASK_RESCHEDULED') THEN
     RETURN jsonb_strip_nulls(jsonb_build_object(
       'schemaVersion', 1,
-      'taskId', p_value -> 'id',
+      'taskId', COALESCE(p_value -> 'id', p_value -> 'taskId', p_value -> 'task_id'),
       'leadId', COALESCE(p_value -> 'leadId', p_value -> 'lead_id'),
       'opportunityId', COALESCE(p_value -> 'opportunityId', p_value -> 'opportunity_id'),
       'status', p_value -> 'status',

@@ -35,7 +35,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
   authentication: { token: config.API_AUTH_TOKEN, principalPermissions: config.API_AUTH_PERMISSIONS },
-  internalCronSecret: config.INTERNAL_CRON_SECRET,
+  ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
   cronAuthAudience: config.CRON_AUTH_AUDIENCE,
   ...(config.API_BATCH_PROCESSING_ENABLED ? {
     beginBatchInvocation: (key: string) => beginBatchInvocation(db, key, 'supabase-render'),

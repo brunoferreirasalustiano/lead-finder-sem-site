@@ -20,6 +20,13 @@ const guardedQualificationId = randomUUID();
 const guardedTimelineId = randomUUID();
 let stage = 'INITIALIZE';
 
+const safeAssertionDetail = (error: unknown) => {
+  const message = error instanceof Error ? error.message : '';
+  const firstLine = message.split('\n', 1)[0] ?? '';
+  return /^(?:expected key missing|forbidden key persisted): [A-Za-z][A-Za-z0-9_]*$/.test(firstLine)
+    ? firstLine
+    : 'UNCLASSIFIED_ASSERTION';
+};
 const writeFailureEvidence = async (error: unknown) => {
   const candidate = error as { name?: unknown; code?: unknown };
   await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
@@ -29,6 +36,7 @@ const writeFailureEvidence = async (error: unknown) => {
     stage,
     errorName: typeof candidate?.name === 'string' ? candidate.name : 'UNKNOWN',
     errorCode: typeof candidate?.code === 'string' ? candidate.code : 'UNKNOWN',
+    detail: safeAssertionDetail(error),
   }, null, 2));
 };
 
@@ -67,16 +75,16 @@ try {
         ${dirtyQualificationId}::uuid,
         ${leadId}::uuid,
         'CONTACT_UPDATED',
-        ${JSON.stringify({
+        ${db.json({
           id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
           normalizedValue: '5511999999999', source: marker, notes: marker,
           isValid: true, possibleWhatsapp: true,
-        })}::jsonb,
-        ${JSON.stringify({
+        })},
+        ${db.json({
           id: randomUUID(), leadId, type: 'EMAIL', originalValue: 'private@example.test',
           normalizedValue: 'private@example.test', source: marker, notes: marker,
           isValid: true, possibleWhatsapp: false,
-        })}::jsonb,
+        })},
         'synthetic-actor', 'integration-test', ${marker}
       )`;
 
@@ -90,11 +98,11 @@ try {
         'synthetic-actor',
         ${marker},
         NULL,
-        ${JSON.stringify({
+        ${db.json({
           id: randomUUID(), leadId, body: marker, author: marker,
           title: marker, description: marker, createdAt: new Date().toISOString(),
-        })}::jsonb,
-        ${JSON.stringify({ principalId: marker, source: 'integration-test', arbitrary: marker })}::jsonb
+        })},
+        ${db.json({ principalId: marker, source: 'integration-test', arbitrary: marker })}
       )`;
   } finally {
     await db`ALTER TABLE public.lead_qualification_history ENABLE TRIGGER USER`;
@@ -134,11 +142,11 @@ try {
       ${leadId}::uuid,
       'CONTACT_ADDED',
       NULL,
-      ${JSON.stringify({
+      ${db.json({
         id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
         normalizedValue: '5511999999999', source: marker, isValid: true,
         possibleWhatsapp: true, createdAt: new Date().toISOString(),
-      })}::jsonb,
+      })},
       'synthetic-actor', 'integration-test', ${marker}
     )`;
 
@@ -152,12 +160,12 @@ try {
       'synthetic-actor',
       ${marker},
       NULL,
-      ${JSON.stringify({
+      ${db.json({
         id: randomUUID(), leadId, title: marker, description: marker, owner: marker,
         status: 'PENDENTE', priority: 'MEDIA', dueAt: new Date().toISOString(),
         version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      })}::jsonb,
-      ${JSON.stringify({ principalId: marker, source: 'integration-test', arbitrary: marker })}::jsonb
+      })},
+      ${db.json({ principalId: marker, source: 'integration-test', arbitrary: marker })}
     )`;
 
   stage = 'VERIFY_GUARDS';

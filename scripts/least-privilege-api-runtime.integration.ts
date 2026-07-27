@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import postgres from 'postgres';
 import {
   checkExpectedMigration,
@@ -28,6 +28,18 @@ const rollbackSql = await readFile(
   'utf8',
 );
 const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
+const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
+const writeFailureEvidence = async (stage: string, error: unknown) => {
+  const candidate = error as { name?: unknown; code?: unknown };
+  await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
+  await writeFile(evidencePath, JSON.stringify({
+    evidenceType: 'RUNTIME_ROLE_FAILURE',
+    result: 'FAIL',
+    stage,
+    errorName: typeof candidate?.name === 'string' ? candidate.name : 'UNKNOWN',
+    errorCode: typeof candidate?.code === 'string' ? candidate.code : 'UNKNOWN',
+  }, null, 2));
+};
 
 const roleUrl = new URL(sourceUrl);
 roleUrl.username = roleName;
@@ -56,13 +68,19 @@ const input = () => ({
 
 let restrictedRaw: ReturnType<typeof postgres> | undefined;
 let closeRestricted: (() => Promise<void>) | undefined;
+let stage = 'INITIALIZE';
 
 try {
+  stage = 'PRECREATE_ROLLBACK';
   await owner.unsafe(rollbackSql).catch(() => undefined);
+  stage = 'CREATE_ROLE_FIRST_PASS';
   await owner.unsafe(createSql);
+  stage = 'CREATE_ROLE_REPLAY';
   await owner.unsafe(createSql);
+  stage = 'SET_SYNTHETIC_PASSWORD';
   await owner.unsafe(`ALTER ROLE ${roleName} PASSWORD ${quoteLiteral(rolePassword)}`);
 
+  stage = 'VERIFY_ATTRIBUTES';
   const attributes = (
     await owner<{
       login: boolean;
@@ -101,6 +119,7 @@ try {
     WHERE member_role.rolname = ${roleName}`;
   assert.equal(memberships[0]?.count, 0);
 
+  stage = 'VERIFY_TABLE_ACL';
   const tablePrivileges = await owner<{ name: string; privilege: string }[]>`
     SELECT table_record.relname AS name, privilege.privilege_type AS privilege
     FROM pg_class table_record
@@ -119,6 +138,7 @@ try {
     { name: 'schema_migrations', privilege: 'SELECT' },
   ]);
 
+  stage = 'VERIFY_FUNCTION_ACL';
   const executableFunctions = await owner<{ identity: string }[]>`
     SELECT procedure_record.oid::regprocedure::text AS identity
     FROM pg_proc procedure_record
@@ -131,6 +151,7 @@ try {
     'create_operator_channel_test_preparation(character,character,character,character,character,character)',
   ]);
 
+  stage = 'VERIFY_RLS_POLICIES';
   const policies = await owner<{ policyname: string }[]>`
     SELECT policyname
     FROM pg_policies
@@ -143,6 +164,7 @@ try {
     'lead_finder_api_runtime_schema_migrations_select',
   ]);
 
+  stage = 'CONNECT_RESTRICTED_ROLE';
   restrictedRaw = postgres(roleUrl.toString(), { max: 1 });
   const restrictedDatabase = createDatabase(roleUrl.toString(), { max: 4 });
   closeRestricted = restrictedDatabase.close;
@@ -152,6 +174,7 @@ try {
   assert.equal((await restrictedRaw<{ canCreate: boolean }[]>`
     SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS "canCreate"`)[0]?.canCreate, false);
 
+  stage = 'VERIFY_RESTRICTED_READINESS';
   await checkExpectedMigration(restrictedDatabase.db);
   const readiness = await getReadiness(restrictedDatabase.db, {
     backlogCount: 1,
@@ -163,6 +186,7 @@ try {
     snapshot: null,
   });
 
+  stage = 'VERIFY_OPERATOR_FLOW';
   const preparation = await prepareOperatorWhatsAppTest(
     restrictedDatabase.db,
     input(),
@@ -195,6 +219,7 @@ try {
   );
   assert.equal(response.state, 'RESPONSE_RECORDED');
 
+  stage = 'VERIFY_NEGATIVE_PERMISSIONS';
   await assert.rejects(restrictedRaw`
     INSERT INTO public.operator_channel_test_preparations(
       channel, purpose, recipient_fingerprint, template_id, template_version,
@@ -223,6 +248,7 @@ try {
     'GRANT SELECT ON TABLE public.operator_channel_test_preparations TO lead_finder_api_runtime',
   ));
 
+  stage = 'VERIFY_ROLLBACK';
   await closeRestricted();
   closeRestricted = undefined;
   await restrictedRaw.end();
@@ -243,6 +269,9 @@ try {
     ddlAndGrant: 'DENIED',
     rollbackReplay: 2,
   }));
+} catch (error) {
+  await writeFailureEvidence(stage, error);
+  throw error;
 } finally {
   if (closeRestricted) await closeRestricted().catch(() => undefined);
   if (restrictedRaw) await restrictedRaw.end().catch(() => undefined);

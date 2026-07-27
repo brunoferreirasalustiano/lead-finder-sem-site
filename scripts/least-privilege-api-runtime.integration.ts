@@ -102,15 +102,14 @@ try {
       FROM pg_roles
       WHERE rolname = ${roleName}`
   )[0];
-  assert.deepEqual(attributes, {
-    login: true,
-    inherit: false,
-    superuser: false,
-    createDb: false,
-    createRole: false,
-    replication: false,
-    bypassRls: false,
-  });
+  assert.ok(attributes);
+  assert.equal(attributes.login, true);
+  assert.equal(attributes.inherit, false);
+  assert.equal(attributes.superuser, false);
+  assert.equal(attributes.createDb, false);
+  assert.equal(attributes.createRole, false);
+  assert.equal(attributes.replication, false);
+  assert.equal(attributes.bypassRls, false);
 
   const memberships = await owner<{ count: number }[]>`
     SELECT count(*)::int AS count
@@ -153,11 +152,21 @@ try {
         OR has_table_privilege(${roleName}, table_record.oid, 'TRIGGER')
       )
     ORDER BY table_record.relname`;
-  assert.deepEqual(tablePrivileges, [
-    { name: 'operator_channel_test_events', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
-    { name: 'operator_channel_test_preparations', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
-    { name: 'schema_migrations', canSelect: true, canInsert: false, canUpdate: false, canDelete: false, canTruncate: false, canReferences: false, canTrigger: false },
+  assert.equal(tablePrivileges.length, 3);
+  assert.deepEqual(tablePrivileges.map((row) => row.name), [
+    'operator_channel_test_events',
+    'operator_channel_test_preparations',
+    'schema_migrations',
   ]);
+  for (const privilege of tablePrivileges) {
+    assert.equal(privilege.canSelect, true, `${privilege.name} must be selectable`);
+    assert.equal(privilege.canInsert, false, `${privilege.name} must reject INSERT`);
+    assert.equal(privilege.canUpdate, false, `${privilege.name} must reject UPDATE`);
+    assert.equal(privilege.canDelete, false, `${privilege.name} must reject DELETE`);
+    assert.equal(privilege.canTruncate, false, `${privilege.name} must reject TRUNCATE`);
+    assert.equal(privilege.canReferences, false, `${privilege.name} must reject REFERENCES`);
+    assert.equal(privilege.canTrigger, false, `${privilege.name} must reject TRIGGER`);
+  }
 
   stage = 'VERIFY_FUNCTION_ACL';
   const executableFunctions = await owner<{ identity: string }[]>`
@@ -201,11 +210,9 @@ try {
     backlogCount: 1,
     oldestPendingAgeMs: 1,
   });
-  assert.deepEqual(readiness, {
-    status: 'ready',
-    mode: 'restricted',
-    snapshot: null,
-  });
+  assert.equal(readiness.status, 'ready');
+  assert.equal(readiness.mode, 'restricted');
+  assert.equal(readiness.snapshot, null);
 
   stage = 'VERIFY_OPERATOR_FLOW';
   const preparation = await prepareOperatorWhatsAppTest(

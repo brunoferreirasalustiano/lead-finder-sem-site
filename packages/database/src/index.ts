@@ -38,9 +38,26 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0013_dual_deployment_processing'): Promise<void> {
-  const rows = await db.execute<{ version: string }>(sql`SELECT version FROM schema_migrations WHERE version = ${version}`);
-  if (rows.length !== 1) throw new Error('EXPECTED_MIGRATION_MISSING');
+export async function checkExpectedMigration(db: Database, version = '0021_operator_channel_test'): Promise<void> {
+  const localRows = await db.execute<{ version: string }>(sql`
+    SELECT version
+    FROM public.schema_migrations
+    WHERE version = ${version}
+  `);
+  if (localRows.length === 1) return;
+
+  const registryRows = await db.execute<{ exists: boolean }>(sql`
+    SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL AS exists
+  `);
+  if (registryRows[0]?.exists) {
+    const supabaseRows = await db.execute<{ name: string }>(sql`
+      SELECT name::text AS name
+      FROM supabase_migrations.schema_migrations
+      WHERE name = ${version}
+    `);
+    if (supabaseRows.length === 1) return;
+  }
+  throw new Error('EXPECTED_MIGRATION_MISSING');
 }
 export async function insertLeads(
   db: Database,

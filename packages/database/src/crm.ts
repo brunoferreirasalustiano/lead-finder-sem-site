@@ -8,6 +8,7 @@ import {
   type TaskCompleteInput, type TaskCreateInput, type TaskRescheduleInput,
 } from '@lead-finder/shared';
 import type { Database } from './index.js';
+import { safeLeadSelection } from './safe-projections.js';
 import {
   crmIdempotencyKeys, crmLeadTags, crmNotes, crmOpportunities, crmTags, crmTasks,
   crmTimelineEvents, leads,
@@ -76,7 +77,7 @@ async function remember(tx: Tx, scope: string, key: string, payload: unknown, ty
 const event = (tx: Tx, value: typeof crmTimelineEvents.$inferInsert) => tx.insert(crmTimelineEvents).values(value);
 
 export async function getCrm(db: Database, leadId: string) {
-  const lead = (await db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0];
+  const lead = (await db.select(safeLeadSelection).from(leads).where(eq(leads.id, leadId)).limit(1))[0];
   if (!lead) throw new CrmDomainError('Lead not found', 'NOT_FOUND');
   const [opportunities, notes, tags, tasks] = await Promise.all([
     listOpportunities(db, leadId), listNotes(db, leadId), listTags(db, leadId), listTasks(db, leadId),

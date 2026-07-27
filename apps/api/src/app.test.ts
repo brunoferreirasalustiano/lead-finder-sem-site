@@ -10,6 +10,7 @@ import {
   safeCampaignFailureItem,
 } from './app.js';
 import { permissions } from './auth.js';
+import { findForbiddenPiiResponseKeys } from './api-contracts.js';
 
 const sensitivePattern = /private@example\.test|\+5511999999999|tok_secret|postgresql:\/\/|select \* from|lead_contacts|stack-canary/i;
 const testToken = 'synthetic-api-token-for-tests-only-0001';
@@ -19,6 +20,41 @@ const authenticatedApp = (db: Database) => buildApp(db, {
 const authenticatedInject = (app: ReturnType<typeof buildApp>, options: InjectOptions) => app.inject({
   ...options,
   headers: { ...options.headers, authorization: `Bearer ${testToken}` },
+});
+const contractLeadId = '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa';
+const contractCampaignId = '30dfeb9d-30f0-4d5a-8762-3dbb4ed506ab';
+const contractVersionId = '40dfeb9d-30f0-4d5a-8762-3dbb4ed506ac';
+const contractRecipientId = '50dfeb9d-30f0-4d5a-8762-3dbb4ed506ad';
+const contractAttemptId = '60dfeb9d-30f0-4d5a-8762-3dbb4ed506ae';
+const contractCanaries = [
+  '+12025550100',
+  '+12025550101',
+  'private@example.test',
+  'Rua Sintética 100',
+  '-22.9000000',
+  '-47.1000000',
+] as const;
+const contractSensitiveFields = {
+  phone: contractCanaries[0],
+  whatsapp: contractCanaries[1],
+  email: contractCanaries[2],
+  address: contractCanaries[3],
+  latitude: contractCanaries[4],
+  longitude: contractCanaries[5],
+  originalValue: contractCanaries[0],
+  normalizedValue: contractCanaries[2],
+  recipientSnapshot: { contact: contractCanaries[0] },
+  payloadSnapshot: { content: contractCanaries[2] },
+};
+const expectSerializedResponseWithoutPii = (body: string) => {
+  const parsed = JSON.parse(body) as unknown;
+  expect(findForbiddenPiiResponseKeys(parsed)).toEqual([]);
+  for (const canary of contractCanaries) expect(body).not.toContain(canary);
+};
+type BuildOptions = NonNullable<Parameters<typeof buildApp>[1]>;
+const contractApp = (overrides: NonNullable<BuildOptions['contractQueries']>) => buildApp({} as Database, {
+  authentication: { token: testToken, principalPermissions: permissions },
+  contractQueries: overrides,
 });
 
 describe('security-safe API output', () => {
@@ -147,6 +183,248 @@ describe('csvCell', () => {
     expect(csvCell('A,"B"\nC')).toBe('"A,""B""\nC"'));
   it('documents the export cell behavior without changing the 100-row API cap', () =>
     expect(csvCell(null)).toBe('""'));
+});
+
+describe('PII-minimized HTTP contracts', () => {
+  const safeLead = {
+    ...contractSensitiveFields,
+    id: contractLeadId,
+    name: 'Empresa Sintética',
+    category: 'servicos',
+    city: 'Cidade',
+    state: 'ST',
+    website: 'https://example.test',
+    score: 80,
+    status: 'SEM_SITE_CADASTRADO',
+    qualificationStatus: 'SEM_SITE_CONFIRMADO',
+    isBlocked: false,
+    doNotContact: false,
+    isClosed: false,
+    crmStage: 'NOVO',
+    crmPriority: 'MEDIA',
+    crmOwner: null,
+    crmNextActionAt: null,
+    crmVersion: 1,
+    createdAt: new Date('2030-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2030-01-01T00:00:00.000Z'),
+  };
+  const contact = {
+    ...contractSensitiveFields,
+    id: contractRecipientId,
+    leadId: contractLeadId,
+    type: 'EMAIL',
+    source: 'SYNTHETIC_TEST',
+    confidence: '1.000',
+    verifiedAt: new Date('2030-01-01T00:00:00.000Z'),
+    isValid: true,
+    possibleWhatsapp: false,
+    createdAt: new Date('2030-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2030-01-01T00:00:00.000Z'),
+  };
+
+  it('preserves lead list status, pagination and database ordering without PII', async () => {
+    const app = contractApp({
+      listLeads: vi.fn().mockResolvedValue({
+        items: [safeLead, { ...safeLead, id: contractCampaignId, score: 70 }],
+        pagination: { page: 2, pageSize: 2, total: 4, totalPages: 2 },
+      }) as never,
+    });
+    const response = await authenticatedInject(app, { method: 'GET', url: '/leads?page=2&pageSize=2' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      items: [{ id: contractLeadId }, { id: contractCampaignId }],
+      pagination: { page: 2, pageSize: 2, total: 4, totalPages: 2 },
+    });
+    expectSerializedResponseWithoutPii(response.body);
+    await app.close();
+  });
+
+  it('preserves lead detail success, not-found code and authentication', async () => {
+    const getLead = vi.fn().mockResolvedValueOnce(safeLead).mockResolvedValueOnce(null);
+    const app = contractApp({ getLead: getLead as never });
+    const ok = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractLeadId}` });
+    const missing = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractCampaignId}` });
+    const anonymous = await app.inject({ method: 'GET', url: `/leads/${contractLeadId}` });
+    expect(ok.statusCode).toBe(200);
+    expect(missing.statusCode).toBe(404);
+    expect(anonymous.statusCode).toBe(401);
+    expectSerializedResponseWithoutPii(ok.body);
+    await app.close();
+  });
+
+  it('keeps contact normalization persistence internal for GET and PUT responses', async () => {
+    const app = contractApp({
+      getQualification: vi.fn().mockResolvedValue({ id: contractLeadId, outreachEligible: true }) as never,
+      listContacts: vi.fn().mockResolvedValue([contact]) as never,
+      upsertContact: vi.fn().mockResolvedValue(contact) as never,
+    });
+    const listed = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractLeadId}/contacts` });
+    const updated = await authenticatedInject(app, {
+      method: 'PUT',
+      url: `/leads/${contractLeadId}/contacts`,
+      payload: {
+        type: 'EMAIL',
+        value: contractCanaries[2],
+        source: 'SYNTHETIC_TEST',
+        actor: 'contract-test',
+        confidence: 1,
+        isValid: true,
+        possibleWhatsapp: false,
+      },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(updated.statusCode).toBe(200);
+    expectSerializedResponseWithoutPii(listed.body);
+    expectSerializedResponseWithoutPii(updated.body);
+    await app.close();
+  });
+
+  it('returns history and CRM audit metadata without persisted JSONB or free text', async () => {
+    const app = contractApp({
+      getQualification: vi.fn().mockResolvedValue({ id: contractLeadId, outreachEligible: true }) as never,
+      listHistory: vi.fn().mockResolvedValue([{
+        id: 'history-id',
+        leadId: contractLeadId,
+        eventType: 'CONTACT_UPDATED',
+        actor: 'operator-id',
+        source: 'SYNTHETIC_TEST',
+        reason: contractCanaries[2],
+        previousValue: contractSensitiveFields,
+        newValue: contractSensitiveFields,
+        createdAt: new Date('2030-01-01T00:00:00.000Z'),
+      }]) as never,
+      getCrm: vi.fn().mockResolvedValue({
+        lead: safeLead,
+        opportunities: [{ id: 'opportunity-id', leadId: contractLeadId, title: contractCanaries[2] }],
+        notes: [{ id: 'note-id', leadId: contractLeadId, body: contractCanaries[3] }],
+        tags: [{ id: 'tag-id', leadId: contractLeadId, name: contractCanaries[2] }],
+        tasks: [{ id: 'task-id', leadId: contractLeadId, title: contractCanaries[0] }],
+      }) as never,
+    });
+    const history = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractLeadId}/history` });
+    const crm = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractLeadId}/crm` });
+    expect(history.statusCode).toBe(200);
+    expect(crm.statusCode).toBe(200);
+    expectSerializedResponseWithoutPii(history.body);
+    expectSerializedResponseWithoutPii(crm.body);
+    await app.close();
+  });
+
+  it('sanitizes campaign eligibility, recipient and attempt list responses', async () => {
+    const app = contractApp({
+      listEligibleCampaignLeads: vi.fn().mockResolvedValue([{ lead: safeLead, contact }]) as never,
+      listCampaignRecipients: vi.fn().mockResolvedValue([{
+        ...contractSensitiveFields,
+        id: contractRecipientId,
+        campaignId: contractCampaignId,
+        campaignVersionId: contractVersionId,
+        leadId: contractLeadId,
+        channel: 'EMAIL',
+        state: 'PENDENTE',
+        version: 1,
+      }]) as never,
+      listRecipientAttempts: vi.fn().mockResolvedValue([{
+        ...contractSensitiveFields,
+        id: contractAttemptId,
+        recipientId: contractRecipientId,
+        state: 'PENDENTE',
+        version: 1,
+      }]) as never,
+    });
+    const eligible = await authenticatedInject(app, {
+      method: 'GET',
+      url: '/campaigns/eligible/leads?channel=EMAIL&page=1&pageSize=20',
+    });
+    const recipients = await authenticatedInject(app, {
+      method: 'GET',
+      url: `/campaigns/${contractCampaignId}/recipients?page=1&pageSize=20`,
+    });
+    const attempts = await authenticatedInject(app, {
+      method: 'GET',
+      url: `/recipients/${contractRecipientId}/attempts?page=1&pageSize=20`,
+    });
+    for (const response of [eligible, recipients, attempts]) {
+      expect(response.statusCode).toBe(200);
+      expectSerializedResponseWithoutPii(response.body);
+    }
+    await app.close();
+  });
+
+  it('preserves simulation mode, no-dispatch and idempotency without returning content', async () => {
+    const reserve = vi.fn().mockResolvedValue({
+      data: {
+        ...contractSensitiveFields,
+        id: contractRecipientId,
+        campaignId: contractCampaignId,
+        campaignVersionId: contractVersionId,
+        leadId: contractLeadId,
+        channel: 'EMAIL',
+        state: 'PENDENTE',
+        version: 1,
+      },
+      replayed: false,
+    });
+    const createAttempt = vi.fn().mockResolvedValue({
+      data: {
+        ...contractSensitiveFields,
+        id: contractAttemptId,
+        recipientId: contractRecipientId,
+        state: 'PENDENTE',
+        version: 1,
+      },
+      replayed: false,
+    });
+    const app = contractApp({
+      listCampaignTemplates: vi.fn().mockResolvedValue([{
+        id: 'template-id',
+        campaignVersionId: contractVersionId,
+        channel: 'EMAIL',
+        content: 'Contato {{contact}}',
+        allowedVariables: ['contact'],
+      }]) as never,
+      listEligibleCampaignLeads: vi.fn().mockResolvedValue([{ lead: safeLead, contact }]) as never,
+      reserveSimulatedRecipient: reserve as never,
+      createAttemptWithOutbox: createAttempt as never,
+    });
+    const request: InjectOptions = {
+      method: 'POST',
+      url: `/campaigns/${contractCampaignId}/simulations`,
+      headers: { 'idempotency-key': 'simulation-contract-key' },
+      payload: { campaignVersionId: contractVersionId, channel: 'EMAIL', page: 1, pageSize: 20 },
+    };
+    const response = await authenticatedInject(app, request);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ mode: 'SIMULATION', dispatched: false });
+    expect(reserve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      idempotencyKey: `simulation-contract-key:${contractLeadId}`,
+    }));
+    expect(createAttempt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      idempotencyKey: `simulation-contract-key:${contractLeadId}:attempt`,
+    }));
+    expectSerializedResponseWithoutPii(response.body);
+    await app.close();
+  });
+
+  it('exports only the safe lead projection while preserving CSV escaping and the 100-row cap', async () => {
+    const listLeadsMock = vi.fn().mockResolvedValue({
+      items: [{ ...safeLead, name: '=Empresa,"Sintética"\nTeste' }],
+      pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+    });
+    const app = contractApp({ listLeads: listLeadsMock as never });
+    const response = await authenticatedInject(app, { method: 'GET', url: '/leads/export.csv' });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/csv');
+    expect(response.body).toContain(`"'=Empresa,""Sintética""\nTeste"`);
+    expect(listLeadsMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      page: 1,
+      pageSize: 100,
+    }));
+    for (const forbidden of ['phone', 'whatsapp', 'email', 'address', 'latitude', 'longitude']) {
+      expect(response.body.toLowerCase()).not.toContain(forbidden);
+    }
+    for (const canary of contractCanaries) expect(response.body).not.toContain(canary);
+    await app.close();
+  });
 });
 
 describe('CRM routes', () => {

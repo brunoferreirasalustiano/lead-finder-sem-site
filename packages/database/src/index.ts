@@ -8,7 +8,9 @@ import {
   type NormalizedLead,
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
+import { safeLeadSelection } from './safe-projections.js';
 export * from './schema.js';
+export * from './safe-projections.js';
 export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
@@ -78,7 +80,7 @@ export async function listLeads(db: Database, f: LeadFilters) {
   const where = whereFor(f);
   const [items, totalRows] = await Promise.all([
     db
-      .select()
+      .select(safeLeadSelection)
       .from(leads)
       .where(where)
       .orderBy(desc(leads.score), desc(leads.createdAt))
@@ -98,7 +100,7 @@ export async function listLeads(db: Database, f: LeadFilters) {
   };
 }
 export async function getLead(db: Database, id: string) {
-  return (await db.select().from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
+  return (await db.select(safeLeadSelection).from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
 }
 export interface CollectionEgressAuthorization {
   enabled: true;

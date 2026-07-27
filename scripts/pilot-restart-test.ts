@@ -135,8 +135,14 @@ try {
   })).statusCode, 201);
 
   const recipient = (await db.select().from(campaignRecipients))
-    .find((row) => (row.recipientSnapshot as { leadName?: string }).leadName === 'Snapshot Original');
+    .find((row) => /^recipient-[0-9a-f-]{36}$/.test(row.idempotencyKey));
   assert.ok(recipient, 'scheduled campaign recipient must exist after restart');
+  const recipientReference = recipient.recipientSnapshot as Record<string, unknown>;
+  assert.equal(recipientReference['schemaVersion'], 1);
+  assert.equal(recipientReference['recipientId'], recipient.id);
+  assert.equal(recipientReference['leadId'], recipient.leadId);
+  assert.equal(Object.hasOwn(recipientReference, 'leadName'), false);
+  assert.equal(Object.hasOwn(recipientReference, 'address'), false);
   const recipientReplay = await createRecipientWithOutbox(db, {
     campaignId: recipient.campaignId,
     campaignVersionId: recipient.campaignVersionId,
@@ -149,8 +155,14 @@ try {
   assert.equal(recipientReplay.replayed, true);
 
   const attempt = (await db.select().from(campaignAttempts))
-    .find((row) => (row.payloadSnapshot as { body?: string }).body === 'Hello');
+    .find((row) => /^attempt-[0-9a-f-]{36}$/.test(row.idempotencyKey));
   assert.ok(attempt, 'scheduled campaign attempt must exist after restart');
+  const attemptReference = attempt.payloadSnapshot as Record<string, unknown>;
+  assert.equal(attemptReference['schemaVersion'], 1);
+  assert.equal(attemptReference['attemptId'], attempt.id);
+  assert.equal(attemptReference['recipientId'], attempt.recipientId);
+  assert.equal(Object.hasOwn(attemptReference, 'body'), false);
+  assert.equal(Object.hasOwn(attemptReference, 'to'), false);
   const attemptReplay = await createAttemptWithOutbox(db, {
     recipientId: attempt.recipientId,
     payloadSnapshot: { to: 'lead@example.test', body: 'Hello' },

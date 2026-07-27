@@ -247,7 +247,7 @@ try {
   );
   assert.equal(response.state, 'RESPONSE_RECORDED');
 
-  stage = 'VERIFY_NEGATIVE_PERMISSIONS';
+  stage = 'VERIFY_DIRECT_WRITES_DENIED';
   await assert.rejects(restrictedRaw`
     INSERT INTO public.operator_channel_test_preparations(
       channel, purpose, recipient_fingerprint, template_id, template_version,
@@ -267,14 +267,22 @@ try {
   await assert.rejects(restrictedRaw`
     UPDATE public.schema_migrations
     SET version = version`);
+
+  stage = 'VERIFY_OUTBOX_DENIED';
   await assert.rejects(restrictedRaw`
     SELECT payload FROM public.campaign_outbox LIMIT 1`);
+
+  stage = 'VERIFY_DDL_DENIED';
   await assert.rejects(restrictedRaw.unsafe(
     'CREATE TABLE public.runtime_role_escape(id integer)',
   ));
-  await assert.rejects(restrictedRaw.unsafe(
-    'GRANT SELECT ON TABLE public.operator_channel_test_preparations TO lead_finder_api_runtime',
-  ));
+
+  stage = 'VERIFY_GRANT_ESCALATION_NO_EFFECT';
+  await restrictedRaw.unsafe(
+    'GRANT SELECT ON TABLE public.campaign_outbox TO lead_finder_api_runtime',
+  ).catch(() => undefined);
+  await assert.rejects(restrictedRaw`
+    SELECT payload FROM public.campaign_outbox LIMIT 1`);
 
   stage = 'VERIFY_ROLLBACK';
   await closeRestricted();
@@ -294,7 +302,8 @@ try {
     readinessMode: 'restricted',
     directTableWrites: 'DENIED',
     outboxPayloadRead: 'DENIED',
-    ddlAndGrant: 'DENIED',
+    ddl: 'DENIED',
+    grantEscalation: 'NO_EFFECT',
     rollbackReplay: 2,
   }));
 } catch (error) {

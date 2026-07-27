@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   confirmOperatorTestResult,
+  buildOperatorTestPreparation,
   OperatorChannelTestError,
   prepareOperatorWhatsAppTest,
   recordOperatorTestOpen,
@@ -9,6 +10,16 @@ import {
   type Database,
   type OperatorTestRuntime,
 } from '@lead-finder/database';
+import {
+  createOperatorPrincipalBinding,
+  createOperatorRecipientReceipt,
+  decodeStrictBase64Url,
+  digestOperatorTestMessage,
+  OPERATOR_RECIPIENT_BINDING_MAC_BYTES,
+  OPERATOR_RECIPIENT_BINDING_NONCE_BYTES,
+  OPERATOR_RECIPIENT_BINDING_VERSION,
+  verifyOperatorRecipientProof,
+} from '@lead-finder/shared';
 import { authorizationContextFor } from './auth.js';
 
 const preparationIdSchema = z.string().uuid();
@@ -20,6 +31,19 @@ const responseSchema = z.object({
   result: z.enum(['RECEIVED_CONFIRMED', 'NOT_RECEIVED', 'READ_CONFIRMED']),
 }).strict();
 const emptySchema = z.object({}).strict();
+const strictBase64Url = (bytes: number) => z.string().refine(
+  (value) => decodeStrictBase64Url(value, bytes) !== undefined,
+  'Invalid base64url value',
+);
+const recipientBindingSchema = z.object({
+  bindingVersion: z.literal(OPERATOR_RECIPIENT_BINDING_VERSION),
+  bindingNonce: strictBase64Url(OPERATOR_RECIPIENT_BINDING_NONCE_BYTES),
+  recipientProof: strictBase64Url(OPERATOR_RECIPIENT_BINDING_MAC_BYTES),
+}).strict();
+
+type RecipientBindingRuntime = OperatorTestRuntime & Readonly<{
+  recipientBindingKey?: string | undefined;
+}>;
 
 type OperatorTestOperations = Readonly<{
   prepare: typeof prepareOperatorWhatsAppTest;
@@ -64,7 +88,7 @@ const execute = async <T>(reply: FastifyReply, operation: () => Promise<T>) => {
 export function registerOperatorTestRoutes(
   app: FastifyInstance,
   db: Database,
-  runtime: OperatorTestRuntime,
+  runtime: RecipientBindingRuntime,
   overrides: Partial<OperatorTestOperations> = {},
 ) {
   const operations: OperatorTestOperations = {
@@ -75,12 +99,34 @@ export function registerOperatorTestRoutes(
   };
 
   app.post('/operator-tests/whatsapp/preparations', async (request, reply) => {
-    const body = emptySchema.safeParse(request.body ?? {});
+    const body = recipientBindingSchema.safeParse(request.body);
     const idempotencyKey = idempotencyKeyFor(request);
     if (!body.success || !idempotencyKey.success) {
       return reply.status(400).send({ error: 'Invalid request', code: 'INVALID_OPERATOR_TEST_REQUEST' });
     }
     return execute(reply, async () => {
+      const authorization = authorizationContextFor(request);
+      const built = buildOperatorTestPreparation(runtime);
+      const bindingKey = runtime.recipientBindingKey;
+      const messageDigest = digestOperatorTestMessage(built.prepared.body);
+      const proofInput = {
+        bindingVersion: body.data.bindingVersion,
+        bindingNonce: body.data.bindingNonce,
+        idempotencyKey: idempotencyKey.data,
+        recipientE164: built.recipient.e164,
+        templateId: built.template.id,
+        templateVersion: built.template.version,
+        messageDigest,
+      };
+      if (
+        !bindingKey
+        || !verifyOperatorRecipientProof(bindingKey, proofInput, body.data.recipientProof)
+      ) {
+        return reply.status(400).send({
+          error: 'Invalid operator recipient binding',
+          code: 'INVALID_OPERATOR_RECIPIENT_BINDING',
+        });
+      }
       const result = await operations.prepare(
         db,
         {
@@ -88,11 +134,28 @@ export function registerOperatorTestRoutes(
           templateVersion: 'v1',
           idempotencyKey: idempotencyKey.data,
         },
-        authorizationContextFor(request),
+        authorization,
         runtime,
       );
+      const preparationId = preparationIdSchema.parse(result.preparationId);
+      const principalBinding = createOperatorPrincipalBinding(bindingKey, {
+        bindingVersion: body.data.bindingVersion,
+        bindingNonce: body.data.bindingNonce,
+        principalId: authorization.principalId,
+      });
+      const recipientBindingReceipt = createOperatorRecipientReceipt(bindingKey, {
+        bindingVersion: body.data.bindingVersion,
+        bindingNonce: body.data.bindingNonce,
+        idempotencyKey: idempotencyKey.data,
+        preparationId,
+        recipientE164: built.recipient.e164,
+        templateId: built.template.id,
+        templateVersion: built.template.version,
+        messageDigest,
+        principalBinding,
+      });
       return reply.status(result.replayed ? 200 : 201).send({
-        preparationId: result.preparationId,
+        preparationId,
         state: result.state,
         purpose: result.purpose,
         channel: result.channel,
@@ -100,6 +163,10 @@ export function registerOperatorTestRoutes(
         templateVersion: result.templateVersion,
         preparedAt: result.preparedAt,
         replayed: result.replayed,
+        bindingVersion: body.data.bindingVersion,
+        bindingNonce: body.data.bindingNonce,
+        principalBinding,
+        recipientBindingReceipt,
       });
     });
   });

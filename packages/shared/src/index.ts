@@ -9,6 +9,7 @@ export * from './campaign-execution.js';
 export * from './shadow-mode.js';
 export * from './pilot.js';
 export * from './pilot-real-preflight.js';
+export * from './operator-test-recipient-binding.js';
 
 export const leadStatuses = [
   'SEM_SITE_CADASTRADO',

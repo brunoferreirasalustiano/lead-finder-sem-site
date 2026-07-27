@@ -10,7 +10,7 @@ SET search_path = pg_catalog, public
 AS $$
 BEGIN
   IF p_resource_type = 'lead' THEN
-    RETURN jsonb_strip_nulls(jsonb_build_object(
+    RETURN jsonb_build_object(
       'schemaVersion', 1,
       'resourceType', 'lead',
       'id', COALESCE(p_result -> 'id', to_jsonb(p_resource_id)),
@@ -24,11 +24,11 @@ BEGIN
       'crmUpdatedAt', COALESCE(p_result -> 'crmUpdatedAt', p_result -> 'crm_updated_at'),
       'createdAt', COALESCE(p_result -> 'createdAt', p_result -> 'created_at'),
       'updatedAt', COALESCE(p_result -> 'updatedAt', p_result -> 'updated_at')
-    ));
+    );
   END IF;
 
   IF p_resource_type = 'opportunity' THEN
-    RETURN jsonb_strip_nulls(jsonb_build_object(
+    RETURN jsonb_build_object(
       'schemaVersion', 1,
       'resourceType', 'opportunity',
       'id', COALESCE(p_result -> 'id', to_jsonb(p_resource_id)),
@@ -41,41 +41,41 @@ BEGIN
       'version', p_result -> 'version',
       'createdAt', COALESCE(p_result -> 'createdAt', p_result -> 'created_at'),
       'updatedAt', COALESCE(p_result -> 'updatedAt', p_result -> 'updated_at')
-    ));
+    );
   END IF;
 
   IF p_resource_type = 'note' THEN
-    RETURN jsonb_strip_nulls(jsonb_build_object(
+    RETURN jsonb_build_object(
       'schemaVersion', 1,
       'resourceType', 'note',
       'id', COALESCE(p_result -> 'id', to_jsonb(p_resource_id)),
       'leadId', COALESCE(p_result -> 'leadId', p_result -> 'lead_id'),
       'opportunityId', COALESCE(p_result -> 'opportunityId', p_result -> 'opportunity_id'),
       'createdAt', COALESCE(p_result -> 'createdAt', p_result -> 'created_at')
-    ));
+    );
   END IF;
 
   IF p_resource_type = 'tag' THEN
     IF COALESCE((p_result ->> 'removed')::boolean, false) THEN
-      RETURN jsonb_strip_nulls(jsonb_build_object(
+      RETURN jsonb_build_object(
         'schemaVersion', 1,
         'resourceType', 'tag',
         'removed', true,
         'tagId', COALESCE(p_result -> 'tagId', p_result -> 'id', to_jsonb(p_resource_id)),
         'leadId', COALESCE(p_result -> 'leadId', p_result -> 'lead_id')
-      ));
+      );
     END IF;
-    RETURN jsonb_strip_nulls(jsonb_build_object(
+    RETURN jsonb_build_object(
       'schemaVersion', 1,
       'resourceType', 'tag',
       'id', COALESCE(p_result -> 'id', p_result -> 'tagId', to_jsonb(p_resource_id)),
       'leadId', COALESCE(p_result -> 'leadId', p_result -> 'lead_id'),
       'createdAt', COALESCE(p_result -> 'createdAt', p_result -> 'created_at')
-    ));
+    );
   END IF;
 
   IF p_resource_type = 'task' THEN
-    RETURN jsonb_strip_nulls(jsonb_build_object(
+    RETURN jsonb_build_object(
       'schemaVersion', 1,
       'resourceType', 'task',
       'id', COALESCE(p_result -> 'id', to_jsonb(p_resource_id)),
@@ -88,7 +88,7 @@ BEGIN
       'version', p_result -> 'version',
       'createdAt', COALESCE(p_result -> 'createdAt', p_result -> 'created_at'),
       'updatedAt', COALESCE(p_result -> 'updatedAt', p_result -> 'updated_at')
-    ));
+    );
   END IF;
 
   RETURN jsonb_build_object(
@@ -142,4 +142,4 @@ FOR EACH ROW
 EXECUTE FUNCTION public.sanitize_crm_idempotency_result();
 
 COMMENT ON FUNCTION public.pii_safe_crm_idempotency_result(text, uuid, jsonb) IS
-  'Versioned deterministic CRM replay projection without names, contacts, notes, descriptions or owners.';
+  'Versioned deterministic CRM replay projection without names, contacts, notes, descriptions or owners; explicit null fields are preserved to keep first response and replay shapes identical.';

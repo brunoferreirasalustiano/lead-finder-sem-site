@@ -335,8 +335,13 @@ try {
     actor, expectedVersion: opportunity.version + 1, idempotencyKey: 'opportunity-loss-001', status: 'PERDIDA', lossReason: 'Budget deferred',
   } });
   assert.equal(lost.statusCode, 200);
-  assert.equal(lost.json<{ lossReason: string }>().lossReason, 'Budget deferred');
-  assert.ok(lost.json<{ closedAt: string | null }>().closedAt);
+  const lostResponse = lost.json<Record<string, unknown>>();
+  assert.equal(Object.hasOwn(lostResponse, 'lossReason'), false);
+  assert.ok(lostResponse['closedAt']);
+  const canonicalLossReason = await db.execute<{ loss_reason: string | null }>(
+    sql`select loss_reason from crm_opportunities where id = ${opportunity.id}::uuid`,
+  );
+  assert.equal(canonicalLossReason[0]?.loss_reason, 'Budget deferred');
 
   const notePayload = { body: 'Discovery completed', opportunityId: opportunity.id, actor, idempotencyKey: 'note-create-0001' };
   assert.equal((await inject({ method: 'POST', url: `/leads/${lead.id}/notes`, payload: notePayload })).statusCode, 201);

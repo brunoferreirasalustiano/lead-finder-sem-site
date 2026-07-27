@@ -67,12 +67,21 @@ export const safeTagMutationResult = (value: unknown) => {
   const item = row(value);
   const tagId = item['tagId'] ?? item['id'];
   if (tagId === undefined) throw new Error('CRM_MUTATION_REQUIRED_FIELD_MISSING:tagId');
+  const leadId = required(item, 'leadId');
+  if (item['removed'] === true) {
+    return {
+      schemaVersion: 1,
+      resourceType: 'tag' as const,
+      removed: true,
+      tagId,
+      leadId,
+    };
+  }
   return {
     schemaVersion: 1,
     resourceType: 'tag' as const,
-    tagId,
-    leadId: required(item, 'leadId'),
-    removed: item['removed'] === true,
+    id: tagId,
+    leadId,
     createdAt: date(item['createdAt']),
   };
 };

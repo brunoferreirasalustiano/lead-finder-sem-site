@@ -2,6 +2,11 @@ type Row = Readonly<Record<string, unknown>>;
 
 const row = (value: unknown): Row =>
   typeof value === 'object' && value !== null ? value as Row : {};
+const required = (item: Row, key: string): unknown => {
+  const value = item[key];
+  if (value === undefined) throw new Error('SAFE_DTO_REQUIRED_FIELD_MISSING');
+  return value;
+};
 
 export const forbiddenPiiResponseKeys = new Set([
   'phone',
@@ -73,51 +78,86 @@ export const safeHistoryDto = (value: unknown) => {
   };
 };
 
+export const safeCrmTimelineDto = (value: unknown) => {
+  const item = row(value);
+  return {
+    id: required(item, 'id'),
+    leadId: required(item, 'leadId'),
+    opportunityId: item['opportunityId'] ?? null,
+    taskId: item['taskId'] ?? null,
+    eventType: required(item, 'eventType'),
+    actor: required(item, 'actor'),
+    createdAt: required(item, 'createdAt'),
+  };
+};
+
+export const safeEvidenceDto = (value: unknown) => {
+  const item = row(value);
+  return {
+    id: required(item, 'id'),
+    leadId: required(item, 'leadId'),
+    source: required(item, 'source'),
+    confidence: required(item, 'confidence'),
+    observedAt: required(item, 'observedAt'),
+    createdAt: required(item, 'createdAt'),
+  };
+};
+
 const safeOpportunityDto = (value: unknown) => {
   const item = row(value);
   return {
-    id: item['id'],
-    leadId: item['leadId'],
-    status: item['status'],
-    outcome: item['outcome'],
-    amount: item['amount'],
-    expectedCloseAt: item['expectedCloseAt'],
-    createdAt: item['createdAt'],
-    updatedAt: item['updatedAt'],
+    id: required(item, 'id'),
+    leadId: required(item, 'leadId'),
+    amount: item['amount'] ?? null,
+    currency: required(item, 'currency'),
+    expectedCloseAt: item['expectedCloseAt'] ?? null,
+    closedAt: item['closedAt'] ?? null,
+    outcome: item['outcome'] ?? null,
+    version: required(item, 'version'),
+    createdAt: required(item, 'createdAt'),
+    updatedAt: required(item, 'updatedAt'),
   };
 };
 
 const safeNoteDto = (value: unknown) => {
   const item = row(value);
   return {
-    id: item['id'],
-    leadId: item['leadId'],
-    opportunityId: item['opportunityId'],
-    createdAt: item['createdAt'],
+    id: required(item, 'id'),
+    leadId: required(item, 'leadId'),
+    opportunityId: item['opportunityId'] ?? null,
+    createdAt: required(item, 'createdAt'),
   };
 };
 
 const safeTagDto = (value: unknown) => {
   const item = row(value);
   return {
-    id: item['id'],
-    leadId: item['leadId'],
-    createdAt: item['createdAt'],
+    id: required(item, 'id'),
+    createdAt: required(item, 'createdAt'),
   };
 };
 
-const safeTaskDto = (value: unknown) => {
+export const safeCrmTaskDto = (value: unknown) => {
   const item = row(value);
   return {
-    id: item['id'],
-    leadId: item['leadId'],
-    opportunityId: item['opportunityId'],
-    status: item['status'],
-    priority: item['priority'],
-    dueAt: item['dueAt'],
-    completedAt: item['completedAt'],
-    createdAt: item['createdAt'],
-    updatedAt: item['updatedAt'],
+    id: required(item, 'id'),
+    leadId: required(item, 'leadId'),
+    opportunityId: item['opportunityId'] ?? null,
+    status: required(item, 'status'),
+    priority: required(item, 'priority'),
+    dueAt: required(item, 'dueAt'),
+    completedAt: item['completedAt'] ?? null,
+    version: required(item, 'version'),
+    createdAt: required(item, 'createdAt'),
+    updatedAt: required(item, 'updatedAt'),
+  };
+};
+
+export const safeCrmQueueItemDto = (value: unknown) => {
+  const item = row(value);
+  return {
+    task: safeCrmTaskDto(item['task']),
+    lead: safeLeadDto(item['lead']),
   };
 };
 
@@ -132,7 +172,7 @@ export const safeCrmDto = (value: unknown) => {
     opportunities: items('opportunities').map(safeOpportunityDto),
     notes: items('notes').map(safeNoteDto),
     tags: items('tags').map(safeTagDto),
-    tasks: items('tasks').map(safeTaskDto),
+    tasks: items('tasks').map(safeCrmTaskDto),
   };
 };
 

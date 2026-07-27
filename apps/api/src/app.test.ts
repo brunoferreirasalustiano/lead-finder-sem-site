@@ -10,7 +10,7 @@ import {
   safeCampaignFailureItem,
 } from './app.js';
 import { permissions } from './auth.js';
-import { findForbiddenPiiResponseKeys } from './api-contracts.js';
+import { findForbiddenPiiResponseKeys, safeLeadDto } from './api-contracts.js';
 
 const sensitivePattern = /private@example\.test|\+5511999999999|tok_secret|postgresql:\/\/|select \* from|lead_contacts|stack-canary/i;
 const testToken = 'synthetic-api-token-for-tests-only-0001';
@@ -295,10 +295,42 @@ describe('PII-minimized HTTP contracts', () => {
       }]) as never,
       getCrm: vi.fn().mockResolvedValue({
         lead: safeLead,
-        opportunities: [{ id: 'opportunity-id', leadId: contractLeadId, title: contractCanaries[2] }],
-        notes: [{ id: 'note-id', leadId: contractLeadId, body: contractCanaries[3] }],
-        tags: [{ id: 'tag-id', leadId: contractLeadId, name: contractCanaries[2] }],
-        tasks: [{ id: 'task-id', leadId: contractLeadId, title: contractCanaries[0] }],
+        opportunities: [{
+          id: 'opportunity-id',
+          leadId: contractLeadId,
+          title: contractCanaries[2],
+          amount: null,
+          currency: 'BRL',
+          expectedCloseAt: null,
+          closedAt: null,
+          outcome: null,
+          version: 1,
+          createdAt: new Date('2030-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2030-01-01T00:00:00.000Z'),
+        }],
+        notes: [{
+          id: 'note-id',
+          leadId: contractLeadId,
+          body: contractCanaries[3],
+          createdAt: new Date('2030-01-01T00:00:00.000Z'),
+        }],
+        tags: [{
+          id: 'tag-id',
+          name: contractCanaries[2],
+          createdAt: new Date('2030-01-01T00:00:00.000Z'),
+        }],
+        tasks: [{
+          id: 'task-id',
+          leadId: contractLeadId,
+          title: contractCanaries[0],
+          status: 'PENDENTE',
+          priority: 'MEDIA',
+          dueAt: new Date('2030-01-02T00:00:00.000Z'),
+          completedAt: null,
+          version: 1,
+          createdAt: new Date('2030-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2030-01-01T00:00:00.000Z'),
+        }],
       }) as never,
     });
     const history = await authenticatedInject(app, { method: 'GET', url: `/leads/${contractLeadId}/history` });
@@ -307,6 +339,165 @@ describe('PII-minimized HTTP contracts', () => {
     expect(crm.statusCode).toBe(200);
     expectSerializedResponseWithoutPii(history.body);
     expectSerializedResponseWithoutPii(crm.body);
+    await app.close();
+  });
+
+  it('sanitizes qualification evidence lists and evidence creation responses', async () => {
+    const evidence = {
+      id: 'evidence-id',
+      leadId: contractLeadId,
+      source: 'SYNTHETIC_TEST',
+      confidence: '1.000',
+      observedAt: new Date('2030-01-01T00:00:00.000Z'),
+      createdAt: new Date('2030-01-01T00:00:00.000Z'),
+      reference: `${contractCanaries[0]} ${contractCanaries[5]}`,
+      result: contractCanaries[2],
+      notes: `${contractCanaries[3]} ${contractCanaries[4]}`,
+      fingerprint: contractCanaries[1],
+    };
+    const app = contractApp({
+      getQualification: vi.fn().mockResolvedValue({
+        id: contractLeadId,
+        qualificationStatus: 'SEM_SITE_CONFIRMADO',
+        isBlocked: false,
+        doNotContact: false,
+        outreachEligible: true,
+      }) as never,
+      listEvidence: vi.fn().mockResolvedValue([evidence]) as never,
+      addEvidence: vi.fn().mockResolvedValue(evidence) as never,
+    });
+    const qualification = await authenticatedInject(app, {
+      method: 'GET',
+      url: `/leads/${contractLeadId}/qualification`,
+    });
+    const created = await authenticatedInject(app, {
+      method: 'POST',
+      url: `/leads/${contractLeadId}/evidence`,
+      payload: {
+        actor: 'contract-test',
+        source: 'SYNTHETIC_TEST',
+        reference: `${contractCanaries[0]} ${contractCanaries[5]}`,
+        result: contractCanaries[2],
+        confidence: 1,
+        observedAt: '2030-01-01T00:00:00.000Z',
+        notes: `${contractCanaries[3]} ${contractCanaries[4]}`,
+      },
+    });
+    expect(qualification.statusCode).toBe(200);
+    expect(created.statusCode).toBe(201);
+    expect(qualification.json()).toMatchObject({
+      evidence: [{
+        id: 'evidence-id',
+        leadId: contractLeadId,
+        source: 'SYNTHETIC_TEST',
+        confidence: '1.000',
+      }],
+    });
+    for (const response of [qualification, created]) expectSerializedResponseWithoutPii(response.body);
+    await app.close();
+  });
+
+  it('sanitizes timeline events while preserving pagination and authorization', async () => {
+    const listTimelineMock = vi.fn().mockResolvedValue([{
+      id: 'timeline-id',
+      leadId: contractLeadId,
+      opportunityId: null,
+      taskId: null,
+      eventType: 'ASSIGNMENT_UPDATED',
+      actor: 'operator-id',
+      createdAt: new Date('2030-01-01T00:00:00.000Z'),
+      reason: contractCanaries[2],
+      previousValue: { ...contractSensitiveFields },
+      newValue: { ...contractSensitiveFields },
+      metadata: { nested: contractSensitiveFields },
+    }]);
+    const app = contractApp({ listTimeline: listTimelineMock as never });
+    const response = await authenticatedInject(app, {
+      method: 'GET',
+      url: `/leads/${contractLeadId}/timeline?page=2&pageSize=2`,
+    });
+    const anonymous = await app.inject({
+      method: 'GET',
+      url: `/leads/${contractLeadId}/timeline?page=2&pageSize=2`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(anonymous.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      items: [{ id: 'timeline-id', eventType: 'ASSIGNMENT_UPDATED' }],
+      pagination: { page: 2, pageSize: 2, hasMore: false },
+    });
+    expect(listTimelineMock).toHaveBeenCalledWith(expect.anything(), contractLeadId, {
+      limit: 2,
+      offset: 2,
+    });
+    expectSerializedResponseWithoutPii(response.body);
+    await app.close();
+  });
+
+  it('sanitizes overdue and upcoming CRM queues and preserves bounds', async () => {
+    const queueItem = {
+      task: {
+        id: 'task-id',
+        leadId: contractLeadId,
+        opportunityId: null,
+        title: contractCanaries[0],
+        description: contractCanaries[2],
+        completionNote: contractCanaries[3],
+        owner: contractCanaries[1],
+        status: 'PENDENTE',
+        priority: 'ALTA',
+        dueAt: new Date('2030-01-02T00:00:00.000Z'),
+        completedAt: null,
+        version: 2,
+        createdAt: new Date('2030-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2030-01-01T00:00:00.000Z'),
+      },
+      lead: safeLead,
+    };
+    const overdue = vi.fn().mockResolvedValue([queueItem]);
+    const upcoming = vi.fn().mockResolvedValue([queueItem]);
+    const app = contractApp({
+      listOverdueTasks: overdue as never,
+      listUpcomingFollowUps: upcoming as never,
+    });
+    const overdueResponse = await authenticatedInject(app, {
+      method: 'GET',
+      url: '/crm/tasks/overdue?to=2030-01-02T00:00:00.000Z&pageSize=2',
+    });
+    const upcomingResponse = await authenticatedInject(app, {
+      method: 'GET',
+      url: '/crm/follow-ups/upcoming?from=2030-01-01T00:00:00.000Z&to=2030-01-03T00:00:00.000Z&pageSize=2&owner=operator-id',
+    });
+    expect(overdueResponse.statusCode).toBe(200);
+    expect(upcomingResponse.statusCode).toBe(200);
+    expect(overdue).toHaveBeenCalledWith(expect.anything(), new Date('2030-01-02T00:00:00.000Z'), 2);
+    expect(upcoming).toHaveBeenCalledWith(
+      expect.anything(),
+      new Date('2030-01-01T00:00:00.000Z'),
+      new Date('2030-01-03T00:00:00.000Z'),
+      2,
+      'operator-id',
+    );
+    const expectedLead = JSON.parse(JSON.stringify(safeLeadDto(safeLead))) as unknown;
+    for (const response of [overdueResponse, upcomingResponse]) {
+      const body = JSON.parse(response.body) as unknown;
+      expect(body).toEqual([{
+        task: {
+          id: 'task-id',
+          leadId: contractLeadId,
+          opportunityId: null,
+          status: 'PENDENTE',
+          priority: 'ALTA',
+          dueAt: '2030-01-02T00:00:00.000Z',
+          completedAt: null,
+          version: 2,
+          createdAt: '2030-01-01T00:00:00.000Z',
+          updatedAt: '2030-01-01T00:00:00.000Z',
+        },
+        lead: expectedLead,
+      }]);
+      expectSerializedResponseWithoutPii(response.body);
+    }
     await app.close();
   });
 

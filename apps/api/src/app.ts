@@ -117,7 +117,10 @@ import {
   safeCampaignSimulationDto,
   safeContactDto,
   safeCrmDto,
+  safeCrmQueueItemDto,
+  safeCrmTimelineDto,
   safeEligibleCampaignLeadDto,
+  safeEvidenceDto,
   safeHistoryDto,
   safeLeadDto,
 } from './api-contracts.js';
@@ -131,10 +134,15 @@ type HttpContractQueries = Readonly<{
   listLeads: typeof listLeads;
   getLead: typeof getLead;
   getQualification: typeof getQualification;
+  listEvidence: typeof listEvidence;
+  addEvidence: typeof addEvidence;
   listContacts: typeof listContacts;
   upsertContact: typeof upsertContact;
   listHistory: typeof listHistory;
   getCrm: typeof getCrm;
+  listTimeline: typeof listTimeline;
+  listOverdueTasks: typeof listOverdueTasks;
+  listUpcomingFollowUps: typeof listUpcomingFollowUps;
   listEligibleCampaignLeads: typeof listEligibleCampaignLeads;
   listCampaignTemplates: typeof listCampaignTemplates;
   listCampaignRecipients: typeof listCampaignRecipients;
@@ -206,10 +214,15 @@ export function buildApp(db: Database, options: {
     listLeads,
     getLead,
     getQualification,
+    listEvidence,
+    addEvidence,
     listContacts,
     upsertContact,
     listHistory,
     getCrm,
+    listTimeline,
+    listOverdueTasks,
+    listUpcomingFollowUps,
     listEligibleCampaignLeads,
     listCampaignTemplates,
     listCampaignRecipients,
@@ -391,7 +404,7 @@ export function buildApp(db: Database, options: {
     try {
       return {
         ...(await contractQueries.getQualification(db, id.data)),
-        evidence: await listEvidence(db, id.data),
+        evidence: (await contractQueries.listEvidence(db, id.data)).map(safeEvidenceDto),
       };
     } catch (error) {
       return qualificationError(error, reply);
@@ -402,7 +415,7 @@ export function buildApp(db: Database, options: {
     const body = evidenceInputSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid evidence' });
     try {
-      return reply.status(201).send(await addEvidence(db, id.data, body.data));
+      return reply.status(201).send(safeEvidenceDto(await contractQueries.addEvidence(db, id.data, body.data)));
     } catch (error) {
       return qualificationError(error, reply);
     }
@@ -529,16 +542,27 @@ export function buildApp(db: Database, options: {
   app.get('/leads/:id/timeline', async (request, reply) => {
     const id = leadId(request); const query = noteListFilterSchema.safeParse(request.query);
     if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid timeline query' });
-    return crmRoute(reply, async () => page(await listTimeline(db, id.data, listOptions(query.data)), query.data));
+    return crmRoute(reply, async () => page(
+      (await contractQueries.listTimeline(db, id.data, listOptions(query.data))).map(safeCrmTimelineDto),
+      query.data,
+    ));
   });
   app.get('/crm/tasks/overdue', async (request, reply) => {
     const query = followUpFilterSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid overdue query' });
     const now = query.data.to ?? query.data.from; if (!now) return reply.status(400).send({ error: 'A deterministic UTC from or to timestamp is required' });
-    return crmRoute(reply, () => listOverdueTasks(db, new Date(now), query.data.pageSize));
+    return crmRoute(reply, async () =>
+      (await contractQueries.listOverdueTasks(db, new Date(now), query.data.pageSize)).map(safeCrmQueueItemDto));
   });
   app.get('/crm/follow-ups/upcoming', async (request, reply) => {
     const query = followUpFilterSchema.safeParse(request.query); if (!query.success || !query.data.from || !query.data.to) return reply.status(400).send({ error: 'Valid UTC from and to timestamps are required' });
-    return crmRoute(reply, () => listUpcomingFollowUps(db, new Date(query.data.from!), new Date(query.data.to!), query.data.pageSize, query.data.owner));
+    return crmRoute(reply, async () =>
+      (await contractQueries.listUpcomingFollowUps(
+        db,
+        new Date(query.data.from!),
+        new Date(query.data.to!),
+        query.data.pageSize,
+        query.data.owner,
+      )).map(safeCrmQueueItemDto));
   });
   app.post('/campaigns/preview', async (request, reply) => {
     const body = campaignPreviewSchema.safeParse(request.body);

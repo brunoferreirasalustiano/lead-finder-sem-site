@@ -5,7 +5,10 @@ import {
   safeCampaignRecipientDto,
   safeCampaignSimulationDto,
   safeContactDto,
+  safeCrmQueueItemDto,
+  safeCrmTimelineDto,
   safeCrmDto,
+  safeEvidenceDto,
   safeEligibleCampaignLeadDto,
   safeHistoryDto,
   safeLeadDto,
@@ -112,13 +115,156 @@ describe('safe PII HTTP contracts', () => {
   it('projects CRM aggregates without raw lead or free-text content', () => {
     const result = safeCrmDto({
       lead: { ...sensitive, id: 'lead-id', name: 'Empresa Sintética' },
-      opportunities: [{ id: 'opportunity-id', leadId: 'lead-id', title: piiCanaries[2] }],
-      notes: [{ id: 'note-id', leadId: 'lead-id', body: piiCanaries[3] }],
-      tags: [{ id: 'tag-id', leadId: 'lead-id', name: piiCanaries[2] }],
-      tasks: [{ id: 'task-id', leadId: 'lead-id', title: piiCanaries[0] }],
+      opportunities: [{
+        id: 'opportunity-id',
+        leadId: 'lead-id',
+        title: piiCanaries[2],
+        amount: '100.00',
+        currency: 'BRL',
+        expectedCloseAt: null,
+        closedAt: '2030-01-02T00:00:00.000Z',
+        outcome: 'GANHO',
+        version: 3,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-02T00:00:00.000Z',
+      }],
+      notes: [{
+        id: 'note-id',
+        leadId: 'lead-id',
+        body: piiCanaries[3],
+        createdAt: '2030-01-01T00:00:00.000Z',
+      }],
+      tags: [{
+        id: 'tag-id',
+        name: piiCanaries[2],
+        createdAt: '2030-01-01T00:00:00.000Z',
+      }],
+      tasks: [{
+        id: 'task-id',
+        leadId: 'lead-id',
+        opportunityId: null,
+        title: piiCanaries[0],
+        status: 'PENDENTE',
+        priority: 'ALTA',
+        dueAt: '2030-01-03T00:00:00.000Z',
+        completedAt: null,
+        version: 4,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-02T00:00:00.000Z',
+      }],
     });
-    expect(result).toMatchObject({ lead: { id: 'lead-id' } });
+    expect(result).toEqual({
+      lead: safeLeadDto({ id: 'lead-id', name: 'Empresa Sintética' }),
+      opportunities: [{
+        id: 'opportunity-id',
+        leadId: 'lead-id',
+        amount: '100.00',
+        currency: 'BRL',
+        expectedCloseAt: null,
+        closedAt: '2030-01-02T00:00:00.000Z',
+        outcome: 'GANHO',
+        version: 3,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-02T00:00:00.000Z',
+      }],
+      notes: [{
+        id: 'note-id',
+        leadId: 'lead-id',
+        opportunityId: null,
+        createdAt: '2030-01-01T00:00:00.000Z',
+      }],
+      tags: [{ id: 'tag-id', createdAt: '2030-01-01T00:00:00.000Z' }],
+      tasks: [{
+        id: 'task-id',
+        leadId: 'lead-id',
+        opportunityId: null,
+        status: 'PENDENTE',
+        priority: 'ALTA',
+        dueAt: '2030-01-03T00:00:00.000Z',
+        completedAt: null,
+        version: 4,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-02T00:00:00.000Z',
+      }],
+    });
     expectNoPii(result);
+  });
+
+  it('projects timeline, queues and evidence with stable structural metadata only', () => {
+    const timeline = safeCrmTimelineDto({
+      id: 'timeline-id',
+      leadId: 'lead-id',
+      opportunityId: null,
+      taskId: null,
+      eventType: 'ASSIGNMENT_UPDATED',
+      actor: 'operator-id',
+      createdAt: '2030-01-01T00:00:00.000Z',
+      reason: piiCanaries[2],
+      previousValue: sensitive,
+      newValue: sensitive,
+      metadata: { nested: sensitive },
+    });
+    const evidence = safeEvidenceDto({
+      id: 'evidence-id',
+      leadId: 'lead-id',
+      source: 'SYNTHETIC_TEST',
+      confidence: '1.000',
+      observedAt: '2030-01-01T00:00:00.000Z',
+      createdAt: '2030-01-01T00:00:00.000Z',
+      reference: piiCanaries[0],
+      result: piiCanaries[2],
+      notes: piiCanaries[3],
+      fingerprint: piiCanaries[4],
+    });
+    const queue = safeCrmQueueItemDto({
+      task: {
+        id: 'task-id',
+        leadId: 'lead-id',
+        opportunityId: null,
+        status: 'PENDENTE',
+        priority: 'MEDIA',
+        dueAt: '2030-01-02T00:00:00.000Z',
+        completedAt: null,
+        version: 2,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-01T00:00:00.000Z',
+        title: piiCanaries[0],
+        description: piiCanaries[2],
+        completionNote: piiCanaries[3],
+        owner: piiCanaries[1],
+      },
+      lead: { ...sensitive, id: 'lead-id', name: 'Empresa Sintética' },
+    });
+    expect(timeline).toEqual({
+      id: 'timeline-id',
+      leadId: 'lead-id',
+      opportunityId: null,
+      taskId: null,
+      eventType: 'ASSIGNMENT_UPDATED',
+      actor: 'operator-id',
+      createdAt: '2030-01-01T00:00:00.000Z',
+    });
+    expect(evidence).toEqual({
+      id: 'evidence-id',
+      leadId: 'lead-id',
+      source: 'SYNTHETIC_TEST',
+      confidence: '1.000',
+      observedAt: '2030-01-01T00:00:00.000Z',
+      createdAt: '2030-01-01T00:00:00.000Z',
+    });
+    expect(queue.task).toEqual({
+      id: 'task-id',
+      leadId: 'lead-id',
+      opportunityId: null,
+      status: 'PENDENTE',
+      priority: 'MEDIA',
+      dueAt: '2030-01-02T00:00:00.000Z',
+      completedAt: null,
+      version: 2,
+      createdAt: '2030-01-01T00:00:00.000Z',
+      updatedAt: '2030-01-01T00:00:00.000Z',
+    });
+    for (const value of [timeline, evidence, queue]) expectNoPii(value);
   });
 
   it('projects eligible leads, recipients, attempts and simulations safely', () => {
@@ -160,5 +306,12 @@ describe('safe PII HTTP contracts', () => {
   it('finds forbidden keys recursively instead of checking only the first level', () => {
     expect(findForbiddenPiiResponseKeys({ safe: [{ nested: { original_value: 'canary' } }] }))
       .toEqual(['$.safe[0].nested.original_value']);
+  });
+
+  it('fails closed when required structured CRM metadata is absent', () => {
+    expect(() => safeCrmQueueItemDto({
+      task: { id: 'task-id' },
+      lead: { id: 'lead-id' },
+    })).toThrow('SAFE_DTO_REQUIRED_FIELD_MISSING');
   });
 });

@@ -17,7 +17,8 @@ Esta console é separada do fluxo comercial e não cria lead, piloto, campanha, 
   - `operator-test:confirm`;
   - `operator-test:response`, apenas quando a resposta for utilizada;
 - número pertencente ao operador em formato E.164;
-- confirmação manual de que o número configurado na API e o número configurado localmente são o mesmo;
+- a mesma `OPERATOR_TEST_RECIPIENT_BINDING_KEY` exclusiva configurada na API e na console;
+- `OPERATOR_TEST_RECIPIENT_BINDING_KEY` com 32 a 512 caracteres ASCII imprimíveis sem espaços, diferente de `API_AUTH_TOKEN` e `OPERATOR_TEST_FINGERPRINT_KEY`;
 - `REAL_MANUAL_PILOT_BLOCKED=true` e `MESSAGES=NOT_SENT` para leads reais.
 
 ## Configuração local
@@ -29,7 +30,9 @@ $env:LEAD_FINDER_API_URL="https://URL-DA-API"
 $segredo = Read-Host "Cole o token operator-test" -AsSecureString
 $env:API_AUTH_TOKEN = [System.Net.NetworkCredential]::new("", $segredo).Password
 $env:OPERATOR_TEST_AUTHORIZED="true"
-$env:OPERATOR_TEST_WHATSAPP_E164="+55DDDNUMERO"
+$env:OPERATOR_TEST_WHATSAPP_E164="+12025550100" # exemplo sintético reservado; use o autorizado só na sessão local
+$binding = Read-Host "Cole a chave exclusiva de recipient binding" -AsSecureString
+$env:OPERATOR_TEST_RECIPIENT_BINDING_KEY = [System.Net.NetworkCredential]::new("", $binding).Password
 npm run operator:test:whatsapp
 ```
 
@@ -49,14 +52,16 @@ http://127.0.0.1:4174
 
 1. a console mostra somente os quatro últimos dígitos do destino local;
 2. o operador confere o texto fixo do teste;
-3. **Criar preparação auditada** chama `POST /operator-tests/whatsapp/preparations` com corpo vazio;
-4. a resposta da API é aceita somente se contiver o contrato sanitizado e fixo do `OPERATOR_TEST`;
-5. telefone, mensagem e link `wa.me` permanecem somente na memória da console;
-6. **Registrar abertura e abrir WhatsApp** registra `OPENED` na API antes do redirecionamento local para `wa.me`;
-7. o operador revisa novamente destinatário e texto no WhatsApp;
-8. o envio continua sendo exclusivamente humano;
-9. o operador registra `SENT_CONFIRMED` ou `NOT_SENT` conforme o que realmente ocorreu;
-10. uma resposta pode ser registrada somente após `SENT_CONFIRMED` e somente quando houver evidência real.
+3. **Criar preparação auditada** gera nonce e `Idempotency-Key`, calcula a prova criptográfica do destino local e chama `POST /operator-tests/whatsapp/preparations`;
+4. a API só prepara após validar a prova contra seu destino autorizado;
+5. a resposta da API é aceita somente se contiver o contrato sanitizado e um recibo criptográfico válido;
+6. telefone, mensagem, link `wa.me` e recibo permanecem somente na memória da console;
+7. antes de `/open`, `/confirm` e `/response`, a console recalcula e valida novamente o recibo;
+8. **Registrar abertura e abrir WhatsApp** registra `OPENED` na API antes do redirecionamento local para `wa.me`;
+9. o operador revisa novamente destinatário e texto no WhatsApp;
+10. o envio continua sendo exclusivamente humano;
+11. o operador registra `SENT_CONFIRMED` ou `NOT_SENT` conforme o que realmente ocorreu;
+12. uma resposta pode ser registrada somente após `SENT_CONFIRMED` e somente quando houver evidência real.
 
 Abrir o WhatsApp não confirma envio. A console não lê o WhatsApp, não detecta entrega e não escolhe resultados automaticamente.
 
@@ -74,19 +79,20 @@ Abrir o WhatsApp não confirma envio. A console não lê o WhatsApp, não detect
 - nenhum parâmetro adicional no link;
 - nenhum telefone completo ou link renderizado na página;
 - resposta de preparação rejeitada caso contenha campos inesperados, mensagem, link ou fingerprint de destinatário;
-- token, telefone e link não são escritos em disco;
+- mismatch de proof ou recibo apaga a preparação local e impede abertura e eventos;
+- token, chaves, proof, recibo, telefone e link não são escritos em disco ou logs;
 - encerramento do processo apaga as preparações locais.
 
 ## Dados enviados à API
 
 A console envia apenas:
 
-- corpo vazio na preparação;
+- versão fixa, nonce aleatório e proof HMAC na preparação;
 - UUID de preparação na rota;
 - `Idempotency-Key` aleatória por operação;
 - enum de confirmação ou resposta.
 
-A console não envia telefone, mensagem, URL `wa.me`, lead, contato, piloto ou payload comercial.
+A console não envia telefone, mensagem, URL `wa.me`, recibo, lead, contato, piloto ou payload comercial.
 
 ## Interrupção obrigatória
 

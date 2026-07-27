@@ -1,8 +1,17 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { approvedTemplates } from '@lead-finder/messaging';
+import {
+  createOperatorRecipientProof,
+  decodeStrictBase64Url,
+  digestOperatorTestMessage,
+  OPERATOR_RECIPIENT_BINDING_MAC_BYTES,
+  OPERATOR_RECIPIENT_BINDING_NONCE_BYTES,
+  OPERATOR_RECIPIENT_BINDING_VERSION,
+  verifyOperatorRecipientReceipt,
+} from '@lead-finder/shared';
 import { z } from 'zod';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -24,11 +33,22 @@ const operatorPreparationSchema = z.object({
   templateVersion: z.literal('v1'),
   preparedAt: z.string().datetime({ offset: true }),
   replayed: z.boolean(),
+  bindingVersion: z.literal(OPERATOR_RECIPIENT_BINDING_VERSION),
+  bindingNonce: z.string().refine(
+    (value) => decodeStrictBase64Url(value, OPERATOR_RECIPIENT_BINDING_NONCE_BYTES) !== undefined,
+  ),
+  principalBinding: z.string().refine(
+    (value) => decodeStrictBase64Url(value, OPERATOR_RECIPIENT_BINDING_MAC_BYTES) !== undefined,
+  ),
+  recipientBindingReceipt: z.string().refine(
+    (value) => decodeStrictBase64Url(value, OPERATOR_RECIPIENT_BINDING_MAC_BYTES) !== undefined,
+  ),
 }).strict();
 
 type OperatorPreparation = z.infer<typeof operatorPreparationSchema>;
 
 type ActivePreparation = OperatorPreparation & Readonly<{
+  preparationIdempotencyKey: string;
   maskedPhone: string;
   message: string;
   link: string;
@@ -37,6 +57,8 @@ type ActivePreparation = OperatorPreparation & Readonly<{
 type ConsoleConfig = Readonly<{
   apiBaseUrl: string;
   apiToken: string;
+  bindingKey: string;
+  phoneE164: string;
   maskedPhone: string;
   message: string;
   link: string;
@@ -110,13 +132,36 @@ export function resolveOperatorConsoleConfig(environment: NodeJS.ProcessEnv): Co
   const apiUrl = environment['LEAD_FINDER_API_URL']?.trim() ?? '';
   const apiToken = environment['API_AUTH_TOKEN'] ?? '';
   const phoneValue = environment['OPERATOR_TEST_WHATSAPP_E164']?.trim() ?? '';
+  const bindingKey = environment['OPERATOR_TEST_RECIPIENT_BINDING_KEY'] ?? '';
   if (!apiUrl) throw new Error('LEAD_FINDER_API_URL is required');
   if (apiToken.length < 32) throw new Error('API_AUTH_TOKEN must contain at least 32 characters');
   if (!phoneValue) throw new Error('OPERATOR_TEST_WHATSAPP_E164 is required');
+  if (
+    bindingKey.length < 32
+    || bindingKey.length > 512
+    || !/^[\x21-\x7e]+$/.test(bindingKey)
+  ) {
+    throw new Error(
+      'OPERATOR_TEST_RECIPIENT_BINDING_KEY must contain 32-512 printable non-space ASCII characters',
+    );
+  }
+  if (bindingKey === apiToken) {
+    throw new Error('OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from API_AUTH_TOKEN');
+  }
+  if (
+    environment['OPERATOR_TEST_FINGERPRINT_KEY']
+    && bindingKey === environment['OPERATOR_TEST_FINGERPRINT_KEY']
+  ) {
+    throw new Error(
+      'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from OPERATOR_TEST_FINGERPRINT_KEY',
+    );
+  }
   const phone = parseOperatorPhone(phoneValue);
   return {
     apiBaseUrl: parseApiBaseUrl(apiUrl),
     apiToken,
+    bindingKey,
+    phoneE164: phone,
     maskedPhone: `••••${phone.slice(-4)}`,
     message: approvedTemplates.operatorWhatsappTestV1.body,
     link: createOperatorWhatsAppUrl(phone),
@@ -195,13 +240,14 @@ async function apiRequest(
   config: ConsoleConfig,
   path: string,
   body: object,
+  idempotencyKey = randomUUID(),
 ): Promise<unknown> {
   const response = await fetch(`${config.apiBaseUrl}${path}`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${config.apiToken}`,
       'content-type': 'application/json',
-      'idempotency-key': randomUUID(),
+      'idempotency-key': idempotencyKey,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
@@ -212,6 +258,28 @@ async function apiRequest(
     throw new Error(code);
   }
   return payload;
+}
+
+export function validateOperatorPreparationReceipt(
+  preparation: ActivePreparation,
+  config: ConsoleConfig,
+): void {
+  const valid = verifyOperatorRecipientReceipt(
+    config.bindingKey,
+    {
+      bindingVersion: preparation.bindingVersion,
+      bindingNonce: preparation.bindingNonce,
+      idempotencyKey: preparation.preparationIdempotencyKey,
+      preparationId: preparation.preparationId,
+      recipientE164: config.phoneE164,
+      templateId: preparation.templateId,
+      templateVersion: preparation.templateVersion,
+      messageDigest: digestOperatorTestMessage(config.message),
+      principalBinding: preparation.principalBinding,
+    },
+    preparation.recipientBindingReceipt,
+  );
+  if (!valid) throw new Error('INVALID_OPERATOR_RECIPIENT_BINDING_RECEIPT');
 }
 
 const renderHome = (csrfToken: string, config: ConsoleConfig, error?: string) => page(
@@ -311,14 +379,38 @@ export function startOperatorTestConsole(environment: NodeJS.ProcessEnv = proces
       if (formValue(form, 'csrf') !== csrfToken) throw new Error('INVALID_CSRF_TOKEN');
 
       if (url.pathname === '/prepare') {
-        const payload = await apiRequest(config, '/operator-tests/whatsapp/preparations', {});
+        const bindingNonce = randomBytes(OPERATOR_RECIPIENT_BINDING_NONCE_BYTES)
+          .toString('base64url');
+        const preparationIdempotencyKey = randomUUID();
+        const bindingVersion = OPERATOR_RECIPIENT_BINDING_VERSION;
+        const messageDigest = digestOperatorTestMessage(config.message);
+        const recipientProof = createOperatorRecipientProof(config.bindingKey, {
+          bindingVersion,
+          bindingNonce,
+          idempotencyKey: preparationIdempotencyKey,
+          recipientE164: config.phoneE164,
+          templateId: 'operator-whatsapp-channel-test',
+          templateVersion: 'v1',
+          messageDigest,
+        });
+        const payload = await apiRequest(
+          config,
+          '/operator-tests/whatsapp/preparations',
+          { bindingVersion, bindingNonce, recipientProof },
+          preparationIdempotencyKey,
+        );
         const preparation = validateOperatorPreparation(payload);
         const active: ActivePreparation = {
           ...preparation,
+          preparationIdempotencyKey,
           maskedPhone: config.maskedPhone,
           message: config.message,
           link: config.link,
         };
+        if (active.bindingNonce !== bindingNonce || active.bindingVersion !== bindingVersion) {
+          throw new Error('INVALID_OPERATOR_RECIPIENT_BINDING_RECEIPT');
+        }
+        validateOperatorPreparationReceipt(active, config);
         preparations.set(active.preparationId, active);
         sendHtml(response, 200, renderPrepared(csrfToken, active));
         return;
@@ -327,6 +419,12 @@ export function startOperatorTestConsole(environment: NodeJS.ProcessEnv = proces
       const preparationId = requireUuid(formValue(form, 'preparationId'));
       const preparation = preparations.get(preparationId);
       if (!preparation) throw new Error('PREPARATION_NOT_IN_LOCAL_SESSION');
+      try {
+        validateOperatorPreparationReceipt(preparation, config);
+      } catch (error) {
+        preparations.delete(preparationId);
+        throw error;
+      }
 
       if (url.pathname === '/open') {
         await apiRequest(config, `/operator-test-preparations/${preparationId}/open`, {});
@@ -370,7 +468,6 @@ export function startOperatorTestConsole(environment: NodeJS.ProcessEnv = proces
   server.listen(port, '127.0.0.1', () => {
     console.log(`Operator test console: http://127.0.0.1:${port}`);
     console.log(`API: ${new URL(config.apiBaseUrl).origin}`);
-    console.log(`Authorized destination: ${config.maskedPhone}`);
     console.log('The console is loopback-only and never sends automatically.');
   });
   return server;

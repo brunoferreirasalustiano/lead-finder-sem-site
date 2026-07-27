@@ -117,6 +117,9 @@ const apiSchema = commonSchema.extend({
   OPERATOR_TEST_FINGERPRINT_KEY: optionalEnvironmentString(
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_TEST_FINGERPRINT_KEY must contain printable non-space ASCII characters only'),
   ),
+  OPERATOR_TEST_RECIPIENT_BINDING_KEY: optionalEnvironmentString(
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must contain printable non-space ASCII characters only'),
+  ),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
@@ -125,7 +128,8 @@ const apiSchema = commonSchema.extend({
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
   const operatorTestSecretsConfigured = configuration.OPERATOR_TEST_WHATSAPP_E164 !== undefined
-    || configuration.OPERATOR_TEST_FINGERPRINT_KEY !== undefined;
+    || configuration.OPERATOR_TEST_FINGERPRINT_KEY !== undefined
+    || configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY !== undefined;
   if (!configuration.OPERATOR_TEST_ENABLED && operatorTestSecretsConfigured) {
     context.addIssue({
       code: 'custom',
@@ -145,6 +149,33 @@ const apiSchema = commonSchema.extend({
       code: 'custom',
       path: ['OPERATOR_TEST_FINGERPRINT_KEY'],
       message: 'OPERATOR_TEST_FINGERPRINT_KEY is required when OPERATOR_TEST_ENABLED=true',
+    });
+  }
+  if (configuration.OPERATOR_TEST_ENABLED && !configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_RECIPIENT_BINDING_KEY'],
+      message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY is required when OPERATOR_TEST_ENABLED=true',
+    });
+  }
+  if (
+    configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY
+    && configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY === configuration.API_AUTH_TOKEN
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_RECIPIENT_BINDING_KEY'],
+      message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from API_AUTH_TOKEN',
+    });
+  }
+  if (
+    configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY
+    && configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY === configuration.OPERATOR_TEST_FINGERPRINT_KEY
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_TEST_RECIPIENT_BINDING_KEY'],
+      message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from OPERATOR_TEST_FINGERPRINT_KEY',
     });
   }
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {

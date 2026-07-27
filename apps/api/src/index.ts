@@ -54,6 +54,7 @@ registerOperatorTestRoutes(app, db, {
   killSwitchEnabled: config.OPERATOR_TEST_KILL_SWITCH_ENABLED,
   authorizedPhoneE164: config.OPERATOR_TEST_WHATSAPP_E164,
   fingerprintKey: config.OPERATOR_TEST_FINGERPRINT_KEY,
+  recipientBindingKey: config.OPERATOR_TEST_RECIPIENT_BINDING_KEY,
 });
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {

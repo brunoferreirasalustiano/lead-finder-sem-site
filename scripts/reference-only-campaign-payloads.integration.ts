@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import postgres from 'postgres';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -10,7 +10,21 @@ const migration = await readFile(
   new URL('../database/migrations/0023_reference_only_campaign_payloads.sql', import.meta.url),
   'utf8',
 );
+const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
 const marker = 'PII_CAMPAIGN_MARKER_5511888888888_sensitive@example.test';
+let stage = 'INITIALIZE';
+
+const writeFailureEvidence = async (error: unknown) => {
+  const candidate = error as { name?: unknown; code?: unknown };
+  await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
+  await writeFile(evidencePath, JSON.stringify({
+    evidenceType: 'REFERENCE_ONLY_CAMPAIGN_PAYLOADS_FAILURE',
+    result: 'FAIL',
+    stage,
+    errorName: typeof candidate?.name === 'string' ? candidate.name : 'UNKNOWN',
+    errorCode: typeof candidate?.code === 'string' ? candidate.code : 'UNKNOWN',
+  }, null, 2));
+};
 
 const assertReferenceOnly = (value: unknown, expectedKeys: readonly string[]) => {
   const serialized = JSON.stringify(value);
@@ -55,7 +69,7 @@ async function insertChain(prefix: string) {
       idempotency_key, payload_fingerprint, available_at
     ) VALUES (
       ${recipientId}::uuid, ${campaignId}::uuid, ${versionId}::uuid, ${leadId}::uuid, 'EMAIL',
-      ${JSON.stringify({ leadName: marker, address: marker, email: 'sensitive@example.test' })}::jsonb,
+      ${db.json({ leadName: marker, address: marker, email: 'sensitive@example.test' })},
       ${`${prefix}-recipient`}, ${'b'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -63,7 +77,7 @@ async function insertChain(prefix: string) {
       id, recipient_id, payload_snapshot, idempotency_key, payload_fingerprint, available_at
     ) VALUES (
       ${attemptId}::uuid, ${recipientId}::uuid,
-      ${JSON.stringify({ renderedMessage: marker, subject: marker, variables: { email: 'sensitive@example.test' } })}::jsonb,
+      ${db.json({ renderedMessage: marker, subject: marker, variables: { email: 'sensitive@example.test' } })},
       ${`${prefix}-attempt`}, ${'c'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -72,7 +86,7 @@ async function insertChain(prefix: string) {
       payload_fingerprint, available_at
     ) VALUES (
       ${outboxId}::uuid, 'ATTEMPT', ${attemptId}::uuid, 'ATTEMPT_CREATED',
-      ${JSON.stringify({ attemptId, renderedMessage: marker, email: 'sensitive@example.test' })}::jsonb,
+      ${db.json({ attemptId, renderedMessage: marker, email: 'sensitive@example.test' })},
       ${`${prefix}-outbox`}, ${'d'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -81,7 +95,7 @@ async function insertChain(prefix: string) {
       payload_fingerprint, occurred_at
     ) VALUES (
       ${providerEventId}::uuid, ${attemptId}::uuid, 'synthetic', ${`${prefix}-external`}, 'DELIVERED',
-      ${JSON.stringify({ body: marker, destination: 'sensitive@example.test' })}::jsonb,
+      ${db.json({ body: marker, destination: 'sensitive@example.test' })},
       ${'e'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -90,8 +104,8 @@ async function insertChain(prefix: string) {
       attempts, claim_generation, created_at
     ) VALUES (
       ${deadLetterId}::uuid, ${outboxId}::uuid, 0, ${`${prefix}-correlation`},
-      ${JSON.stringify({ body: marker, destination: 'sensitive@example.test' })}::jsonb,
-      ${marker}, 'SIMULATED_FAILURE', 1, 0, ${now}::timestamptz
+      ${db.json({ body: marker, destination: 'sensitive@example.test' })},
+      ${marker}, 'SIMULATED_EXECUTION_FAILED', 1, 0, ${now}::timestamptz
     )`;
 
   return { recipientId, attemptId, outboxId, providerEventId, deadLetterId };
@@ -132,10 +146,11 @@ const verifyPayloads = (payloads: Awaited<ReturnType<typeof readPayloads>>) => {
   assertReferenceOnly(payloads.deadLetter.payload, [
     'schemaVersion', 'deadLetterId', 'outboxId', 'cycle', 'errorCode', 'attempts', 'claimGeneration',
   ]);
-  assert.equal(payloads.deadLetter.error, 'SIMULATED_FAILURE');
+  assert.equal(payloads.deadLetter.error, 'SIMULATED_EXECUTION_FAILED');
 };
 
 try {
+  stage = 'DISABLE_REFERENCE_GUARDS';
   for (const [table, trigger] of [
     ['campaign_recipients', 'campaign_recipients_reference_payload_guard'],
     ['campaign_attempts', 'campaign_attempts_reference_payload_guard'],
@@ -144,8 +159,10 @@ try {
     ['campaign_provider_events', 'campaign_provider_events_reference_payload_guard'],
   ] as const) await db.unsafe(`ALTER TABLE public.${table} DISABLE TRIGGER ${trigger}`);
 
+  stage = 'INSERT_LEGACY_DIRTY_CHAIN';
   const dirty = await insertChain('legacy-dirty');
 
+  stage = 'ENABLE_REFERENCE_GUARDS';
   for (const [table, trigger] of [
     ['campaign_recipients', 'campaign_recipients_reference_payload_guard'],
     ['campaign_attempts', 'campaign_attempts_reference_payload_guard'],
@@ -154,13 +171,19 @@ try {
     ['campaign_provider_events', 'campaign_provider_events_reference_payload_guard'],
   ] as const) await db.unsafe(`ALTER TABLE public.${table} ENABLE TRIGGER ${trigger}`);
 
+  stage = 'APPLY_MIGRATION_FIRST_PASS';
   await db.unsafe(migration);
+  stage = 'APPLY_MIGRATION_REPLAY';
   await db.unsafe(migration);
+  stage = 'VERIFY_BACKFILL';
   verifyPayloads(await readPayloads(dirty));
 
+  stage = 'INSERT_GUARDED_CHAIN';
   const guarded = await insertChain('guarded-new');
+  stage = 'VERIFY_GUARDED_CHAIN';
   verifyPayloads(await readPayloads(guarded));
 
+  stage = 'VERIFY_TRIGGER_AND_ACL';
   const triggers = await db<{ count: number }[]>`
     SELECT count(*)::int AS count
     FROM pg_trigger
@@ -197,6 +220,9 @@ try {
     publicFunctionExecuteGrants: 0,
     forbiddenMarkersPersisted: 0,
   }));
+} catch (error) {
+  await writeFailureEvidence(error);
+  throw error;
 } finally {
   await db.end();
 }

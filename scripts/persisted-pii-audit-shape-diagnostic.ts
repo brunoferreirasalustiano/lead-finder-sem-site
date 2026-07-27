@@ -72,6 +72,29 @@ try {
     await db`ALTER TABLE public.crm_timeline_events ENABLE TRIGGER USER`;
   }
 
+  const before = (
+    await db<{ qualificationEvent: string; timelineEvent: string }[]>`
+      SELECT
+        (SELECT event_type FROM public.lead_qualification_history WHERE id = ${qualificationId}::uuid) AS "qualificationEvent",
+        (SELECT event_type FROM public.crm_timeline_events WHERE id = ${timelineId}::uuid) AS "timelineEvent"`
+  )[0];
+
+  const directBefore = (
+    await db<{ qualification: unknown; timeline: unknown; metadata: unknown }[]>`
+      SELECT
+        public.pii_safe_qualification_audit_value(
+          'CONTACT_UPDATED',
+          ${JSON.stringify({ id: randomUUID(), leadId, type: 'EMAIL', isValid: true })}::jsonb
+        ) AS qualification,
+        public.pii_safe_crm_audit_value(
+          'NOTE_ADDED',
+          ${JSON.stringify({ id: randomUUID(), leadId, createdAt: new Date().toISOString() })}::jsonb
+        ) AS timeline,
+        public.pii_safe_crm_audit_metadata(
+          ${JSON.stringify({ source: 'integration-test' })}::jsonb
+        ) AS metadata`
+  )[0];
+
   await db.unsafe(migration);
   await db.unsafe(migration);
 
@@ -87,15 +110,43 @@ try {
       FROM public.crm_timeline_events
       WHERE id = ${timelineId}::uuid`
   )[0];
+  const directAfter = (
+    await db<{ qualification: unknown; timeline: unknown; metadata: unknown }[]>`
+      SELECT
+        public.pii_safe_qualification_audit_value(
+          'CONTACT_UPDATED',
+          ${JSON.stringify({ id: randomUUID(), leadId, type: 'EMAIL', isValid: true })}::jsonb
+        ) AS qualification,
+        public.pii_safe_crm_audit_value(
+          'NOTE_ADDED',
+          ${JSON.stringify({ id: randomUUID(), leadId, createdAt: new Date().toISOString() })}::jsonb
+        ) AS timeline,
+        public.pii_safe_crm_audit_metadata(
+          ${JSON.stringify({ source: 'integration-test' })}::jsonb
+        ) AS metadata`
+  )[0];
 
   await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
   await writeFile(evidencePath, JSON.stringify({
     evidenceType: 'PERSISTED_PII_AUDIT_SHAPE_DIAGNOSTIC',
     result: 'DIAGNOSTIC_COMPLETE',
-    qualificationPrevious: shape(qualification?.previousValue),
-    qualificationNew: shape(qualification?.newValue),
-    timelineNew: shape(timeline?.newValue),
-    timelineMetadata: shape(timeline?.metadata),
+    storedEvents: before,
+    directBefore: {
+      qualification: shape(directBefore?.qualification),
+      timeline: shape(directBefore?.timeline),
+      metadata: shape(directBefore?.metadata),
+    },
+    backfill: {
+      qualificationPrevious: shape(qualification?.previousValue),
+      qualificationNew: shape(qualification?.newValue),
+      timelineNew: shape(timeline?.newValue),
+      timelineMetadata: shape(timeline?.metadata),
+    },
+    directAfter: {
+      qualification: shape(directAfter?.qualification),
+      timeline: shape(directAfter?.timeline),
+      metadata: shape(directAfter?.metadata),
+    },
   }, null, 2));
 
   throw new Error('PERSISTED_PII_AUDIT_SHAPE_DIAGNOSTIC_COMPLETE');

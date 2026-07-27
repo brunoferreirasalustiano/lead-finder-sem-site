@@ -191,19 +191,8 @@ REVOKE ALL ON FUNCTION public.pii_safe_crm_audit_metadata(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sanitize_qualification_history_pii() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sanitize_crm_timeline_pii() FROM PUBLIC;
 
-DROP TRIGGER IF EXISTS lead_qualification_history_pii_guard ON public.lead_qualification_history;
-CREATE TRIGGER lead_qualification_history_pii_guard
-BEFORE INSERT OR UPDATE OF previous_value, new_value, event_type
-ON public.lead_qualification_history
-FOR EACH ROW
-EXECUTE FUNCTION public.sanitize_qualification_history_pii();
-
-DROP TRIGGER IF EXISTS crm_timeline_events_pii_guard ON public.crm_timeline_events;
-CREATE TRIGGER crm_timeline_events_pii_guard
-BEFORE INSERT OR UPDATE OF previous_value, new_value, metadata, event_type
-ON public.crm_timeline_events
-FOR EACH ROW
-EXECUTE FUNCTION public.sanitize_crm_timeline_pii();
+ALTER TABLE public.lead_qualification_history DISABLE TRIGGER USER;
+ALTER TABLE public.crm_timeline_events DISABLE TRIGGER USER;
 
 UPDATE public.lead_qualification_history
 SET
@@ -222,6 +211,23 @@ WHERE
   previous_value IS DISTINCT FROM public.pii_safe_crm_audit_value(event_type, previous_value)
   OR new_value IS DISTINCT FROM public.pii_safe_crm_audit_value(event_type, new_value)
   OR metadata IS DISTINCT FROM public.pii_safe_crm_audit_metadata(metadata);
+
+ALTER TABLE public.lead_qualification_history ENABLE TRIGGER USER;
+ALTER TABLE public.crm_timeline_events ENABLE TRIGGER USER;
+
+DROP TRIGGER IF EXISTS lead_qualification_history_pii_guard ON public.lead_qualification_history;
+CREATE TRIGGER lead_qualification_history_pii_guard
+BEFORE INSERT OR UPDATE OF previous_value, new_value, event_type
+ON public.lead_qualification_history
+FOR EACH ROW
+EXECUTE FUNCTION public.sanitize_qualification_history_pii();
+
+DROP TRIGGER IF EXISTS crm_timeline_events_pii_guard ON public.crm_timeline_events;
+CREATE TRIGGER crm_timeline_events_pii_guard
+BEFORE INSERT OR UPDATE OF previous_value, new_value, metadata, event_type
+ON public.crm_timeline_events
+FOR EACH ROW
+EXECUTE FUNCTION public.sanitize_crm_timeline_pii();
 
 COMMENT ON FUNCTION public.pii_safe_qualification_audit_value(text, jsonb) IS
   'Allowlisted audit projection that removes contact values, free text and arbitrary nested JSON.';

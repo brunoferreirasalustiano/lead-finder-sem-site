@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import postgres from 'postgres';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -11,12 +11,26 @@ const migration = await readFile(
   new URL('../database/migrations/0022_persisted_pii_audit_json.sql', import.meta.url),
   'utf8',
 );
+const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
 const marker = 'PII_MARKER_5511999999999_private@example.test';
 const leadId = randomUUID();
 const dirtyQualificationId = randomUUID();
 const dirtyTimelineId = randomUUID();
 const guardedQualificationId = randomUUID();
 const guardedTimelineId = randomUUID();
+let stage = 'INITIALIZE';
+
+const writeFailureEvidence = async (error: unknown) => {
+  const candidate = error as { name?: unknown; code?: unknown };
+  await mkdir(new URL('../artifacts/', import.meta.url), { recursive: true });
+  await writeFile(evidencePath, JSON.stringify({
+    evidenceType: 'PERSISTED_PII_AUDIT_FAILURE',
+    result: 'FAIL',
+    stage,
+    errorName: typeof candidate?.name === 'string' ? candidate.name : 'UNKNOWN',
+    errorCode: typeof candidate?.code === 'string' ? candidate.code : 'UNKNOWN',
+  }, null, 2));
+};
 
 const assertSanitized = (value: unknown, expectedKeys: readonly string[]) => {
   const serialized = JSON.stringify(value);
@@ -31,6 +45,7 @@ const assertSanitized = (value: unknown, expectedKeys: readonly string[]) => {
 };
 
 try {
+  stage = 'INSERT_LEAD';
   await db`
     INSERT INTO public.leads(
       id, osm_type, osm_id, name, category, phone, whatsapp, email, address,
@@ -41,6 +56,7 @@ try {
       'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'PENDENTE'
     )`;
 
+  stage = 'INSERT_DIRTY_LEGACY_ROWS';
   await db`ALTER TABLE public.lead_qualification_history DISABLE TRIGGER USER`;
   await db`ALTER TABLE public.crm_timeline_events DISABLE TRIGGER USER`;
   try {
@@ -85,9 +101,12 @@ try {
     await db`ALTER TABLE public.crm_timeline_events ENABLE TRIGGER USER`;
   }
 
+  stage = 'APPLY_MIGRATION_FIRST_PASS';
   await db.unsafe(migration);
+  stage = 'APPLY_MIGRATION_REPLAY';
   await db.unsafe(migration);
 
+  stage = 'VERIFY_BACKFILL';
   const dirtyQualification = (
     await db<{ previousValue: unknown; newValue: unknown }[]>`
       SELECT previous_value AS "previousValue", new_value AS "newValue"
@@ -106,6 +125,7 @@ try {
   assertSanitized(dirtyTimeline.newValue, ['schemaVersion', 'noteId', 'leadId', 'createdAt']);
   assertSanitized(dirtyTimeline.metadata, ['schemaVersion', 'source']);
 
+  stage = 'INSERT_GUARDED_ROWS';
   await db`
     INSERT INTO public.lead_qualification_history(
       id, lead_id, event_type, previous_value, new_value, actor, source, reason
@@ -140,6 +160,7 @@ try {
       ${JSON.stringify({ principalId: marker, source: 'integration-test', arbitrary: marker })}::jsonb
     )`;
 
+  stage = 'VERIFY_GUARDS';
   const guardedQualification = (
     await db<{ newValue: unknown }[]>`
       SELECT new_value AS "newValue"
@@ -157,6 +178,7 @@ try {
   assertSanitized(guardedTimeline.newValue, ['schemaVersion', 'taskId', 'leadId', 'status', 'dueAt']);
   assertSanitized(guardedTimeline.metadata, ['schemaVersion', 'source']);
 
+  stage = 'VERIFY_TRIGGER_AND_ACL';
   const triggerRows = await db<{ count: number }[]>`
     SELECT count(*)::int AS count
     FROM pg_trigger
@@ -190,6 +212,9 @@ try {
     publicFunctionExecuteGrants: 0,
     forbiddenMarkersPersisted: 0,
   }));
+} catch (error) {
+  await writeFailureEvidence(error);
+  throw error;
 } finally {
   await db`DELETE FROM public.leads WHERE id = ${leadId}::uuid`.catch(() => undefined);
   await db.end();

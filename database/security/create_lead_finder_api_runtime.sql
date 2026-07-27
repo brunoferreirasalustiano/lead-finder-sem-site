@@ -1,12 +1,24 @@
 BEGIN;
 
 DO $$
+DECLARE
+  parent_role record;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lead_finder_api_runtime') THEN
     EXECUTE 'CREATE ROLE lead_finder_api_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
   ELSE
     EXECUTE 'ALTER ROLE lead_finder_api_runtime WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
   END IF;
+
+  FOR parent_role IN
+    SELECT parent.rolname AS name
+    FROM pg_auth_members membership
+    JOIN pg_roles member_role ON member_role.oid = membership.member
+    JOIN pg_roles parent ON parent.oid = membership.roleid
+    WHERE member_role.rolname = 'lead_finder_api_runtime'
+  LOOP
+    EXECUTE format('REVOKE %I FROM lead_finder_api_runtime', parent_role.name);
+  END LOOP;
 END
 $$;
 
@@ -58,35 +70,25 @@ BEGIN
 END
 $$;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'schema_migrations'
-      AND policyname = 'lead_finder_api_runtime_schema_migrations_select'
-  ) THEN
-    EXECUTE 'CREATE POLICY lead_finder_api_runtime_schema_migrations_select ON public.schema_migrations FOR SELECT TO lead_finder_api_runtime USING (true)';
-  END IF;
+DROP POLICY IF EXISTS lead_finder_api_runtime_schema_migrations_select
+  ON public.schema_migrations;
+CREATE POLICY lead_finder_api_runtime_schema_migrations_select
+  ON public.schema_migrations
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'operator_channel_test_preparations'
-      AND policyname = 'lead_finder_api_runtime_operator_preparations_select'
-  ) THEN
-    EXECUTE 'CREATE POLICY lead_finder_api_runtime_operator_preparations_select ON public.operator_channel_test_preparations FOR SELECT TO lead_finder_api_runtime USING (true)';
-  END IF;
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_preparations_select
+  ON public.operator_channel_test_preparations;
+CREATE POLICY lead_finder_api_runtime_operator_preparations_select
+  ON public.operator_channel_test_preparations
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'operator_channel_test_events'
-      AND policyname = 'lead_finder_api_runtime_operator_events_select'
-  ) THEN
-    EXECUTE 'CREATE POLICY lead_finder_api_runtime_operator_events_select ON public.operator_channel_test_events FOR SELECT TO lead_finder_api_runtime USING (true)';
-  END IF;
-END
-$$;
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_events_select
+  ON public.operator_channel_test_events;
+CREATE POLICY lead_finder_api_runtime_operator_events_select
+  ON public.operator_channel_test_events
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
 
 COMMIT;

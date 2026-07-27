@@ -152,6 +152,12 @@ AS $$
     ELSE jsonb_strip_nulls(jsonb_build_object(
       'schemaVersion', 1,
       'action', p_value -> 'action',
+      'principalId', CASE
+        WHEN COALESCE(p_value ->> 'principalId', p_value ->> 'principal_id')
+          ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        THEN to_jsonb(COALESCE(p_value ->> 'principalId', p_value ->> 'principal_id'))
+        ELSE NULL
+      END,
       'authenticationMethod', COALESCE(p_value -> 'authenticationMethod', p_value -> 'authentication_method'),
       'requestId', COALESCE(p_value -> 'requestId', p_value -> 'request_id'),
       'source', p_value -> 'source',
@@ -234,4 +240,4 @@ COMMENT ON FUNCTION public.pii_safe_qualification_audit_value(text, jsonb) IS
 COMMENT ON FUNCTION public.pii_safe_crm_audit_value(text, jsonb) IS
   'Allowlisted CRM audit projection that removes names, contact values, notes, descriptions and owners.';
 COMMENT ON FUNCTION public.pii_safe_crm_audit_metadata(jsonb) IS
-  'Allowlisted CRM metadata projection without principal duplication or arbitrary values.';
+  'Allowlisted CRM metadata projection with a strict technical principal identifier and no arbitrary values.';

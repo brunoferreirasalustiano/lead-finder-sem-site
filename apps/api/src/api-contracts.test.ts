@@ -314,4 +314,101 @@ describe('safe PII HTTP contracts', () => {
       lead: { id: 'lead-id' },
     })).toThrow('SAFE_DTO_REQUIRED_FIELD_MISSING');
   });
+
+  it('covers present and absent optional CRM relationships and values', () => {
+    const timeline = safeCrmTimelineDto({
+      id: 'timeline-id',
+      leadId: 'lead-id',
+      opportunityId: 'opportunity-id',
+      taskId: 'task-id',
+      eventType: 'TASK_UPDATED',
+      actor: 'operator-id',
+      createdAt: '2030-01-01T00:00:00.000Z',
+    });
+    const crm = safeCrmDto({
+      opportunities: [{
+        id: 'opportunity-id',
+        leadId: 'lead-id',
+        amount: null,
+        currency: 'BRL',
+        expectedCloseAt: '2030-02-01T00:00:00.000Z',
+        closedAt: null,
+        outcome: null,
+        version: 1,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-01T00:00:00.000Z',
+      }],
+      notes: [{
+        id: 'note-id',
+        leadId: 'lead-id',
+        opportunityId: 'opportunity-id',
+        createdAt: '2030-01-01T00:00:00.000Z',
+      }],
+      tasks: [{
+        id: 'task-id',
+        leadId: 'lead-id',
+        opportunityId: 'opportunity-id',
+        status: 'CONCLUIDA',
+        priority: 'MEDIA',
+        dueAt: '2030-01-02T00:00:00.000Z',
+        completedAt: '2030-01-02T00:00:00.000Z',
+        version: 2,
+        createdAt: '2030-01-01T00:00:00.000Z',
+        updatedAt: '2030-01-02T00:00:00.000Z',
+      }],
+    });
+    expect(timeline).toMatchObject({ opportunityId: 'opportunity-id', taskId: 'task-id' });
+    expect(crm.opportunities[0]).toMatchObject({
+      amount: null,
+      expectedCloseAt: '2030-02-01T00:00:00.000Z',
+      closedAt: null,
+      outcome: null,
+    });
+    expect(crm.notes[0]).toMatchObject({ opportunityId: 'opportunity-id' });
+    expect(crm.tasks[0]).toMatchObject({
+      opportunityId: 'opportunity-id',
+      completedAt: '2030-01-02T00:00:00.000Z',
+    });
+    expect(crm.tags).toEqual([]);
+    expectNoPii([timeline, crm]);
+  });
+
+  it('uses empty collections for absent CRM and simulation arrays', () => {
+    expect(safeCrmDto(null)).toEqual({
+      lead: safeLeadDto(undefined),
+      opportunities: [],
+      notes: [],
+      tags: [],
+      tasks: [],
+    });
+    expect(safeCampaignSimulationDto({ items: null, pagination: null })).toEqual({
+      mode: 'SIMULATION',
+      dispatched: false,
+      items: [],
+      pagination: null,
+    });
+  });
+
+  it('handles primitive, null, object and array values in recursive key checks', () => {
+    expect(findForbiddenPiiResponseKeys('safe')).toEqual([]);
+    expect(findForbiddenPiiResponseKeys(null)).toEqual([]);
+    expect(findForbiddenPiiResponseKeys({ phone: piiCanaries[0] })).toEqual(['$.phone']);
+    const nestedPaths = findForbiddenPiiResponseKeys([
+      null,
+      'safe',
+      { nested: [{ payload_snapshot: sensitive }] },
+    ]);
+    expect(nestedPaths).toContain('$[2].nested[0].payload_snapshot');
+    expect(nestedPaths).toContain('$[2].nested[0].payload_snapshot.phone');
+  });
+
+  it('fails closed for invalid queue tasks and incomplete evidence', () => {
+    expect(() => safeCrmQueueItemDto({ task: null, lead: null }))
+      .toThrow('SAFE_DTO_REQUIRED_FIELD_MISSING');
+    expect(() => safeEvidenceDto({
+      id: 'evidence-id',
+      leadId: 'lead-id',
+      source: 'SYNTHETIC_TEST',
+    })).toThrow('SAFE_DTO_REQUIRED_FIELD_MISSING');
+  });
 });

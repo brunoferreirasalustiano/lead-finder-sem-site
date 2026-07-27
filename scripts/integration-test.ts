@@ -25,6 +25,7 @@ import {
 } from '@lead-finder/database';
 import { OverpassClient } from '@lead-finder/overpass-client';
 import { buildApp } from '../apps/api/src/app.js';
+import { findForbiddenPiiResponseKeys } from '../apps/api/src/api-contracts.js';
 import { permissions } from '../apps/api/src/auth.js';
 import { processNextJob } from '../apps/worker/src/process-job.js';
 
@@ -396,7 +397,24 @@ try {
     method: 'PATCH', url: `/leads/${lead.id}/crm/stage`,
     payload: { actor: 'different-forged-client', expectedVersion: 3, idempotencyKey: 'stage-no-contact-exit-ok', stage: 'NOVO', action: 'REACTIVATE', reason: 'Consent restored', auditMetadata: { arbitrary: true } },
   })).statusCode, 200);
-  const timeline = (await inject({ method: 'GET', url: `/leads/${lead.id}/timeline?pageSize=100` })).json<{ items: Array<{ id: string; createdAt: string; eventType: string; actor: string; metadata: Record<string, unknown> }> }>().items;
+  type SafeTimelineEvent = {
+    id: string;
+    leadId: string;
+    opportunityId: string | null;
+    taskId: string | null;
+    eventType: string;
+    actor: string;
+    createdAt: string;
+  };
+  type TimelinePage = {
+    items: SafeTimelineEvent[];
+    pagination: { page: number; pageSize: number; hasMore: boolean };
+  };
+  const timelineResponse = await inject({ method: 'GET', url: `/leads/${lead.id}/timeline?page=1&pageSize=100` });
+  assert.equal(timelineResponse.statusCode, 200);
+  const timelinePage = timelineResponse.json<TimelinePage>();
+  const timeline = timelinePage.items;
+  assert.deepEqual(timelinePage.pagination, { page: 1, pageSize: 100, hasMore: false });
   assert.ok(timeline.length >= 9);
   assert.equal(new Set(timeline.map((item) => item.id)).size, timeline.length, 'timeline must not duplicate events on retries');
   assert.equal(timeline.filter((item) => item.eventType === 'TAG_ADDED').length, 1, 'tag retry must not duplicate TAG_ADDED');
@@ -404,13 +422,45 @@ try {
   for (let index = 1; index < timeline.length; index += 1)
     assert.ok(timeline[index - 1]!.createdAt >= timeline[index]!.createdAt, 'timeline must be newest-first');
   assert.ok(timeline.some((item) => item.eventType === 'STAGE_CHANGED'));
-  const reactivationEvent = timeline.find((item) => item.eventType === 'STAGE_CHANGED' && item.metadata['action'] === 'REACTIVATE');
-  assert.equal(reactivationEvent?.actor, authenticatedPrincipalId, 'reactivation actor must come from the authenticated principal');
-  assert.equal(reactivationEvent?.metadata['principalId'], authenticatedPrincipalId);
-  assert.equal(reactivationEvent?.metadata['authenticationMethod'], 'BEARER_TOKEN');
-  assert.equal(reactivationEvent?.metadata['source'], 'authenticated-api');
-  assert.match(String(reactivationEvent?.metadata['timestamp']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
-  assert.notEqual(reactivationEvent?.metadata['timestamp'], '2000-01-01T00:00:00Z');
+  assert.ok(timeline.every((item) => item.actor.length > 0), 'timeline actors must be safe non-empty identifiers');
+  for (const item of timeline) {
+    for (const key of ['reason', 'previousValue', 'newValue', 'metadata'])
+      assert.equal(Object.hasOwn(item, key), false, `HTTP timeline must omit ${key}`);
+  }
+  assert.deepEqual(findForbiddenPiiResponseKeys(timelinePage), []);
+  const serializedTimeline = timelineResponse.body;
+  for (const canary of ['+5511999999999', 'Rua Teste', '-22.9', '-47.1'])
+    assert.equal(serializedTimeline.includes(canary), false, 'HTTP timeline must omit PII canaries');
+
+  const firstTimelinePage = (await inject({
+    method: 'GET', url: `/leads/${lead.id}/timeline?page=1&pageSize=5`,
+  })).json<TimelinePage>();
+  const secondTimelinePage = (await inject({
+    method: 'GET', url: `/leads/${lead.id}/timeline?page=2&pageSize=5`,
+  })).json<TimelinePage>();
+  assert.deepEqual(firstTimelinePage.pagination, { page: 1, pageSize: 5, hasMore: true });
+  assert.deepEqual(secondTimelinePage.pagination, { page: 2, pageSize: 5, hasMore: timeline.length >= 10 });
+  assert.deepEqual(firstTimelinePage.items, timeline.slice(0, 5));
+  assert.deepEqual(secondTimelinePage.items, timeline.slice(5, 10));
+  assert.equal(
+    new Set([...firstTimelinePage.items, ...secondTimelinePage.items].map((item) => item.id)).size,
+    firstTimelinePage.items.length + secondTimelinePage.items.length,
+    'timeline pages must not overlap',
+  );
+
+  const persistedTimeline = await db.select().from(crmTimelineEvents).where(eq(crmTimelineEvents.leadId, lead.id));
+  const reactivationEvent = persistedTimeline.find((item) => {
+    const metadata = item.metadata as Record<string, unknown>;
+    return item.eventType === 'STAGE_CHANGED' && metadata['action'] === 'REACTIVATE';
+  });
+  assert.ok(reactivationEvent, 'persisted REACTIVATE audit event must exist');
+  const reactivationMetadata = reactivationEvent.metadata as Record<string, unknown>;
+  assert.equal(reactivationEvent.actor, authenticatedPrincipalId, 'reactivation actor must come from the authenticated principal');
+  assert.equal(reactivationMetadata['principalId'], authenticatedPrincipalId);
+  assert.equal(reactivationMetadata['authenticationMethod'], 'BEARER_TOKEN');
+  assert.equal(reactivationMetadata['source'], 'authenticated-api');
+  assert.match(String(reactivationMetadata['timestamp']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
+  assert.notEqual(reactivationMetadata['timestamp'], '2000-01-01T00:00:00Z');
 
   const otherLead = (await db.insert(leads).values({
     osmType: 'node', osmId: 'cross-resource-lead', category: 'oficinas', score: 10,

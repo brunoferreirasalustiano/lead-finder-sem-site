@@ -61,7 +61,7 @@ try {
           ${String(index).repeat(64).slice(0, 64)},
           ${resourceType},
           ${resourceId}::uuid,
-          ${JSON.stringify({
+          ${raw.json({
             id: resourceId,
             leadId,
             name: marker,
@@ -79,9 +79,13 @@ try {
             doNotContact: false,
             crmStage: 'NOVO',
             crmPriority: 'MEDIA',
+            crmNextActionAt: null,
             crmVersion: 1,
+            crmUpdatedAt: null,
             amount: '1000.00',
             currency: 'BRL',
+            expectedCloseAt: null,
+            closedAt: null,
             outcome: null,
             opportunityId: null,
             removed: resourceType === 'tag' && index % 2 === 1,
@@ -92,7 +96,7 @@ try {
             version: 1,
             createdAt: '2030-01-01T00:00:00.000Z',
             updatedAt: '2030-01-01T00:00:00.000Z',
-          })}::jsonb
+          })}
         )`;
     }
   } finally {
@@ -116,6 +120,7 @@ try {
     const object = legacy.result as Record<string, unknown>;
     assert.equal(object['schemaVersion'], 1);
     assert.equal(object['resourceType'], legacy.resourceType);
+    assert.equal(typeof object['id'] === 'string' || typeof object['tagId'] === 'string', true);
   }
 
   stage = 'VERIFY_FIRST_RESPONSE_AND_REPLAY';
@@ -132,6 +137,8 @@ try {
   assert.equal(first.replayed, false);
   assert.equal(replay.replayed, true);
   assert.deepEqual(replay.data, first.data);
+  assert.equal(Object.hasOwn(first.data, 'closedAt'), true);
+  assert.equal(Object.hasOwn(first.data, 'outcome'), true);
   assertSafe(first.data);
 
   stage = 'VERIFY_STORED_RESULT';
@@ -170,6 +177,7 @@ try {
     migrationReplay: 2,
     legacyResourceTypes: 5,
     deterministicFirstReplay: true,
+    explicitNullFieldsPreserved: true,
     forbiddenMarkersPersisted: 0,
     publicFunctionExecuteGrants: 0,
   }));

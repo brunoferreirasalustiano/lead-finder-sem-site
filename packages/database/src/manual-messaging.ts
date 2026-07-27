@@ -5,7 +5,7 @@ import {
   DeterministicFakeMessagingProvider,
   type MessagingChannel,
 } from '@lead-finder/messaging';
-import { createWhatsAppManualUrl, normalizePhoneE164 } from '@lead-finder/whatsapp';
+import { normalizePhoneE164 } from '@lead-finder/whatsapp';
 import type { AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export type ManualMessagingResult =
@@ -129,13 +129,10 @@ const templateFor = (channel: MessagingChannel, id: string, version: string) => 
 const variablesFor = (row: Candidate) => ({ EMPRESA: row.name ?? 'empresa', FONTE: row.source });
 const contactFingerprint = (row: Candidate) =>
   digest({ contactId: row.contact_id, channel: row.type.toUpperCase(), value: row.normalized_value });
-const responseFor = (row: Candidate, channel: MessagingChannel, templateId: string, templateVersion: string) => {
+const preparedFor = (row: Candidate, channel: MessagingChannel, templateId: string, templateVersion: string) => {
   const variables = variablesFor(row);
   const prepared = provider.prepare(templateFor(channel, templateId, templateVersion), variables);
-  const link = channel === 'WHATSAPP'
-    ? createWhatsAppManualUrl(row.normalized_value, prepared.body)
-    : `mailto:${encodeURIComponent(row.normalized_value)}?subject=${encodeURIComponent(prepared.subject ?? '')}&body=${encodeURIComponent(prepared.body)}`;
-  return { variables, prepared, link };
+  return { variables, prepared };
 };
 export async function prepareManualMessage(
   db: Database,
@@ -181,7 +178,7 @@ export async function prepareManualMessage(
       requirePreparedContact(row, persistedChannel);
       if (contactFingerprint(row) !== snapshot['contactFingerprint'])
         throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
-      const rebuilt = responseFor(row, persistedChannel, String(snapshot['templateId']), String(snapshot['templateVersion']));
+      const rebuilt = preparedFor(row, persistedChannel, String(snapshot['templateId']), String(snapshot['templateVersion']));
       if (digest(rebuilt.variables) !== digest(snapshot['variables']) || rebuilt.prepared.fingerprint !== snapshot['messageFingerprint'])
         throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
       return {
@@ -192,9 +189,6 @@ export async function prepareManualMessage(
         templateVersion: snapshot['templateVersion'],
         contactFingerprint: snapshot['contactFingerprint'],
         messageFingerprint: snapshot['messageFingerprint'],
-        message: rebuilt.prepared.body,
-        subject: rebuilt.prepared.subject,
-        link: rebuilt.link,
         preparedAt: persisted.prepared_at,
         replayed: true,
       };
@@ -207,7 +201,7 @@ export async function prepareManualMessage(
       selected.channel === 'WHATSAPP' ? approvedTemplates.whatsappV1 : approvedTemplates.emailV1;
     if (template.id !== input.templateId || template.version !== input.templateVersion)
       throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
-    const { variables, prepared, link } = responseFor(selected.row, selected.channel, template.id, template.version);
+    const { variables, prepared } = preparedFor(selected.row, selected.channel, template.id, template.version);
     const selectedContactFingerprint = contactFingerprint(selected.row);
     const snapshot = {
       channel: selected.channel,
@@ -232,9 +226,6 @@ export async function prepareManualMessage(
       templateVersion: template.version,
       contactFingerprint: selectedContactFingerprint,
       messageFingerprint: prepared.fingerprint,
-      message: prepared.body,
-      subject: prepared.subject,
-      link,
       preparedAt: saved.prepared_at,
       replayed: false,
     };

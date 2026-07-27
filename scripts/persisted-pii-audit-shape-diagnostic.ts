@@ -79,15 +79,52 @@ try {
         (SELECT event_type FROM public.crm_timeline_events WHERE id = ${timelineId}::uuid) AS "timelineEvent"`
   )[0];
 
+  const inputChecks = (
+    await db<{ eventMatch: boolean; jsonType: string; hasSource: boolean; sourceText: string | null }[]>`
+      SELECT
+        'CONTACT_UPDATED'::text IN ('CONTACT_ADDED', 'CONTACT_UPDATED') AS "eventMatch",
+        jsonb_typeof(${JSON.stringify({ source: 'integration-test' })}::jsonb) AS "jsonType",
+        ${JSON.stringify({ source: 'integration-test' })}::jsonb ? 'source' AS "hasSource",
+        ${JSON.stringify({ source: 'integration-test' })}::jsonb ->> 'source' AS "sourceText"`
+  )[0];
+
+  const catalog = await db<{
+    name: string;
+    identityArguments: string;
+    language: string;
+    containsQualificationBranch: boolean;
+    containsTimelineBranch: boolean;
+    containsSourceProjection: boolean;
+    sourceLength: number;
+  }[]>`
+    SELECT
+      procedure_record.proname AS name,
+      pg_get_function_identity_arguments(procedure_record.oid) AS "identityArguments",
+      language_record.lanname AS language,
+      position('CONTACT_UPDATED' in procedure_record.prosrc) > 0 AS "containsQualificationBranch",
+      position('NOTE_ADDED' in procedure_record.prosrc) > 0 AS "containsTimelineBranch",
+      position('source' in procedure_record.prosrc) > 0 AS "containsSourceProjection",
+      length(procedure_record.prosrc)::int AS "sourceLength"
+    FROM pg_proc procedure_record
+    JOIN pg_namespace namespace_record ON namespace_record.oid = procedure_record.pronamespace
+    JOIN pg_language language_record ON language_record.oid = procedure_record.prolang
+    WHERE namespace_record.nspname = 'public'
+      AND procedure_record.proname IN (
+        'pii_safe_qualification_audit_value',
+        'pii_safe_crm_audit_value',
+        'pii_safe_crm_audit_metadata'
+      )
+    ORDER BY procedure_record.proname, pg_get_function_identity_arguments(procedure_record.oid)`;
+
   const directBefore = (
     await db<{ qualification: unknown; timeline: unknown; metadata: unknown }[]>`
       SELECT
         public.pii_safe_qualification_audit_value(
-          'CONTACT_UPDATED',
+          'CONTACT_UPDATED'::text,
           ${JSON.stringify({ id: randomUUID(), leadId, type: 'EMAIL', isValid: true })}::jsonb
         ) AS qualification,
         public.pii_safe_crm_audit_value(
-          'NOTE_ADDED',
+          'NOTE_ADDED'::text,
           ${JSON.stringify({ id: randomUUID(), leadId, createdAt: new Date().toISOString() })}::jsonb
         ) AS timeline,
         public.pii_safe_crm_audit_metadata(
@@ -114,11 +151,11 @@ try {
     await db<{ qualification: unknown; timeline: unknown; metadata: unknown }[]>`
       SELECT
         public.pii_safe_qualification_audit_value(
-          'CONTACT_UPDATED',
+          'CONTACT_UPDATED'::text,
           ${JSON.stringify({ id: randomUUID(), leadId, type: 'EMAIL', isValid: true })}::jsonb
         ) AS qualification,
         public.pii_safe_crm_audit_value(
-          'NOTE_ADDED',
+          'NOTE_ADDED'::text,
           ${JSON.stringify({ id: randomUUID(), leadId, createdAt: new Date().toISOString() })}::jsonb
         ) AS timeline,
         public.pii_safe_crm_audit_metadata(
@@ -131,6 +168,8 @@ try {
     evidenceType: 'PERSISTED_PII_AUDIT_SHAPE_DIAGNOSTIC',
     result: 'DIAGNOSTIC_COMPLETE',
     storedEvents: before,
+    inputChecks,
+    catalog,
     directBefore: {
       qualification: shape(directBefore?.qualification),
       timeline: shape(directBefore?.timeline),

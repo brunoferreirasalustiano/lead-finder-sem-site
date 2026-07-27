@@ -1,0 +1,196 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import postgres from 'postgres';
+
+const databaseUrl = process.env['DATABASE_URL'];
+if (!databaseUrl) throw new Error('DATABASE_URL is required');
+
+const db = postgres(databaseUrl, { max: 1 });
+const migration = await readFile(
+  new URL('../database/migrations/0022_persisted_pii_audit_json.sql', import.meta.url),
+  'utf8',
+);
+const marker = 'PII_MARKER_5511999999999_private@example.test';
+const leadId = randomUUID();
+const dirtyQualificationId = randomUUID();
+const dirtyTimelineId = randomUUID();
+const guardedQualificationId = randomUUID();
+const guardedTimelineId = randomUUID();
+
+const assertSanitized = (value: unknown, expectedKeys: readonly string[]) => {
+  const serialized = JSON.stringify(value);
+  assert.doesNotMatch(serialized, /PII_MARKER|5511999999999|private@example\.test/);
+  for (const forbidden of [
+    'originalValue', 'normalizedValue', 'original_value', 'normalized_value',
+    'phone', 'whatsapp', 'email', 'address', 'latitude', 'longitude',
+    'body', 'author', 'title', 'description', 'completionNote', 'owner',
+    'principalId', 'notes', 'reference',
+  ]) assert.equal(Object.hasOwn(value as object, forbidden), false, `forbidden key persisted: ${forbidden}`);
+  for (const key of expectedKeys) assert.equal(Object.hasOwn(value as object, key), true, `expected key missing: ${key}`);
+};
+
+try {
+  await db`
+    INSERT INTO public.leads(
+      id, osm_type, osm_id, name, category, phone, whatsapp, email, address,
+      city, state, score, status, qualification_status
+    ) VALUES (
+      ${leadId}::uuid, 'node', ${`pii-audit-${leadId}`}, ${marker}, 'synthetic',
+      '5511999999999', '5511999999999', 'private@example.test', ${marker},
+      'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'PENDENTE'
+    )`;
+
+  await db`ALTER TABLE public.lead_qualification_history DISABLE TRIGGER USER`;
+  await db`ALTER TABLE public.crm_timeline_events DISABLE TRIGGER USER`;
+  try {
+    await db`
+      INSERT INTO public.lead_qualification_history(
+        id, lead_id, event_type, previous_value, new_value, actor, source, reason
+      ) VALUES (
+        ${dirtyQualificationId}::uuid,
+        ${leadId}::uuid,
+        'CONTACT_UPDATED',
+        ${JSON.stringify({
+          id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
+          normalizedValue: '5511999999999', source: marker, notes: marker,
+          isValid: true, possibleWhatsapp: true,
+        })}::jsonb,
+        ${JSON.stringify({
+          id: randomUUID(), leadId, type: 'EMAIL', originalValue: 'private@example.test',
+          normalizedValue: 'private@example.test', source: marker, notes: marker,
+          isValid: true, possibleWhatsapp: false,
+        })}::jsonb,
+        'synthetic-actor', 'integration-test', ${marker}
+      )`;
+
+    await db`
+      INSERT INTO public.crm_timeline_events(
+        id, lead_id, event_type, actor, reason, previous_value, new_value, metadata
+      ) VALUES (
+        ${dirtyTimelineId}::uuid,
+        ${leadId}::uuid,
+        'NOTE_ADDED',
+        'synthetic-actor',
+        ${marker},
+        NULL,
+        ${JSON.stringify({
+          id: randomUUID(), leadId, body: marker, author: marker,
+          title: marker, description: marker, createdAt: new Date().toISOString(),
+        })}::jsonb,
+        ${JSON.stringify({ principalId: marker, source: 'integration-test', arbitrary: marker })}::jsonb
+      )`;
+  } finally {
+    await db`ALTER TABLE public.lead_qualification_history ENABLE TRIGGER USER`;
+    await db`ALTER TABLE public.crm_timeline_events ENABLE TRIGGER USER`;
+  }
+
+  await db.unsafe(migration);
+  await db.unsafe(migration);
+
+  const dirtyQualification = (
+    await db<{ previousValue: unknown; newValue: unknown }[]>`
+      SELECT previous_value AS "previousValue", new_value AS "newValue"
+      FROM public.lead_qualification_history
+      WHERE id = ${dirtyQualificationId}::uuid`
+  )[0]!;
+  assertSanitized(dirtyQualification.previousValue, ['schemaVersion', 'contactId', 'leadId', 'type', 'isValid']);
+  assertSanitized(dirtyQualification.newValue, ['schemaVersion', 'contactId', 'leadId', 'type', 'isValid']);
+
+  const dirtyTimeline = (
+    await db<{ newValue: unknown; metadata: unknown }[]>`
+      SELECT new_value AS "newValue", metadata
+      FROM public.crm_timeline_events
+      WHERE id = ${dirtyTimelineId}::uuid`
+  )[0]!;
+  assertSanitized(dirtyTimeline.newValue, ['schemaVersion', 'noteId', 'leadId', 'createdAt']);
+  assertSanitized(dirtyTimeline.metadata, ['schemaVersion', 'source']);
+
+  await db`
+    INSERT INTO public.lead_qualification_history(
+      id, lead_id, event_type, previous_value, new_value, actor, source, reason
+    ) VALUES (
+      ${guardedQualificationId}::uuid,
+      ${leadId}::uuid,
+      'CONTACT_ADDED',
+      NULL,
+      ${JSON.stringify({
+        id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
+        normalizedValue: '5511999999999', source: marker, isValid: true,
+        possibleWhatsapp: true, createdAt: new Date().toISOString(),
+      })}::jsonb,
+      'synthetic-actor', 'integration-test', ${marker}
+    )`;
+
+  await db`
+    INSERT INTO public.crm_timeline_events(
+      id, lead_id, event_type, actor, reason, previous_value, new_value, metadata
+    ) VALUES (
+      ${guardedTimelineId}::uuid,
+      ${leadId}::uuid,
+      'TASK_CREATED',
+      'synthetic-actor',
+      ${marker},
+      NULL,
+      ${JSON.stringify({
+        id: randomUUID(), leadId, title: marker, description: marker, owner: marker,
+        status: 'PENDENTE', priority: 'MEDIA', dueAt: new Date().toISOString(),
+        version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      })}::jsonb,
+      ${JSON.stringify({ principalId: marker, source: 'integration-test', arbitrary: marker })}::jsonb
+    )`;
+
+  const guardedQualification = (
+    await db<{ newValue: unknown }[]>`
+      SELECT new_value AS "newValue"
+      FROM public.lead_qualification_history
+      WHERE id = ${guardedQualificationId}::uuid`
+  )[0]!;
+  assertSanitized(guardedQualification.newValue, ['schemaVersion', 'contactId', 'leadId', 'type', 'isValid']);
+
+  const guardedTimeline = (
+    await db<{ newValue: unknown; metadata: unknown }[]>`
+      SELECT new_value AS "newValue", metadata
+      FROM public.crm_timeline_events
+      WHERE id = ${guardedTimelineId}::uuid`
+  )[0]!;
+  assertSanitized(guardedTimeline.newValue, ['schemaVersion', 'taskId', 'leadId', 'status', 'dueAt']);
+  assertSanitized(guardedTimeline.metadata, ['schemaVersion', 'source']);
+
+  const triggerRows = await db<{ count: number }[]>`
+    SELECT count(*)::int AS count
+    FROM pg_trigger
+    WHERE NOT tgisinternal
+      AND tgname IN ('lead_qualification_history_pii_guard', 'crm_timeline_events_pii_guard')`;
+  assert.equal(triggerRows[0]?.count, 2);
+
+  const exposed = await db<{ count: number }[]>`
+    SELECT count(*)::int AS count
+    FROM pg_proc procedure_record
+    JOIN pg_namespace namespace_record ON namespace_record.oid = procedure_record.pronamespace
+    CROSS JOIN LATERAL aclexplode(
+      coalesce(procedure_record.proacl, acldefault('f', procedure_record.proowner))
+    ) acl
+    WHERE namespace_record.nspname = 'public'
+      AND procedure_record.proname IN (
+        'pii_safe_qualification_audit_value',
+        'pii_safe_crm_audit_value',
+        'pii_safe_crm_audit_metadata',
+        'sanitize_qualification_history_pii',
+        'sanitize_crm_timeline_pii'
+      )
+      AND acl.grantee = 0`;
+  assert.equal(exposed[0]?.count, 0);
+
+  console.log(JSON.stringify({
+    result: 'PERSISTED_PII_AUDIT_JSON_PASS',
+    migrationReplay: 2,
+    backfilledRows: 2,
+    guardedRows: 2,
+    publicFunctionExecuteGrants: 0,
+    forbiddenMarkersPersisted: 0,
+  }));
+} finally {
+  await db`DELETE FROM public.leads WHERE id = ${leadId}::uuid`.catch(() => undefined);
+  await db.end();
+}

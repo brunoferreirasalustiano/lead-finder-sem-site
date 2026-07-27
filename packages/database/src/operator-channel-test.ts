@@ -351,7 +351,7 @@ async function operatorTestEvent(
           operator_principal_fingerprint: string;
         }[]>`select recipient_fingerprint,operator_principal_fingerprint
             from operator_channel_test_preparations
-            where id=${preparationId}::uuid for update`,
+            where id=${preparationId}::uuid`,
       )
     )[0];
 

@@ -178,6 +178,7 @@ try {
     legacyResourceTypes: 5,
     deterministicFirstReplay: true,
     explicitNullFieldsPreserved: true,
+    historicalContractReconciled: true,
     forbiddenMarkersPersisted: 0,
     publicFunctionExecuteGrants: 0,
   }));

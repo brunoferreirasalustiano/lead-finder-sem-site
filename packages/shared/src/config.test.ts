@@ -11,6 +11,7 @@ describe('environment configuration', () => {
   it('applies safe defaults', () => {
     expect(parseApiConfig(database)).toMatchObject({
       API_PORT: 3000,
+      API_BATCH_PROCESSING_ENABLED: false,
       COLLECTION_EGRESS_ENABLED: false,
       PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
@@ -45,6 +46,18 @@ describe('environment configuration', () => {
     ['DAILY_LEAD_LIMIT', '-1'],
   ])('rejects invalid API variable %s=%s', (name, value) => {
     expect(() => parseApiConfig({ ...database, [name]: value })).toThrow(name);
+  });
+
+  it('keeps API batch processing fail-closed unless explicitly enabled', () => {
+    expect(parseApiConfig(database).API_BATCH_PROCESSING_ENABLED).toBe(false);
+    expect(parseApiConfig({
+      ...database,
+      API_BATCH_PROCESSING_ENABLED: 'true',
+    }).API_BATCH_PROCESSING_ENABLED).toBe(true);
+    expect(() => parseApiConfig({
+      ...database,
+      API_BATCH_PROCESSING_ENABLED: 'yes',
+    })).toThrow('API_BATCH_PROCESSING_ENABLED');
   });
 
   it.each([undefined, '', 'too-short', 'CHANGE_ME'])('rejects an unsafe API token %s', (value) => {
@@ -162,7 +175,12 @@ describe('environment configuration', () => {
     const planB = { ...database, DEPLOYMENT_PROFILE: 'supabase-render', SHADOW_MODE_ENABLED: 'true',
       INTERNAL_CRON_SECRET: 'synthetic-internal-cron-secret-0001' };
     expect(parseApiConfig(planB)).toMatchObject({ DEPLOYMENT_PROFILE: 'supabase-render', DRY_RUN: true,
-      REAL_SEND_ENABLED: false, REAL_PROVIDERS_ENABLED: false, COLLECTION_EGRESS_ENABLED: false });
+      API_BATCH_PROCESSING_ENABLED: false, REAL_SEND_ENABLED: false,
+      REAL_PROVIDERS_ENABLED: false, COLLECTION_EGRESS_ENABLED: false });
+    expect(parseApiConfig({
+      ...planB,
+      API_BATCH_PROCESSING_ENABLED: 'true',
+    }).API_BATCH_PROCESSING_ENABLED).toBe(true);
     expect(() => parseApiConfig({ ...planB, REAL_SEND_ENABLED: 'true' })).toThrow('supabase-render requires');
     expect(() => parseApiConfig({ ...planB, DAILY_LEAD_LIMIT: '61' })).toThrow('DAILY_LEAD_LIMIT');
     expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('bounded API batch endpoint');

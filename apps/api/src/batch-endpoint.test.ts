@@ -19,6 +19,14 @@ describe('internal batch endpoint', () => {
     await app.close();
   });
 
+  it('fails closed for an authenticated request when API batch processing is disabled', async () => {
+    const app = buildApp(db, { internalCronSecret: secret });
+    const response = await app.inject({ method: 'POST', url: '/internal/jobs/process-lead-batch', headers });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: 'Service unavailable', code: 'BATCH_DISABLED' });
+    await app.close();
+  });
+
   it('executes one bounded batch and rejects persistent replay', async () => {
     const beginBatchInvocation = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     const processLeadBatch = vi.fn(() => Promise.resolve({ executionSource: 'supabase-render' as const,

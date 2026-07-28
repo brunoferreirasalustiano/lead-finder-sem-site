@@ -92,6 +92,7 @@ const apiSchema = commonSchema.extend({
   REAL_SEND_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   REAL_PROVIDERS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   INTERNAL_CRON_SECRET: z.string().min(32).max(512).optional(),
+  API_BATCH_PROCESSING_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CRON_AUTH_AUDIENCE: z.string().trim().min(1).max(200).default('lead-finder-batch'),
   LEAD_BATCH_SIZE: integerFromEnvironment('LEAD_BATCH_SIZE', 1, 10, 5),
   PROCESSING_TIME_BUDGET_MS: integerFromEnvironment('PROCESSING_TIME_BUDGET_MS', 1_000, 50_000, 45_000),

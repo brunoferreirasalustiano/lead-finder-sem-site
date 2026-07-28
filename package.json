@@ -39,7 +39,8 @@
     "test:persisted-pii-audit": "tsx scripts/persisted-pii-audit-json.integration.ts",
     "test:campaign-reference-payloads": "tsx scripts/reference-only-campaign-payloads.integration.ts",
     "test:crm-idempotency-safe-results": "tsx scripts/crm-idempotency-safe-results.integration.ts",
-    "test:supabase-data-api-security": "tsx scripts/supabase-data-api-security.integration.ts && tsx scripts/manual-messaging-append-only-acl.integration.ts && npm run test:persisted-pii-audit && npm run test:campaign-reference-payloads && npm run test:crm-idempotency-safe-results",
+    "test:runtime-role": "tsx scripts/least-privilege-api-runtime.integration.ts",
+    "test:supabase-data-api-security": "tsx scripts/supabase-data-api-security.integration.ts && tsx scripts/manual-messaging-append-only-acl.integration.ts && npm run test:persisted-pii-audit && npm run test:campaign-reference-payloads && npm run test:crm-idempotency-safe-results && npm run test:runtime-role",
     "test:manual-messaging": "tsx scripts/manual-messaging.integration.ts && tsx scripts/manual-messaging-concurrency.integration.ts && tsx scripts/operator-channel-test.integration.ts",
     "test:operator-channel": "tsx scripts/operator-channel-test.integration.ts",
     "test:migration-registry": "tsx scripts/migration-registry-compatibility.integration.ts"

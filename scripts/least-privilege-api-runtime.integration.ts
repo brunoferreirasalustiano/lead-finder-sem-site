@@ -57,7 +57,7 @@ const auth = createAuthorizationContext({
 const runtime = {
   enabled: true,
   killSwitchEnabled: false,
-  authorizedPhoneE164: '+5511999999999',
+  authorizedPhoneE164: '+12025550100',
   fingerprintKey: 'least-privilege-runtime-hmac-key-0001',
 } as const;
 const input = () => ({

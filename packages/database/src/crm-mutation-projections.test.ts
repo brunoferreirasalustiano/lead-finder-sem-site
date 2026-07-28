@@ -7,17 +7,23 @@ import {
   safeTaskMutationResult,
 } from './crm-mutation-projections.js';
 
-const marker = 'PII_CRM_MARKER_private@example.test_5511777777777';
+const syntheticSensitivePhone = '+12025550100';
+const syntheticSensitiveEmail = 'empresa@example.test';
+const marker =
+  `PII_CRM_MARKER_${syntheticSensitiveEmail}_${syntheticSensitivePhone}`;
 const serialized = (value: unknown) => JSON.stringify(value);
 const expectSafe = (value: unknown) => {
-  expect(serialized(value)).not.toMatch(/PII_CRM_MARKER|private@example\.test|5511777777777/);
-  expect(serialized(value)).not.toMatch(/"(?:name|title|body|description|owner|author|lossReason|crmOwner)"/);
+  const serializedValue = serialized(value);
+  expect(serializedValue).not.toContain('PII_CRM_MARKER');
+  expect(serializedValue).not.toContain(syntheticSensitivePhone);
+  expect(serializedValue).not.toContain(syntheticSensitiveEmail);
+  expect(serializedValue).not.toMatch(/"(?:name|title|body|description|owner|author|lossReason|crmOwner)"/);
 };
 
 describe('CRM mutation result projections', () => {
   it('projects lead mutations without identity or owner fields', () => {
     const result = safeLeadMutationResult({
-      id: 'lead-1', name: marker, phone: '5511777777777', email: 'private@example.test',
+      id: 'lead-1', name: marker, phone: syntheticSensitivePhone, email: syntheticSensitiveEmail,
       crmOwner: marker, qualificationStatus: 'SEM_SITE_CONFIRMADO', isBlocked: false,
       doNotContact: false, crmStage: 'QUALIFICADO', crmPriority: 'ALTA',
       crmNextActionAt: new Date('2030-01-01T00:00:00.000Z'), crmVersion: 2,

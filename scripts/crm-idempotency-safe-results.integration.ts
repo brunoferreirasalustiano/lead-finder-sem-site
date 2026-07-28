@@ -13,7 +13,10 @@ const migration = await readFile(
   'utf8',
 );
 const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
-const marker = 'PII_CRM_REPLAY_MARKER_private@example.test_5511666666666';
+const syntheticSensitivePhone = '+12025550101';
+const syntheticSensitiveEmail = 'empresa@example.test';
+const marker =
+  `PII_CRM_REPLAY_MARKER_${syntheticSensitiveEmail}_${syntheticSensitivePhone}`;
 const leadId = randomUUID();
 let stage = 'INITIALIZE';
 
@@ -31,7 +34,21 @@ const writeFailureEvidence = async (error: unknown) => {
 
 const assertSafe = (value: unknown) => {
   const serialized = JSON.stringify(value);
-  assert.doesNotMatch(serialized, /PII_CRM_REPLAY_MARKER|private@example\.test|5511666666666/);
+  assert.equal(
+    serialized.includes('PII_CRM_REPLAY_MARKER'),
+    false,
+    'CRM replay marker persisted',
+  );
+  assert.equal(
+    serialized.includes(syntheticSensitivePhone),
+    false,
+    'synthetic phone persisted',
+  );
+  assert.equal(
+    serialized.includes(syntheticSensitiveEmail),
+    false,
+    'synthetic email persisted',
+  );
   assert.doesNotMatch(serialized, /"(?:name|title|body|description|owner|author|lossReason|crmOwner)"/);
 };
 
@@ -43,7 +60,7 @@ try {
       city, state, score, status, qualification_status, crm_stage
     ) VALUES (
       ${leadId}::uuid, 'node', ${`crm-replay-${leadId}`}, ${marker}, 'synthetic',
-      '5511666666666', '5511666666666', 'private@example.test', ${marker},
+      ${syntheticSensitivePhone}, ${syntheticSensitivePhone}, ${syntheticSensitiveEmail}, ${marker},
       'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NOVO'
     )`;
 
@@ -72,8 +89,8 @@ try {
             author: marker,
             lossReason: marker,
             crmOwner: marker,
-            phone: '5511666666666',
-            email: 'private@example.test',
+            phone: syntheticSensitivePhone,
+            email: syntheticSensitiveEmail,
             qualificationStatus: 'SEM_SITE_CONFIRMADO',
             isBlocked: false,
             doNotContact: false,

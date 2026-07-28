@@ -461,7 +461,7 @@ try {
   assert.ok(reactivationEvent, 'persisted REACTIVATE audit event must exist');
   const reactivationMetadata = reactivationEvent.metadata as Record<string, unknown>;
   assert.equal(reactivationEvent.actor, authenticatedPrincipalId, 'reactivation actor must come from the authenticated principal');
-  assert.equal(reactivationMetadata['principalId'], authenticatedPrincipalId);
+  assert.equal(Object.hasOwn(reactivationMetadata, 'principalId'), false, 'reactivation metadata must omit principalId');
   assert.equal(reactivationMetadata['authenticationMethod'], 'BEARER_TOKEN');
   assert.equal(reactivationMetadata['source'], 'authenticated-api');
   assert.match(String(reactivationMetadata['timestamp']), /^\d{4}-\d{2}-\d{2}T.*Z$/);

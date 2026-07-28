@@ -11,7 +11,10 @@ const migration = await readFile(
   'utf8',
 );
 const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
-const marker = 'PII_CAMPAIGN_MARKER_5511888888888_sensitive@example.test';
+const syntheticSensitivePhone = '+12025550100';
+const syntheticSensitiveEmail = 'empresa@example.test';
+const marker =
+  `PII_CAMPAIGN_MARKER_${syntheticSensitivePhone}_${syntheticSensitiveEmail}`;
 let stage = 'INITIALIZE';
 
 const writeFailureEvidence = async (error: unknown) => {
@@ -28,7 +31,23 @@ const writeFailureEvidence = async (error: unknown) => {
 
 const assertReferenceOnly = (value: unknown, expectedKeys: readonly string[]) => {
   const serialized = JSON.stringify(value);
-  assert.doesNotMatch(serialized, /PII_CAMPAIGN_MARKER|5511888888888|sensitive@example\.test/);
+  assert.equal(
+    serialized.includes('PII_CAMPAIGN_MARKER'),
+    false,
+    'campaign marker persisted',
+  );
+
+  assert.equal(
+    serialized.includes(syntheticSensitivePhone),
+    false,
+    'synthetic phone persisted',
+  );
+
+  assert.equal(
+    serialized.includes(syntheticSensitiveEmail),
+    false,
+    'synthetic email persisted',
+  );
   const object = value as Record<string, unknown>;
   for (const forbidden of [
     'leadName', 'name', 'address', 'phone', 'whatsapp', 'email', 'content', 'message',
@@ -54,7 +73,7 @@ async function insertChain(prefix: string) {
       city, state, score, status, qualification_status
     ) VALUES (
       ${leadId}::uuid, 'node', ${`${prefix}-${leadId}`}, ${marker}, 'synthetic',
-      '5511888888888', '5511888888888', 'sensitive@example.test', ${marker},
+      ${syntheticSensitivePhone}, ${syntheticSensitivePhone}, ${syntheticSensitiveEmail}, ${marker},
       'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO'
     )`;
   await db`
@@ -69,7 +88,7 @@ async function insertChain(prefix: string) {
       idempotency_key, payload_fingerprint, available_at
     ) VALUES (
       ${recipientId}::uuid, ${campaignId}::uuid, ${versionId}::uuid, ${leadId}::uuid, 'EMAIL',
-      ${db.json({ leadName: marker, address: marker, email: 'sensitive@example.test' })},
+      ${db.json({ leadName: marker, address: marker, email: syntheticSensitiveEmail })},
       ${`${prefix}-recipient`}, ${'b'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -77,7 +96,7 @@ async function insertChain(prefix: string) {
       id, recipient_id, payload_snapshot, idempotency_key, payload_fingerprint, available_at
     ) VALUES (
       ${attemptId}::uuid, ${recipientId}::uuid,
-      ${db.json({ renderedMessage: marker, subject: marker, variables: { email: 'sensitive@example.test' } })},
+      ${db.json({ renderedMessage: marker, subject: marker, variables: { email: syntheticSensitiveEmail } })},
       ${`${prefix}-attempt`}, ${'c'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -86,7 +105,7 @@ async function insertChain(prefix: string) {
       payload_fingerprint, available_at
     ) VALUES (
       ${outboxId}::uuid, 'ATTEMPT', ${attemptId}::uuid, 'ATTEMPT_CREATED',
-      ${db.json({ attemptId, renderedMessage: marker, email: 'sensitive@example.test' })},
+      ${db.json({ attemptId, renderedMessage: marker, email: syntheticSensitiveEmail })},
       ${`${prefix}-outbox`}, ${'d'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -95,7 +114,7 @@ async function insertChain(prefix: string) {
       payload_fingerprint, occurred_at
     ) VALUES (
       ${providerEventId}::uuid, ${attemptId}::uuid, 'synthetic', ${`${prefix}-external`}, 'DELIVERED',
-      ${db.json({ body: marker, destination: 'sensitive@example.test' })},
+      ${db.json({ body: marker, destination: syntheticSensitiveEmail })},
       ${'e'.repeat(64)}, ${now}::timestamptz
     )`;
   await db`
@@ -104,7 +123,7 @@ async function insertChain(prefix: string) {
       attempts, claim_generation, created_at
     ) VALUES (
       ${deadLetterId}::uuid, ${outboxId}::uuid, 0, ${`${prefix}-correlation`},
-      ${db.json({ body: marker, destination: 'sensitive@example.test' })},
+      ${db.json({ body: marker, destination: syntheticSensitiveEmail })},
       ${marker}, 'SIMULATED_EXECUTION_FAILED', 1, 0, ${now}::timestamptz
     )`;
 

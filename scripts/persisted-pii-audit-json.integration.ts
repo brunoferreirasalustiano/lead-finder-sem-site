@@ -12,7 +12,11 @@ const migration = await readFile(
   'utf8',
 );
 const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
-const marker = 'PII_MARKER_5511999999999_private@example.test';
+const allowedPhone = '+12025550100';
+const marker = `PII_MARKER_${allowedPhone}_private@example.test`;
+const technicalPrincipalId = 'integration-principal';
+const dirtyTimelineActor = 'synthetic-actor-backfill';
+const guardedTimelineActor = 'synthetic-actor-guard';
 const leadId = randomUUID();
 const dirtyQualificationId = randomUUID();
 const dirtyTimelineId = randomUUID();
@@ -42,7 +46,8 @@ const writeFailureEvidence = async (error: unknown) => {
 
 const assertSanitized = (value: unknown, expectedKeys: readonly string[]) => {
   const serialized = JSON.stringify(value);
-  assert.doesNotMatch(serialized, /PII_MARKER|5511999999999|private@example\.test/);
+  assert.doesNotMatch(serialized, /PII_MARKER|private@example\.test/);
+  assert.equal(serialized.includes(allowedPhone), false, 'allowed phone fixture persisted');
   for (const forbidden of [
     'originalValue', 'normalizedValue', 'original_value', 'normalized_value',
     'phone', 'whatsapp', 'email', 'address', 'latitude', 'longitude',
@@ -60,7 +65,7 @@ try {
       city, state, score, status, qualification_status
     ) VALUES (
       ${leadId}::uuid, 'node', ${`pii-audit-${leadId}`}, ${marker}, 'synthetic',
-      '5511999999999', '5511999999999', 'private@example.test', ${marker},
+      ${allowedPhone}, ${allowedPhone}, 'private@example.test', ${marker},
       'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'PENDENTE'
     )`;
 
@@ -77,7 +82,7 @@ try {
         'CONTACT_UPDATED',
         ${db.json({
           id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
-          normalizedValue: '5511999999999', source: marker, notes: marker,
+          normalizedValue: allowedPhone, source: marker, notes: marker,
           isValid: true, possibleWhatsapp: true,
         })},
         ${db.json({
@@ -95,14 +100,14 @@ try {
         ${dirtyTimelineId}::uuid,
         ${leadId}::uuid,
         'NOTE_ADDED',
-        'synthetic-actor',
+        ${dirtyTimelineActor},
         ${marker},
         NULL,
         ${db.json({
           id: randomUUID(), leadId, body: marker, author: marker,
           title: marker, description: marker, createdAt: new Date().toISOString(),
         })},
-        ${db.json({ principalId: marker, source: 'integration-test', arbitrary: marker })}
+        ${db.json({ principalId: technicalPrincipalId, source: 'integration-test', arbitrary: marker })}
       )`;
   } finally {
     await db`ALTER TABLE public.lead_qualification_history ENABLE TRIGGER USER`;
@@ -111,6 +116,15 @@ try {
 
   stage = 'APPLY_MIGRATION_FIRST_PASS';
   await db.unsafe(migration);
+  const timelineAfterFirstPass = (
+    await db<{ actor: string; metadata: unknown }[]>`
+      SELECT actor, metadata
+      FROM public.crm_timeline_events
+      WHERE id = ${dirtyTimelineId}::uuid`
+  )[0]!;
+  assert.equal(timelineAfterFirstPass.actor, dirtyTimelineActor);
+  assertSanitized(timelineAfterFirstPass.metadata, ['schemaVersion', 'source']);
+
   stage = 'APPLY_MIGRATION_REPLAY';
   await db.unsafe(migration);
 
@@ -125,11 +139,12 @@ try {
   assertSanitized(dirtyQualification.newValue, ['schemaVersion', 'contactId', 'leadId', 'type', 'isValid']);
 
   const dirtyTimeline = (
-    await db<{ newValue: unknown; metadata: unknown }[]>`
-      SELECT new_value AS "newValue", metadata
+    await db<{ actor: string; newValue: unknown; metadata: unknown }[]>`
+      SELECT actor, new_value AS "newValue", metadata
       FROM public.crm_timeline_events
       WHERE id = ${dirtyTimelineId}::uuid`
   )[0]!;
+  assert.equal(dirtyTimeline.actor, dirtyTimelineActor);
   assertSanitized(dirtyTimeline.newValue, ['schemaVersion', 'noteId', 'leadId', 'createdAt']);
   assertSanitized(dirtyTimeline.metadata, ['schemaVersion', 'source']);
 
@@ -144,7 +159,7 @@ try {
       NULL,
       ${db.json({
         id: randomUUID(), leadId, type: 'TELEFONE', originalValue: marker,
-        normalizedValue: '5511999999999', source: marker, isValid: true,
+        normalizedValue: allowedPhone, source: marker, isValid: true,
         possibleWhatsapp: true, createdAt: new Date().toISOString(),
       })},
       'synthetic-actor', 'integration-test', ${marker}
@@ -157,7 +172,7 @@ try {
       ${guardedTimelineId}::uuid,
       ${leadId}::uuid,
       'TASK_CREATED',
-      'synthetic-actor',
+      ${guardedTimelineActor},
       ${marker},
       NULL,
       ${db.json({
@@ -165,7 +180,7 @@ try {
         status: 'PENDENTE', priority: 'MEDIA', dueAt: new Date().toISOString(),
         version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       })},
-      ${db.json({ principalId: marker, source: 'integration-test', arbitrary: marker })}
+      ${db.json({ principalId: technicalPrincipalId, source: 'integration-test', arbitrary: marker })}
     )`;
 
   stage = 'VERIFY_GUARDS';
@@ -178,11 +193,12 @@ try {
   assertSanitized(guardedQualification.newValue, ['schemaVersion', 'contactId', 'leadId', 'type', 'isValid']);
 
   const guardedTimeline = (
-    await db<{ newValue: unknown; metadata: unknown }[]>`
-      SELECT new_value AS "newValue", metadata
+    await db<{ actor: string; newValue: unknown; metadata: unknown }[]>`
+      SELECT actor, new_value AS "newValue", metadata
       FROM public.crm_timeline_events
       WHERE id = ${guardedTimelineId}::uuid`
   )[0]!;
+  assert.equal(guardedTimeline.actor, guardedTimelineActor);
   assertSanitized(guardedTimeline.newValue, ['schemaVersion', 'taskId', 'leadId', 'status', 'dueAt']);
   assertSanitized(guardedTimeline.metadata, ['schemaVersion', 'source']);
 
@@ -217,6 +233,8 @@ try {
     migrationReplay: 2,
     backfilledRows: 2,
     guardedRows: 2,
+    principalIdsPersisted: 0,
+    timelineActorsPreserved: true,
     publicFunctionExecuteGrants: 0,
     forbiddenMarkersPersisted: 0,
   }));

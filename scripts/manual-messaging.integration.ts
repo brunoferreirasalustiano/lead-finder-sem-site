@@ -94,7 +94,7 @@ try {
   const whatsapp = await fixture();
   const preparedWhatsApp = await prepareManualMessage(db, whatsapp.pilotId, whatsapp.leadId, waInput(whatsapp.phoneId), primaryActor);
   assert.equal(preparedWhatsApp.channel, 'WHATSAPP');
-  assert.match(preparedWhatsApp.link, /^https:\/\/wa\.me\/5555991230001\?text=/);
+  assert.match(preparedWhatsApp.contactFingerprint, /^[0-9a-f]{64}$/);
   pass('01 WhatsApp with valid opt-in');
 
   const noOptIn = await fixture({ authorizeWhatsApp: false, emailValid: false });
@@ -102,10 +102,8 @@ try {
   pass('02 WhatsApp without opt-in rejected');
 
   const fallback = await fixture({ authorizeWhatsApp: false });
-  const fallbackPrepared = await prepareManualMessage(db, fallback.pilotId, fallback.leadId, waInput(fallback.phoneId), primaryActor);
-  assert.equal(fallbackPrepared.channel, 'EMAIL');
-  assert.match(fallbackPrepared.link, /^mailto:/);
-  pass('03 explicitly reviewed business Gmail is eligible');
+  await expectCode(prepareManualMessage(db, fallback.pilotId, fallback.leadId, waInput(fallback.phoneId), primaryActor), 'INELIGIBLE');
+  pass('03 requested channel does not fall back');
 
   const gmailWithoutReview = await fixture({ reviewEmail: false });
   await expectCode(prepareManualMessage(db, gmailWithoutReview.pilotId, gmailWithoutReview.leadId, emailInput(gmailWithoutReview.emailId), primaryActor), 'INELIGIBLE');
@@ -194,14 +192,13 @@ try {
   pass('19 concurrent calls');
 
   const snapshotFixture = await fixture({ authorizeWhatsApp: false, email: 'a@company.example' });
-  const snapshotInput = waInput(snapshotFixture.phoneId, randomUUID());
+  const snapshotInput = emailInput(snapshotFixture.emailId, randomUUID());
   const snapshotFirst = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
   const emailB = randomUUID();
   await raw`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values(${emailB}::uuid,${snapshotFixture.leadId}::uuid,'EMAIL','synthetic-b','b@company.example','BUSINESS_REGISTRY',1,now(),true,false)`;
   const snapshotReplay = await prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor);
-  assert.equal(snapshotReplay.link, snapshotFirst.link);
-  assert.ok(snapshotReplay.link.includes('a%40company.example'));
-  assert.ok(!snapshotReplay.link.includes('b%40company.example'));
+  assert.equal(snapshotReplay.contactFingerprint, snapshotFirst.contactFingerprint);
+  assert.equal(snapshotReplay.messageFingerprint, snapshotFirst.messageFingerprint);
   pass('20 replay preserves the eligible persisted contact');
   await raw`update lead_contacts set is_valid=false where id=${snapshotFixture.emailId}::uuid`;
   await expectCode(prepareManualMessage(db, snapshotFixture.pilotId, snapshotFixture.leadId, snapshotInput, primaryActor), 'INELIGIBLE');
@@ -293,12 +290,12 @@ try {
 
   const restart = createDatabase(databaseUrl);
   const restartReplay = await prepareManualMessage(restart.db, replayFixture.pilotId, replayFixture.leadId, replayInput, primaryActor);
-  assert.equal(restartReplay.link, first.link);
+  assert.equal(restartReplay.messageFingerprint, first.messageFingerprint);
   await restart.close();
   pass('29 persisted state after restart');
   const persistedSnapshot = (await raw`select result_snapshot from pilot_manual_message_preparations where id=${snapshotFirst.preparationId}::uuid`)[0]?.result_snapshot;
   assert.ok(!JSON.stringify(persistedSnapshot).includes('a@company.example'));
-  assert.ok(!JSON.stringify(persistedSnapshot).includes(snapshotFirst.message));
+  assert.ok(!JSON.stringify(persistedSnapshot).includes('"message"'));
   assert.ok(!JSON.stringify(persistedSnapshot).includes('mailto:'));
   pass('29a persisted snapshot excludes contact, message and link');
   const invalidState = await fixture();
@@ -331,7 +328,9 @@ try {
   assert.equal((await app.inject({ method: 'POST', url, payload, headers: { authorization: `Bearer ${token}` } })).statusCode, 400);
   const httpPrepared = await app.inject({ method: 'POST', url, payload, headers });
   assert.equal(httpPrepared.statusCode, 201);
-  assert.match(httpPrepared.json().link, /^https:\/\/wa\.me\//);
+  assert.match(httpPrepared.json().contactFingerprint, /^[0-9a-f]{64}$/);
+  for (const forbidden of ['message','subject','link','url','contactValue','normalizedValue','phone','email','whatsapp','recipient','destination'])
+    assert.equal(Object.hasOwn(httpPrepared.json(), forbidden), false);
   const httpId = httpPrepared.json().preparationId as string;
   assert.equal((await raw`select operator_principal_id from pilot_manual_message_preparations where id=${httpId}::uuid`)[0]?.operator_principal_id, 'http-operator');
   assert.equal((await app.inject({ method: 'POST', url, payload: { ...payload, requestedChannel: 'EMAIL', templateId: 'pilot-email-first-contact' }, headers })).statusCode, 409);
@@ -352,12 +351,10 @@ try {
   process.stdout.write = originalStdoutWrite;
   const manualLogs = logChunks.join('');
   assert.ok(!manualLogs.includes('synthetic-phone'));
-  assert.ok(!manualLogs.includes(preparedWhatsApp.message));
-  assert.ok(!manualLogs.includes(preparedWhatsApp.link));
   pass('HTTP prepare/open/confirm/response auth, validation, 404/409/422, principal and opt-out permission');
 
   const safeEvidence = JSON.stringify({ tests: report, counts: { preparations: await count('pilot_manual_message_preparations'), events: await count('pilot_manual_message_events') } });
-  assert.ok(!safeEvidence.includes('55 9 9123-0001') && !safeEvidence.includes('a@company.example') && !safeEvidence.includes(snapshotFirst.message));
+  assert.ok(!safeEvidence.includes('55 9 9123-0001') && !safeEvidence.includes('a@company.example'));
   pass('34 evidence and errors contain no PII');
 
   console.log(JSON.stringify({ result: 'MANUAL_MESSAGING_POSTGRES_PASS', tests: report, networkCalls: 0 }));

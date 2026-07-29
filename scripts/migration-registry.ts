@@ -37,6 +37,18 @@ const manualMessagingTriggers = [
   'campaign_opt_outs_manual_messaging_lock',
 ] as const;
 
+export async function assertNarrowContactResolutionObjects(sql: Sql): Promise<void> {
+  const rows = await sql<{ functionExists: boolean; revocationTableExists: boolean }[]>`
+    SELECT
+      to_regprocedure('public.resolve_narrow_contact(uuid,uuid,uuid,text,text,text,text)') IS NOT NULL
+        AS "functionExists",
+      to_regclass('public.contact_channel_authorization_revocations') IS NOT NULL
+        AS "revocationTableExists"`;
+  if (!rows[0]?.functionExists || !rows[0].revocationTableExists) {
+    throw new Error('migration 0025 is missing narrow contact resolution objects');
+  }
+}
+
 export async function loadMigrationRegistry(sql: Sql): Promise<MigrationRegistry> {
   const localRows = await sql<{ version: string }[]>`
     SELECT version

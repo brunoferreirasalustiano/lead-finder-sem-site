@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertApiKillSwitchReleased, parseApiConfig, parseWorkerConfig } from './config.js';
+import { assertApiKillSwitchReleased, parseApiConfig, parseContactResolverConfig, parseWorkerConfig } from './config.js';
 
 const database = {
   DATABASE_URL: 'postgresql://user:password@localhost:5432/database',
@@ -8,6 +8,26 @@ const database = {
 };
 
 describe('environment configuration', () => {
+  it('requires local manual no-provider contact resolution fail closed', () => {
+    const safe = {
+      CONTACT_RESOLVER_DATABASE_URL: database.DATABASE_URL,
+      MANUAL_MESSAGING_ENABLED: 'true',
+      CONTACT_RESOLUTION_KILL_SWITCH_ENABLED: 'false',
+      CONTACT_RESOLUTION_MODE: 'LOCAL_MANUAL',
+      CONTACT_RESOLUTION_NO_PROVIDER_MODE: 'true',
+      REAL_PROVIDERS_ENABLED: 'false',
+      REAL_PROVIDER_CONFIGURED: 'false',
+    };
+    expect(parseContactResolverConfig(safe)).toMatchObject({
+      MANUAL_MESSAGING_ENABLED: true,
+      CONTACT_RESOLUTION_MODE: 'LOCAL_MANUAL',
+      CONTACT_RESOLUTION_NO_PROVIDER_MODE: true,
+      REAL_PROVIDERS_ENABLED: false,
+    });
+    expect(() => parseContactResolverConfig({ ...safe, CONTACT_RESOLUTION_KILL_SWITCH_ENABLED: 'true' })).toThrow();
+    expect(() => parseContactResolverConfig({ ...safe, CONTACT_RESOLUTION_NO_PROVIDER_MODE: 'false' })).toThrow();
+    expect(() => parseContactResolverConfig({ ...safe, REAL_PROVIDERS_ENABLED: 'true' })).toThrow();
+  });
   it('applies safe defaults', () => {
     expect(parseApiConfig(database)).toMatchObject({
       API_PORT: 3000,

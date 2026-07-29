@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { leads } from './schema.js';
 
 export const safeLeadSelection = {
@@ -15,6 +16,7 @@ export const safeLeadSelection = {
   isClosed: leads.isClosed,
   crmStage: leads.crmStage,
   crmPriority: leads.crmPriority,
+  crmOwner: sql<null>`null`,
   crmNextActionAt: leads.crmNextActionAt,
   crmVersion: leads.crmVersion,
   createdAt: leads.createdAt,

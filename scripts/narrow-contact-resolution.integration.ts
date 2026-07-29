@@ -236,7 +236,7 @@ try {
     idempotencyKey: randomUUID(),
   };
   await prepareManualMessage(database.db, exact.pilotId, exact.leadId, staleInput, actor);
-  await raw`update lead_contacts set normalized_value='+12025550109'
+  await raw`update lead_contacts set normalized_value='+12025550101'
     where id=${exact.phoneId}::uuid`;
   const normalizedFingerprint = (await raw<{ fingerprint: string }[]>`
     select contact_resolution_fingerprint fingerprint from lead_contacts
@@ -246,7 +246,7 @@ try {
   await invalidState(prepareManualMessage(database.db, exact.pilotId, exact.leadId, staleInput, actor));
   pass('03 normalized value rotates fingerprint and invalidates stale replay');
 
-  await raw`update lead_contacts set original_value='+12025550108'
+  await raw`update lead_contacts set original_value='+12025550101'
     where id=${exact.phoneId}::uuid`;
   const originalFingerprint = (await raw<{ fingerprint: string }[]>`
     select contact_resolution_fingerprint fingerprint from lead_contacts

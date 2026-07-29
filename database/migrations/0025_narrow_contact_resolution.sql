@@ -1,6 +1,39 @@
 BEGIN;
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+DO $migration$
+DECLARE
+  pgcrypto_schema name;
+  pgcrypto_relocatable boolean;
+BEGIN
+  SELECT namespace.nspname, extension.extrelocatable
+  INTO pgcrypto_schema, pgcrypto_relocatable
+  FROM pg_catalog.pg_extension extension
+  JOIN pg_catalog.pg_namespace namespace ON namespace.oid=extension.extnamespace
+  WHERE extension.extname='pgcrypto';
+
+  IF pgcrypto_schema IS NULL THEN
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    CREATE EXTENSION pgcrypto WITH SCHEMA extensions;
+  ELSIF pgcrypto_schema='public' THEN
+    IF NOT pgcrypto_relocatable THEN
+      RAISE EXCEPTION
+        'pgcrypto in public violates the security policy and is not relocatable; controlled reconciliation is required';
+    END IF;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    ALTER EXTENSION pgcrypto SET SCHEMA extensions;
+  END IF;
+
+  SELECT namespace.nspname
+  INTO pgcrypto_schema
+  FROM pg_catalog.pg_extension extension
+  JOIN pg_catalog.pg_namespace namespace ON namespace.oid=extension.extnamespace
+  WHERE extension.extname='pgcrypto';
+
+  IF pgcrypto_schema IS NULL OR pgcrypto_schema='public' THEN
+    RAISE EXCEPTION 'pgcrypto must be installed outside the public schema';
+  END IF;
+END
+$migration$;
 
 ALTER TABLE lead_contacts
   ADD COLUMN IF NOT EXISTS contact_resolution_fingerprint text;

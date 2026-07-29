@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import postgres from 'postgres';
 import {
   CONTACT_RESOLUTION_PURPOSE,
@@ -35,6 +35,127 @@ const actor = createAuthorizationContext({
   permissions: new Set(['manual-messaging:prepare']),
   authenticationMethod: 'integration-test',
 });
+
+type PgcryptoScenario = 'absent' | 'extensions' | 'public';
+
+const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
+
+async function validatePgcryptoScenario(scenario: PgcryptoScenario) {
+  const databaseName = `lf_pgcrypto_${scenario}_${randomUUID().replaceAll('-', '')}`.slice(0, 63);
+  const scenarioUrl = new URL(databaseUrl);
+  scenarioUrl.pathname = `/${databaseName}`;
+  const administrator = postgres(databaseUrl, { max: 1 });
+  let scenarioDatabase: ReturnType<typeof postgres> | undefined;
+  try {
+    await administrator.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+    scenarioDatabase = postgres(scenarioUrl.toString(), { max: 1 });
+    const migrationsUrl = new URL('../database/migrations/', import.meta.url);
+    const baselineMigrations = (await readdir(migrationsUrl))
+      .filter((file) => /^\d{4}.*\.sql$/.test(file) && file < '0025_narrow_contact_resolution.sql')
+      .sort();
+    for (const file of baselineMigrations) {
+      await scenarioDatabase.unsafe(await readFile(new URL(file, migrationsUrl), 'utf8'));
+    }
+
+    if (scenario !== 'absent') {
+      await scenarioDatabase.unsafe('CREATE SCHEMA IF NOT EXISTS extensions');
+      await scenarioDatabase.unsafe(
+        `CREATE EXTENSION pgcrypto WITH SCHEMA ${scenario === 'public' ? 'public' : 'extensions'}`,
+      );
+    }
+
+    const before = await scenarioDatabase<{
+      schema: string;
+      relocatable: boolean;
+    }[]>`
+      select namespace.nspname schema,extension.extrelocatable relocatable
+      from pg_catalog.pg_extension extension
+      join pg_catalog.pg_namespace namespace on namespace.oid=extension.extnamespace
+      where extension.extname='pgcrypto'`;
+    if (scenario === 'absent') assert.equal(before.length, 0);
+    else assert.equal(before[0]?.schema, scenario);
+    if (scenario === 'public') assert.equal(before[0]?.relocatable, true);
+
+    await scenarioDatabase.unsafe(migration);
+    const afterFirstApplication = await scenarioDatabase<{ schema: string }[]>`
+      select namespace.nspname schema
+      from pg_catalog.pg_extension extension
+      join pg_catalog.pg_namespace namespace on namespace.oid=extension.extnamespace
+      where extension.extname='pgcrypto'`;
+    assert.equal(afterFirstApplication[0]?.schema, 'extensions');
+    await scenarioDatabase.unsafe(migration);
+    const afterSecondApplication = await scenarioDatabase<{ schema: string }[]>`
+      select namespace.nspname schema
+      from pg_catalog.pg_extension extension
+      join pg_catalog.pg_namespace namespace on namespace.oid=extension.extnamespace
+      where extension.extname='pgcrypto'`;
+    assert.equal(afterSecondApplication[0]?.schema, afterFirstApplication[0]?.schema);
+    const publicExtensionFunctions = await scenarioDatabase<{ count: number }[]>`
+      select count(*)::int count
+      from pg_catalog.pg_proc procedure_record
+      join pg_catalog.pg_depend dependency
+        on dependency.classid='pg_catalog.pg_proc'::regclass
+       and dependency.objid=procedure_record.oid
+       and dependency.deptype='e'
+      join pg_catalog.pg_extension extension
+        on extension.oid=dependency.refobjid
+       and extension.extname='pgcrypto'
+      join pg_catalog.pg_namespace namespace
+        on namespace.oid=procedure_record.pronamespace
+      where namespace.nspname='public'`;
+    assert.equal(publicExtensionFunctions[0]?.count, 0);
+
+    const leadId = randomUUID();
+    const firstContactId = randomUUID();
+    const secondContactId = randomUUID();
+    await scenarioDatabase`
+      insert into leads(id,osm_type,osm_id,name,category,score,status,is_closed)
+      values(${leadId}::uuid,'node',${`pgcrypto-${scenario}`} ,'Empresa sintética','oficinas',90,
+        'SEM_SITE_CADASTRADO',false)`;
+    await scenarioDatabase`
+      insert into lead_contacts(
+        id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid
+      ) values(
+        ${firstContactId}::uuid,${leadId}::uuid,'EMAIL','first@example.test','first@example.test',
+        'PUBLIC_BUSINESS_SOURCE',1,now(),true
+      )`;
+    const initialFingerprint = (await scenarioDatabase<{ fingerprint: string }[]>`
+      select contact_resolution_fingerprint fingerprint
+      from lead_contacts where id=${firstContactId}::uuid`)[0]?.fingerprint;
+    assert.match(initialFingerprint ?? '', /^[0-9a-f]{64}$/);
+    await scenarioDatabase`
+      update lead_contacts set confidence=0.9 where id=${firstContactId}::uuid`;
+    assert.equal(
+      (await scenarioDatabase<{ fingerprint: string }[]>`
+        select contact_resolution_fingerprint fingerprint
+        from lead_contacts where id=${firstContactId}::uuid`)[0]?.fingerprint,
+      initialFingerprint,
+    );
+    await scenarioDatabase`
+      update lead_contacts set normalized_value='rotated@example.test'
+      where id=${firstContactId}::uuid`;
+    const rotatedFingerprint = (await scenarioDatabase<{ fingerprint: string }[]>`
+      select contact_resolution_fingerprint fingerprint
+      from lead_contacts where id=${firstContactId}::uuid`)[0]?.fingerprint;
+    assert.match(rotatedFingerprint ?? '', /^[0-9a-f]{64}$/);
+    assert.notEqual(rotatedFingerprint, initialFingerprint);
+    await assert.rejects(scenarioDatabase`
+      insert into lead_contacts(
+        id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,
+        contact_resolution_fingerprint
+      ) values(
+        ${secondContactId}::uuid,${leadId}::uuid,'EMAIL','second@example.test','second@example.test',
+        'PUBLIC_BUSINESS_SOURCE',1,now(),true,${rotatedFingerprint}
+      )`);
+    pass(`pgcrypto ${scenario} scenario is secure and idempotent`);
+  } finally {
+    await scenarioDatabase?.end().catch(() => undefined);
+    await administrator.unsafe(
+      `DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`,
+    ).catch(() => undefined);
+    await administrator.end();
+  }
+}
 
 type Fixture = {
   pilotId: string;
@@ -199,6 +320,9 @@ const executablePublicFunctions = async () =>
     order by 1`;
 
 try {
+  await validatePgcryptoScenario('absent');
+  await validatePgcryptoScenario('extensions');
+  await validatePgcryptoScenario('public');
   await migrationDatabase.unsafe(migration);
   await migrationDatabase.unsafe(migration);
   const exact = await fixture();
@@ -597,7 +721,7 @@ try {
   );
   pass('35 removed role retains no grants while unrelated PUBLIC connect remains');
 
-  assert.equal(passed.length, 40);
+  assert.equal(passed.length, 43);
   console.log(JSON.stringify({
     result: 'NARROW_CONTACT_RESOLUTION_POSTGRES_PASS',
     mandatoryTests: passed.length,

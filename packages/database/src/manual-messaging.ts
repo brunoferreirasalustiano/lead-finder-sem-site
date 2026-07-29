@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
   approvedTemplates,
+  DeterministicFakeMessagingProvider,
   type MessagingChannel,
 } from '@lead-finder/messaging';
 import type { AuthorizationContext } from '@lead-finder/shared';
@@ -24,7 +25,12 @@ export type ManualMessagingResult =
 export class ManualMessagingError extends Error {
   constructor(
     message: string,
-    public readonly code: 'NOT_FOUND' | 'INVALID_STATE' | 'INELIGIBLE' | 'IDEMPOTENCY_CONFLICT',
+    public readonly code:
+      | 'NOT_FOUND'
+      | 'INVALID_STATE'
+      | 'INELIGIBLE'
+      | 'IDEMPOTENCY_CONFLICT'
+      | 'EMAIL_CONSUMER_UNAVAILABLE',
   ) {
     super(message);
   }
@@ -49,10 +55,14 @@ const clean = (v: string | undefined) =>
     .join('')
     .trim()
     .slice(0, 500) || undefined;
+const provider = new DeterministicFakeMessagingProvider();
 type EligibleContact = {
   contact_id: string;
   channel: MessagingChannel;
   contact_fingerprint: string;
+  legacy_contact_fingerprint: string;
+  contact_source: string;
+  lead_name: string;
 };
 async function exactEligibleContact(
   tx: Pick<Database, 'execute'>,
@@ -72,7 +82,23 @@ async function exactEligibleContact(
     sql<
       EligibleContact[]
     >`select c.id contact_id,${requestedChannel}::text channel,
-      c.contact_resolution_fingerprint contact_fingerprint
+      c.contact_resolution_fingerprint contact_fingerprint,
+      pg_catalog.encode(
+        extensions.digest(
+          pg_catalog.convert_to(
+            pg_catalog.format(
+              '{"channel":%s,"contactId":%s,"value":%s}',
+              pg_catalog.to_json(upper(c.type))::text,
+              pg_catalog.to_json(c.id::text)::text,
+              pg_catalog.to_json(c.normalized_value)::text
+            ),
+            'UTF8'
+          ),
+          'sha256'
+        ),
+        'hex'
+      ) legacy_contact_fingerprint,
+      c.source contact_source,coalesce(l.name,'empresa') lead_name
       from pilot_runs pr
       join pilot_leads pl on pl.pilot_run_id=pr.id
       join leads l on l.id=pl.lead_id
@@ -122,12 +148,83 @@ const templateFor = (channel: MessagingChannel, id: string, version: string) => 
     throw new ManualMessagingError('Persisted template is unavailable', 'INVALID_STATE');
   return template;
 };
-const safeMessageFingerprint = (
-  contactFingerprint: string,
+const renderedVariablesFor = (row: EligibleContact, channel: MessagingChannel) =>
+  channel === 'WHATSAPP'
+    ? { EMPRESA: row.lead_name }
+    : { EMPRESA: row.lead_name, FONTE: row.contact_source };
+const legacyVariablesFor = (row: EligibleContact) => ({
+  EMPRESA: row.lead_name,
+  FONTE: row.contact_source,
+});
+const preparedFor = (
+  row: EligibleContact,
   channel: MessagingChannel,
   templateId: string,
   templateVersion: string,
-) => digest({ contactFingerprint, channel, templateId, templateVersion });
+  variables: Readonly<Record<string, string>>,
+) => provider.prepare(templateFor(channel, templateId, templateVersion), variables);
+const snapshotRecord = (value: unknown) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+  return value as Record<string, unknown>;
+};
+const validatePreparedSnapshot = (
+  row: EligibleContact,
+  persistedChannel: MessagingChannel,
+  resultSnapshot: unknown,
+  resultFingerprint: string,
+) => {
+  if (digest(resultSnapshot) !== resultFingerprint)
+    throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+  const snapshot = snapshotRecord(resultSnapshot);
+  if (
+    snapshot['channel'] !== persistedChannel ||
+    typeof snapshot['templateId'] !== 'string' ||
+    typeof snapshot['templateVersion'] !== 'string' ||
+    typeof snapshot['contactFingerprint'] !== 'string' ||
+    typeof snapshot['messageFingerprint'] !== 'string'
+  ) throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+
+  if (snapshot['schemaVersion'] === 2) {
+    if (typeof snapshot['renderedInputsFingerprint'] !== 'string')
+      throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+    if (row.contact_fingerprint !== snapshot['contactFingerprint'])
+      throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
+    const variables = renderedVariablesFor(row, persistedChannel);
+    const prepared = preparedFor(
+      row,
+      persistedChannel,
+      snapshot['templateId'],
+      snapshot['templateVersion'],
+      variables,
+    );
+    if (
+      digest(variables) !== snapshot['renderedInputsFingerprint'] ||
+      prepared.fingerprint !== snapshot['messageFingerprint']
+    ) throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
+    return { prepared, contactFingerprint: row.contact_fingerprint };
+  }
+
+  if (snapshot['schemaVersion'] === undefined && snapshot['variables'] !== null && typeof snapshot['variables'] === 'object') {
+    if (row.legacy_contact_fingerprint !== snapshot['contactFingerprint'])
+      throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
+    const variables = legacyVariablesFor(row);
+    const prepared = preparedFor(
+      row,
+      persistedChannel,
+      snapshot['templateId'],
+      snapshot['templateVersion'],
+      variables,
+    );
+    if (
+      digest(variables) !== digest(snapshot['variables']) ||
+      prepared.fingerprint !== snapshot['messageFingerprint']
+    ) throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
+    return { prepared, contactFingerprint: row.contact_fingerprint };
+  }
+
+  throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+};
 export async function prepareManualMessage(
   db: Database,
   pilotRunId: string,
@@ -141,6 +238,11 @@ export async function prepareManualMessage(
   },
   auth: AuthorizationContext,
 ) {
+  if (input.requestedChannel === 'EMAIL')
+    throw new ManualMessagingError(
+      'Restricted local email consumer is unavailable',
+      'EMAIL_CONSUMER_UNAVAILABLE',
+    );
   const fingerprint = digest({ pilotRunId, leadId, ...input, principalId: auth.principalId });
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -155,43 +257,29 @@ export async function prepareManualMessage(
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     if (prior[0]) {
       const persisted = prior[0];
-      if (digest(persisted.result_snapshot) !== persisted.result_fingerprint)
-        throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
-      const snapshot = persisted.result_snapshot as Record<string, unknown>;
-      if (
-        !['WHATSAPP', 'EMAIL'].includes(String(snapshot['channel'])) ||
-        typeof snapshot['templateId'] !== 'string' ||
-        typeof snapshot['templateVersion'] !== 'string' ||
-        typeof snapshot['contactFingerprint'] !== 'string' ||
-        typeof snapshot['messageFingerprint'] !== 'string'
-      ) throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
       const persistedChannel = persisted.channel as MessagingChannel;
-      const persistedContactId = String(persisted.contact_id);
       const row = await exactEligibleContact(
         tx,
         pilotRunId,
         leadId,
-        persistedContactId,
+        String(persisted.contact_id),
         persistedChannel,
       );
-      if (row.contact_fingerprint !== snapshot['contactFingerprint'])
-        throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
-      const rebuiltFingerprint = safeMessageFingerprint(
-        row.contact_fingerprint,
+      const validated = validatePreparedSnapshot(
+        row,
         persistedChannel,
-        String(snapshot['templateId']),
-        String(snapshot['templateVersion']),
+        persisted.result_snapshot,
+        persisted.result_fingerprint,
       );
-      if (rebuiltFingerprint !== snapshot['messageFingerprint'])
-        throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
+      const snapshot = snapshotRecord(persisted.result_snapshot);
       return {
         preparationId: persisted.id,
         state: 'PREPARED' as const,
-        channel: snapshot['channel'] as MessagingChannel,
+        channel: persistedChannel,
         templateId: snapshot['templateId'],
         templateVersion: snapshot['templateVersion'],
-        contactFingerprint: row.contact_fingerprint,
-        messageFingerprint: rebuiltFingerprint,
+        contactFingerprint: validated.contactFingerprint,
+        messageFingerprint: validated.prepared.fingerprint,
         preparedAt: persisted.prepared_at,
         replayed: true,
       };
@@ -205,22 +293,20 @@ export async function prepareManualMessage(
     );
     const template = templateFor(input.requestedChannel, input.templateId, input.templateVersion);
     if (
-      (template.id !== input.templateId || template.version !== input.templateVersion)
-    )
-      throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
-    const messageFingerprint = safeMessageFingerprint(
-      selected.contact_fingerprint,
-      input.requestedChannel,
-      template.id,
-      template.version,
-    );
+      template.id !== input.templateId || template.version !== input.templateVersion
+    ) throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
+    const variables = renderedVariablesFor(selected, input.requestedChannel);
+    const prepared = provider.prepare(template, variables);
+    const renderedInputsFingerprint = digest(variables);
     const snapshot = {
+      schemaVersion: 2,
       channel: input.requestedChannel,
       templateId: template.id,
       templateVersion: template.version,
       variables: {},
+      renderedInputsFingerprint,
       contactFingerprint: selected.contact_fingerprint,
-      messageFingerprint,
+      messageFingerprint: prepared.fingerprint,
     };
     const saved = (
         await tx.execute(
@@ -236,7 +322,7 @@ export async function prepareManualMessage(
       templateId: template.id,
       templateVersion: template.version,
       contactFingerprint: selected.contact_fingerprint,
-      messageFingerprint,
+      messageFingerprint: prepared.fingerprint,
       preparedAt: saved.prepared_at,
       replayed: false,
     };
@@ -362,19 +448,20 @@ async function event(
       prior[0] &&
       (prior[0].operator_principal_id !== auth.principalId ||
         prior[0].payload_fingerprint !== fingerprint)
-    )
-      throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
+    ) throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     const p = (
       await tx.execute(
         sql<
-          { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel }[]
-        >`select pilot_run_id,lead_id,contact_id,channel from pilot_manual_message_preparations where id=${id}::uuid for update`,
+          { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]
+        >`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
       )
     )[0] as unknown as
-      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel }
+      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }
       | undefined;
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
-    await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
+    const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
+    if (eventType === 'OPENED')
+      validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, p.result_fingerprint);
     const existing = await tx.execute(
       sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,
     );

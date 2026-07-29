@@ -18,7 +18,6 @@ describe('safe lead SQL projection', () => {
       'isClosed',
       'crmStage',
       'crmPriority',
-      'crmOwner',
       'crmNextActionAt',
       'crmVersion',
       'createdAt',
@@ -33,6 +32,7 @@ describe('safe lead SQL projection', () => {
       'longitude',
       'normalizedName',
       'normalizedAddress',
+      'crmOwner',
     ]));
   });
 });

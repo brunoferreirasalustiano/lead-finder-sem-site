@@ -236,11 +236,6 @@ export async function prepareManualMessage(
   },
   auth: AuthorizationContext,
 ) {
-  if (input.requestedChannel === 'EMAIL')
-    throw new ManualMessagingError(
-      'Restricted local email consumer is unavailable',
-      'EMAIL_CONSUMER_UNAVAILABLE',
-    );
   const fingerprint = digest({ pilotRunId, leadId, ...input, principalId: auth.principalId });
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -267,6 +262,11 @@ export async function prepareManualMessage(
         persisted.result_snapshot,
         String(persisted.result_fingerprint),
       );
+      if (persistedChannel === 'EMAIL')
+        throw new ManualMessagingError(
+          'Restricted local email consumer is unavailable',
+          'EMAIL_CONSUMER_UNAVAILABLE',
+        );
       const snapshot = snapshotRecord(persisted.result_snapshot);
       return {
         preparationId: persisted.id,
@@ -290,6 +290,11 @@ export async function prepareManualMessage(
     const template = templateFor(input.requestedChannel, input.templateId, input.templateVersion);
     if (template.id !== input.templateId || template.version !== input.templateVersion)
       throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
+    if (input.requestedChannel === 'EMAIL')
+      throw new ManualMessagingError(
+        'Restricted local email consumer is unavailable',
+        'EMAIL_CONSUMER_UNAVAILABLE',
+      );
     const variables = renderedVariablesFor(selected, input.requestedChannel);
     const prepared = provider.prepare(template, variables);
     const renderedInputsFingerprint = digest(variables);

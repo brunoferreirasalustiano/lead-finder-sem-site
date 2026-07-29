@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { leads } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 
 describe('safe lead SQL projection', () => {
@@ -18,6 +19,7 @@ describe('safe lead SQL projection', () => {
       'isClosed',
       'crmStage',
       'crmPriority',
+      'crmOwner',
       'crmNextActionAt',
       'crmVersion',
       'createdAt',
@@ -32,7 +34,7 @@ describe('safe lead SQL projection', () => {
       'longitude',
       'normalizedName',
       'normalizedAddress',
-      'crmOwner',
     ]));
+    expect(safeLeadSelection.crmOwner).not.toBe(leads.crmOwner);
   });
 });

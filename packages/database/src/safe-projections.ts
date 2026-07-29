@@ -15,7 +15,6 @@ export const safeLeadSelection = {
   isClosed: leads.isClosed,
   crmStage: leads.crmStage,
   crmPriority: leads.crmPriority,
-  crmOwner: leads.crmOwner,
   crmNextActionAt: leads.crmNextActionAt,
   crmVersion: leads.crmVersion,
   createdAt: leads.createdAt,

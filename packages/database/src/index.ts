@@ -8,7 +8,10 @@ import {
   type NormalizedLead,
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
+import { safeLeadSelection } from './safe-projections.js';
 export * from './schema.js';
+export * from './safe-projections.js';
+export * from './crm-mutation-projections.js';
 export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
@@ -38,9 +41,26 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0013_dual_deployment_processing'): Promise<void> {
-  const rows = await db.execute<{ version: string }>(sql`SELECT version FROM schema_migrations WHERE version = ${version}`);
-  if (rows.length !== 1) throw new Error('EXPECTED_MIGRATION_MISSING');
+export async function checkExpectedMigration(db: Database, version = '0024_crm_idempotency_safe_results'): Promise<void> {
+  const localRows = await db.execute<{ version: string }>(sql`
+    SELECT version
+    FROM public.schema_migrations
+    WHERE version = ${version}
+  `);
+  if (localRows.length === 1) return;
+
+  const registryRows = await db.execute<{ exists: boolean }>(sql`
+    SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL AS exists
+  `);
+  if (registryRows[0]?.exists) {
+    const supabaseRows = await db.execute<{ name: string }>(sql`
+      SELECT name::text AS name
+      FROM supabase_migrations.schema_migrations
+      WHERE name = ${version}
+    `);
+    if (supabaseRows.length === 1) return;
+  }
+  throw new Error('EXPECTED_MIGRATION_MISSING');
 }
 export async function insertLeads(
   db: Database,
@@ -78,7 +98,7 @@ export async function listLeads(db: Database, f: LeadFilters) {
   const where = whereFor(f);
   const [items, totalRows] = await Promise.all([
     db
-      .select()
+      .select(safeLeadSelection)
       .from(leads)
       .where(where)
       .orderBy(desc(leads.score), desc(leads.createdAt))
@@ -98,7 +118,7 @@ export async function listLeads(db: Database, f: LeadFilters) {
   };
 }
 export async function getLead(db: Database, id: string) {
-  return (await db.select().from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
+  return (await db.select(safeLeadSelection).from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
 }
 export interface CollectionEgressAuthorization {
   enabled: true;

@@ -1,5 +1,58 @@
 BEGIN;
 
+ALTER TABLE lead_contacts
+  ADD COLUMN IF NOT EXISTS contact_resolution_fingerprint text;
+
+DROP TRIGGER IF EXISTS lead_contacts_rotate_resolution_fingerprint ON lead_contacts;
+
+UPDATE lead_contacts
+SET contact_resolution_fingerprint=encode(gen_random_bytes(32),'hex')
+WHERE contact_resolution_fingerprint IS NULL
+  OR contact_resolution_fingerprint !~ '^[0-9a-f]{64}$';
+
+ALTER TABLE lead_contacts
+  ALTER COLUMN contact_resolution_fingerprint
+    SET DEFAULT encode(gen_random_bytes(32),'hex'),
+  ALTER COLUMN contact_resolution_fingerprint SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid='public.lead_contacts'::regclass
+      AND conname='lead_contacts_contact_resolution_fingerprint_format'
+  ) THEN
+    ALTER TABLE public.lead_contacts
+      ADD CONSTRAINT lead_contacts_contact_resolution_fingerprint_format
+      CHECK (contact_resolution_fingerprint ~ '^[0-9a-f]{64}$');
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS lead_contacts_contact_resolution_fingerprint_uidx
+  ON lead_contacts(contact_resolution_fingerprint);
+
+CREATE OR REPLACE FUNCTION rotate_contact_resolution_fingerprint()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path=pg_catalog,public
+AS $$
+BEGIN
+  IF NEW.original_value IS DISTINCT FROM OLD.original_value
+    OR NEW.normalized_value IS DISTINCT FROM OLD.normalized_value
+  THEN
+    NEW.contact_resolution_fingerprint := encode(gen_random_bytes(32),'hex');
+  ELSE
+    NEW.contact_resolution_fingerprint := OLD.contact_resolution_fingerprint;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS lead_contacts_rotate_resolution_fingerprint ON lead_contacts;
+CREATE TRIGGER lead_contacts_rotate_resolution_fingerprint
+BEFORE UPDATE ON lead_contacts
+FOR EACH ROW EXECUTE FUNCTION rotate_contact_resolution_fingerprint();
+
 CREATE TABLE IF NOT EXISTS contact_channel_authorization_revocations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   authorization_id uuid NOT NULL REFERENCES contact_channel_authorizations(id) ON DELETE RESTRICT,
@@ -124,7 +177,7 @@ BEGIN
 
   RETURN QUERY
   SELECT c.normalized_value,
-    encode(digest(c.normalized_value,'sha256'),'hex')::char(64),
+    c.contact_resolution_fingerprint::char(64),
     c.source,
     coalesce(l.name,'empresa')
   FROM public.pilot_runs pr
@@ -178,6 +231,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION resolve_narrow_contact(uuid,uuid,uuid,text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION rotate_contact_resolution_fingerprint() FROM PUBLIC;
 REVOKE ALL ON FUNCTION lock_narrow_contact_resolution_write() FROM PUBLIC;
 REVOKE ALL ON FUNCTION lock_narrow_contact_pilot_status_write() FROM PUBLIC;
 DO $$

@@ -71,7 +71,7 @@ async function exactEligibleContact(
     sql<
       EligibleContact[]
     >`select c.id contact_id,${requestedChannel}::text channel,
-      encode(digest(c.normalized_value,'sha256'),'hex') contact_fingerprint
+      c.contact_resolution_fingerprint contact_fingerprint
       from pilot_runs pr
       join pilot_leads pl on pl.pilot_run_id=pr.id
       join leads l on l.id=pl.lead_id

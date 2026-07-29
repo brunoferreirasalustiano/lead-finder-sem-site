@@ -124,6 +124,9 @@ const resolve = (item: Fixture, overrides: Partial<Parameters<typeof resolveNarr
 const ineligible = async (promise: Promise<unknown>) =>
   assert.rejects(promise, (error: unknown) =>
     error instanceof ManualMessagingError && error.code === 'INELIGIBLE');
+const invalidState = async (promise: Promise<unknown>) =>
+  assert.rejects(promise, (error: unknown) =>
+    error instanceof ManualMessagingError && error.code === 'INVALID_STATE');
 const tableCount = async (table: string) =>
   Number((await raw.unsafe(`select count(*)::int value from ${table}`))[0]?.value ?? -1);
 const foreignContact = async () => {
@@ -202,7 +205,63 @@ try {
   await raw.unsafe(migration);
   const exact = await fixture();
   const exactResolved = await resolve(exact);
-  assert.equal(exactResolved.fingerprint, createHash('sha256').update(markerValues[0]).digest('hex'));
+  const initialFingerprints = await raw<{ id: string; fingerprint: string }[]>`
+    select id,contact_resolution_fingerprint fingerprint
+    from lead_contacts where lead_id=${exact.leadId}::uuid order by id`;
+  assert.equal(initialFingerprints.length, 3);
+  assert.ok(initialFingerprints.every(({ fingerprint }) => /^[0-9a-f]{64}$/.test(fingerprint)));
+  assert.equal(new Set(initialFingerprints.map(({ fingerprint }) => fingerprint)).size, 3);
+  assert.ok(initialFingerprints.every(({ fingerprint }) =>
+    !markerValues.some((value) =>
+      fingerprint === createHash('sha256').update(value).digest('hex'))));
+  const initialPhoneFingerprint = initialFingerprints.find(({ id }) => id === exact.phoneId)?.fingerprint;
+  assert.equal(exactResolved.fingerprint, initialPhoneFingerprint);
+  assert.equal((await resolve(exact)).fingerprint, initialPhoneFingerprint);
+  pass('01 opaque fingerprints are random, unique, formatted, and stable');
+
+  await raw`update lead_contacts set confidence=0.9,source='DIRECTLY_PROVIDED'
+    where id=${exact.phoneId}::uuid`;
+  assert.equal(
+    (await raw<{ fingerprint: string }[]>`select contact_resolution_fingerprint fingerprint
+      from lead_contacts where id=${exact.phoneId}::uuid`)[0]?.fingerprint,
+    initialPhoneFingerprint,
+  );
+  pass('02 non-contact-value changes preserve fingerprint');
+
+  const staleInput = {
+    contactId: exact.phoneId,
+    requestedChannel: 'WHATSAPP' as const,
+    templateId: 'pilot-whatsapp-first-contact',
+    templateVersion: 'v1',
+    idempotencyKey: randomUUID(),
+  };
+  await prepareManualMessage(database.db, exact.pilotId, exact.leadId, staleInput, actor);
+  await raw`update lead_contacts set normalized_value='+12025550109'
+    where id=${exact.phoneId}::uuid`;
+  const normalizedFingerprint = (await raw<{ fingerprint: string }[]>`
+    select contact_resolution_fingerprint fingerprint from lead_contacts
+    where id=${exact.phoneId}::uuid`)[0]?.fingerprint;
+  assert.match(normalizedFingerprint ?? '', /^[0-9a-f]{64}$/);
+  assert.notEqual(normalizedFingerprint, initialPhoneFingerprint);
+  await invalidState(prepareManualMessage(database.db, exact.pilotId, exact.leadId, staleInput, actor));
+  pass('03 normalized value rotates fingerprint and invalidates stale replay');
+
+  await raw`update lead_contacts set original_value='+12025550108'
+    where id=${exact.phoneId}::uuid`;
+  const originalFingerprint = (await raw<{ fingerprint: string }[]>`
+    select contact_resolution_fingerprint fingerprint from lead_contacts
+    where id=${exact.phoneId}::uuid`)[0]?.fingerprint;
+  assert.match(originalFingerprint ?? '', /^[0-9a-f]{64}$/);
+  assert.notEqual(originalFingerprint, normalizedFingerprint);
+  pass('04 original value rotates fingerprint');
+
+  await raw.unsafe(migration);
+  assert.equal(
+    (await raw<{ fingerprint: string }[]>`select contact_resolution_fingerprint fingerprint
+      from lead_contacts where id=${exact.phoneId}::uuid`)[0]?.fingerprint,
+    originalFingerprint,
+  );
+  pass('05 migration reapplication preserves valid fingerprints');
   pass('01 exact contact among two contacts');
 
   const foreign = await foreignContact();
@@ -307,7 +366,11 @@ try {
     tableCount('campaign_provider_events'),
   ]);
   const resolvedSafe = await resolve(safe);
-  assert.equal(resolvedSafe.fingerprint, createHash('sha256').update(markerValues[0]).digest('hex'));
+  assert.equal(
+    resolvedSafe.fingerprint,
+    (await raw<{ fingerprint: string }[]>`select contact_resolution_fingerprint fingerprint
+      from lead_contacts where id=${safe.phoneId}::uuid`)[0]?.fingerprint,
+  );
   pass('22 resolver returns only exact approved contact');
   await unchangedExternalTables(effectsBefore); pass('23 resolution creates no external effects');
 
@@ -470,6 +533,9 @@ try {
   assert.deepEqual(await executablePublicFunctions(), []);
   pass('32 role ACL is exact and executable function allowlist is empty');
   const roleFixture = await fixture();
+  const roleExpectedFingerprint = (await raw<{ fingerprint: string }[]>`
+    select contact_resolution_fingerprint fingerprint from lead_contacts
+    where id=${roleFixture.phoneId}::uuid`)[0]?.fingerprint;
   await raw.begin(async (tx) => {
     await tx.unsafe('SET LOCAL ROLE lead_finder_contact_resolver_runtime');
     const roleResolved = await tx<{ contact_value: string; contact_fingerprint: string }[]>`
@@ -486,7 +552,7 @@ try {
     assert.equal(roleResolved.length, 1);
     assert.equal(
       roleResolved[0]?.contact_fingerprint.trim(),
-      createHash('sha256').update(markerValues[0]).digest('hex'),
+      roleExpectedFingerprint,
     );
   });
   await assert.rejects(raw.begin(async (tx) => {
@@ -533,7 +599,7 @@ try {
   );
   pass('35 removed role retains no grants while unrelated PUBLIC connect remains');
 
-  assert.equal(passed.length, 35);
+  assert.equal(passed.length, 40);
   console.log(JSON.stringify({
     result: 'NARROW_CONTACT_RESOLUTION_POSTGRES_PASS',
     mandatoryTests: passed.length,

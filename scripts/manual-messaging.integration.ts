@@ -161,8 +161,9 @@ try {
 
   const waOptOut = await fixture();
   await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${waOptOut.leadId}::uuid,'WHATSAPP','test','integration')`;
-  assert.equal((await prepareManualMessage(db, waOptOut.pilotId, waOptOut.leadId, waInput(waOptOut.phoneId), primaryActor)).channel, 'EMAIL');
-  pass('10 WhatsApp opt-out preserves email');
+  await expectCode(prepareManualMessage(db, waOptOut.pilotId, waOptOut.leadId, waInput(waOptOut.phoneId), primaryActor), 'INELIGIBLE');
+  assert.equal((await prepareManualMessage(db, waOptOut.pilotId, waOptOut.leadId, emailInput(waOptOut.emailId), primaryActor)).channel, 'EMAIL');
+  pass('10 WhatsApp opt-out rejects explicit WhatsApp while explicit email remains eligible');
 
   const emailOptOut = await fixture();
   await raw`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${emailOptOut.leadId}::uuid,'EMAIL','test','integration')`;
@@ -173,7 +174,7 @@ try {
   await expectCode(prepareManualMessage(db, badTemplate.pilotId, badTemplate.leadId, { ...emailInput(badTemplate.emailId), templateId: 'unapproved' }, primaryActor), 'INELIGIBLE');
   pass('16 unapproved template');
 
-  const replayFixture = await fixture({ authorizeWhatsApp: false });
+  const replayFixture = await fixture();
   const replayKey = randomUUID();
   const replayInput = waInput(replayFixture.phoneId, replayKey);
   const first = await prepareManualMessage(db, replayFixture.pilotId, replayFixture.leadId, replayInput, primaryActor);

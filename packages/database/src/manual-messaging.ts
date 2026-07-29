@@ -7,6 +7,7 @@ import {
 import type { AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export const CONTACT_RESOLUTION_PURPOSE = 'B2B_PROSPECTION' as const;
+const E164_PHONE_PATTERN = String.raw`^\+[1-9][0-9]{7,14}$`;
 export type ContactResolutionAction =
   | 'MANUAL_MESSAGE_PREPARE'
   | 'MANUAL_MESSAGE_REPLAY'
@@ -95,7 +96,7 @@ async function exactEligibleContact(
         and (
           (${requestedChannel}='WHATSAPP'
             and upper(c.type) in ('TELEFONE','PHONE','WHATSAPP')
-            and c.normalized_value ~ '^\+[1-9][0-9]{7,14}$'
+            and c.normalized_value ~ ${E164_PHONE_PATTERN}
             and exists(select 1 from contact_channel_authorizations a
               where a.contact_id=c.id and a.lead_id=l.id
                 and a.channel='WHATSAPP' and a.purpose=${CONTACT_RESOLUTION_PURPOSE}

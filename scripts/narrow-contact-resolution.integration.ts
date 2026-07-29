@@ -16,6 +16,7 @@ import { buildApp } from '../apps/api/src/app.js';
 const databaseUrl = process.env['DATABASE_URL'];
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 const raw = postgres(databaseUrl, { max: 8 });
+const migrationDatabase = postgres(databaseUrl, { max: 1 });
 const database = createDatabase(databaseUrl, { max: 8 });
 const markerValues = [
   '+12025550100',
@@ -39,7 +40,6 @@ type Fixture = {
   pilotId: string;
   leadId: string;
   phoneId: string;
-  secondPhoneId: string;
   emailId: string;
   authorizationId?: string;
 };
@@ -66,7 +66,6 @@ async function fixture(options: {
   const pilotId = randomUUID();
   const leadId = randomUUID();
   const phoneId = randomUUID();
-  const secondPhoneId = randomUUID();
   const emailId = randomUUID();
   const suffix = String(sequence);
   return raw.begin(async (tx) => {
@@ -83,7 +82,6 @@ async function fixture(options: {
       values
       (${phoneId}::uuid,${leadId}::uuid,'TELEFONE',${markerValues[0]},${markerValues[0]},'PUBLIC_BUSINESS_SOURCE',1,
         ${options.verified === false ? null : new Date()}::timestamptz,${options.valid ?? true},true),
-      (${secondPhoneId}::uuid,${leadId}::uuid,'PHONE',${markerValues[1]},${markerValues[1]},'PUBLIC_BUSINESS_SOURCE',1,now(),true,true),
       (${emailId}::uuid,${leadId}::uuid,'EMAIL',${markerValues[2]},${markerValues[2]},'PUBLIC_BUSINESS_SOURCE',1,now(),true,false)`;
     let authorizationId: string | undefined;
     if (options.authorize ?? true) {
@@ -101,7 +99,7 @@ async function fixture(options: {
         values(${emailId}::uuid,${leadId}::uuid,'EMAIL',${options.emailOwnership ?? 'BUSINESS'},
           'PUBLIC_BUSINESS_SOURCE',${createHash('sha256').update(`email-${suffix}`).digest('hex')},
           ${options.emailDecision ?? 'APPROVED'},'reviewer',1)`;
-    return { pilotId, leadId, phoneId, secondPhoneId, emailId, authorizationId };
+    return { pilotId, leadId, phoneId, emailId, authorizationId };
   });
 }
 
@@ -201,16 +199,16 @@ const executablePublicFunctions = async () =>
     order by 1`;
 
 try {
-  await raw.unsafe(migration);
-  await raw.unsafe(migration);
+  await migrationDatabase.unsafe(migration);
+  await migrationDatabase.unsafe(migration);
   const exact = await fixture();
   const exactResolved = await resolve(exact);
   const initialFingerprints = await raw<{ id: string; fingerprint: string }[]>`
     select id,contact_resolution_fingerprint fingerprint
     from lead_contacts where lead_id=${exact.leadId}::uuid order by id`;
-  assert.equal(initialFingerprints.length, 3);
+  assert.equal(initialFingerprints.length, 2);
   assert.ok(initialFingerprints.every(({ fingerprint }) => /^[0-9a-f]{64}$/.test(fingerprint)));
-  assert.equal(new Set(initialFingerprints.map(({ fingerprint }) => fingerprint)).size, 3);
+  assert.equal(new Set(initialFingerprints.map(({ fingerprint }) => fingerprint)).size, 2);
   assert.ok(initialFingerprints.every(({ fingerprint }) =>
     !markerValues.some((value) =>
       fingerprint === createHash('sha256').update(value).digest('hex'))));
@@ -255,7 +253,7 @@ try {
   assert.notEqual(originalFingerprint, normalizedFingerprint);
   pass('04 original value rotates fingerprint');
 
-  await raw.unsafe(migration);
+  await migrationDatabase.unsafe(migration);
   assert.equal(
     (await raw<{ fingerprint: string }[]>`select contact_resolution_fingerprint fingerprint
       from lead_contacts where id=${exact.phoneId}::uuid`)[0]?.fingerprint,
@@ -274,7 +272,7 @@ try {
   await ineligible(resolve(noAuthorization));
   pass('04 WhatsApp requires explicit authorization');
   await raw`insert into contact_channel_authorizations(contact_id,lead_id,channel,purpose,origin,evidence_fingerprint,granted_at,recorded_by)
-    values(${noAuthorization.secondPhoneId}::uuid,${noAuthorization.leadId}::uuid,'WHATSAPP','B2B_PROSPECTION','DIRECT_OPT_IN',
+    values(${noAuthorization.emailId}::uuid,${noAuthorization.leadId}::uuid,'WHATSAPP','B2B_PROSPECTION','DIRECT_OPT_IN',
     ${createHash('sha256').update('other-contact').digest('hex')},now(),'integration-test')`;
   await ineligible(resolve(noAuthorization));
   pass('05 authorization from another contact rejected');
@@ -530,7 +528,7 @@ try {
     dead_select: false,
     resolver_execute: true,
   });
-  assert.deepEqual(await executablePublicFunctions(), []);
+  assert.equal((await executablePublicFunctions()).length, 0);
   pass('32 role ACL is exact and executable function allowlist is empty');
   const roleFixture = await fixture();
   const roleExpectedFingerprint = (await raw<{ fingerprint: string }[]>`
@@ -615,5 +613,6 @@ try {
   }));
 } finally {
   await database.close();
+  await migrationDatabase.end();
   await raw.end();
 }

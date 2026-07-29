@@ -1,19 +1,63 @@
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 ALTER TABLE lead_contacts
   ADD COLUMN IF NOT EXISTS contact_resolution_fingerprint text;
 
 DROP TRIGGER IF EXISTS lead_contacts_rotate_resolution_fingerprint ON lead_contacts;
 
-UPDATE lead_contacts
-SET contact_resolution_fingerprint=encode(gen_random_bytes(32),'hex')
-WHERE contact_resolution_fingerprint IS NULL
-  OR contact_resolution_fingerprint !~ '^[0-9a-f]{64}$';
+DO $migration$
+DECLARE
+  pgcrypto_schema name;
+BEGIN
+  SELECT namespace.nspname
+  INTO pgcrypto_schema
+  FROM pg_catalog.pg_extension extension
+  JOIN pg_catalog.pg_namespace namespace ON namespace.oid=extension.extnamespace
+  WHERE extension.extname='pgcrypto';
 
-ALTER TABLE lead_contacts
-  ALTER COLUMN contact_resolution_fingerprint
-    SET DEFAULT encode(gen_random_bytes(32),'hex'),
-  ALTER COLUMN contact_resolution_fingerprint SET NOT NULL;
+  IF pgcrypto_schema IS NULL THEN
+    RAISE EXCEPTION 'pgcrypto extension is required for opaque contact fingerprints';
+  END IF;
+
+  EXECUTE pg_catalog.format(
+    'UPDATE public.lead_contacts
+       SET contact_resolution_fingerprint=pg_catalog.encode(%I.gen_random_bytes(32),''hex'')
+     WHERE contact_resolution_fingerprint IS NULL
+        OR contact_resolution_fingerprint !~ ''^[0-9a-f]{64}$''',
+    pgcrypto_schema
+  );
+
+  EXECUTE pg_catalog.format(
+    'ALTER TABLE public.lead_contacts
+       ALTER COLUMN contact_resolution_fingerprint
+         SET DEFAULT pg_catalog.encode(%I.gen_random_bytes(32),''hex''),
+       ALTER COLUMN contact_resolution_fingerprint SET NOT NULL',
+    pgcrypto_schema
+  );
+
+  EXECUTE pg_catalog.format($function$
+    CREATE OR REPLACE FUNCTION public.rotate_contact_resolution_fingerprint()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path=pg_catalog,public
+    AS $body$
+    BEGIN
+      IF NEW.original_value IS DISTINCT FROM OLD.original_value
+        OR NEW.normalized_value IS DISTINCT FROM OLD.normalized_value
+      THEN
+        NEW.contact_resolution_fingerprint :=
+          pg_catalog.encode(%I.gen_random_bytes(32),'hex');
+      ELSE
+        NEW.contact_resolution_fingerprint := OLD.contact_resolution_fingerprint;
+      END IF;
+      RETURN NEW;
+    END
+    $body$;
+  $function$, pgcrypto_schema);
+END
+$migration$;
 
 DO $$
 BEGIN
@@ -31,22 +75,6 @@ END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS lead_contacts_contact_resolution_fingerprint_uidx
   ON lead_contacts(contact_resolution_fingerprint);
-
-CREATE OR REPLACE FUNCTION rotate_contact_resolution_fingerprint()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path=pg_catalog,public
-AS $$
-BEGIN
-  IF NEW.original_value IS DISTINCT FROM OLD.original_value
-    OR NEW.normalized_value IS DISTINCT FROM OLD.normalized_value
-  THEN
-    NEW.contact_resolution_fingerprint := encode(gen_random_bytes(32),'hex');
-  ELSE
-    NEW.contact_resolution_fingerprint := OLD.contact_resolution_fingerprint;
-  END IF;
-  RETURN NEW;
-END $$;
 
 DROP TRIGGER IF EXISTS lead_contacts_rotate_resolution_fingerprint ON lead_contacts;
 CREATE TRIGGER lead_contacts_rotate_resolution_fingerprint

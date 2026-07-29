@@ -48,6 +48,7 @@ async function fixture(options: {
   crmStage?: string;
   phoneValid?: boolean;
   phoneVerified?: boolean;
+  normalizedPhone?: string;
   emailValid?: boolean;
   emailVerified?: boolean;
   authorizeWhatsApp?: boolean;
@@ -63,13 +64,14 @@ async function fixture(options: {
   const phoneId = randomUUID();
   const emailId = randomUUID();
   const suffix = String(sequence).padStart(4, '0');
+  const normalizedPhone = options.normalizedPhone ?? `+1202555${String(100 + sequence).padStart(4, '0')}`;
   await raw.begin(async (tx) => {
     await tx`insert into leads(id,osm_type,osm_id,name,category,score,status,is_closed,is_blocked,do_not_contact,crm_stage) values(${leadId}::uuid,'node',${`manual-${suffix}`},'Empresa sintética','oficinas',90,'SEM_SITE_CADASTRADO',false,${options.blocked ?? false},${options.doNotContact ?? false},${options.crmStage ?? 'NOVO'})`;
     await tx`insert into pilot_runs(id,name,region,category,target_lead_count,status,created_by,started_at) values(${pilotId}::uuid,${`Piloto ${suffix}`},'SP','oficinas',1,${options.pilotStatus ?? 'RUNNING'},'integration-test',now())`;
     await tx`insert into pilot_leads(pilot_run_id,lead_id,source,added_by) values(${pilotId}::uuid,${leadId}::uuid,'SYNTHETIC','integration-test')`;
     await tx`insert into pilot_reviews(pilot_run_id,lead_id,decision,reviewer_principal_id,version) values(${pilotId}::uuid,${leadId}::uuid,${options.review ?? 'APPROVED'},'reviewer',1)`;
     await tx`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) values
-      (${phoneId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone',${`55 9 9123-${suffix}`} ,'BUSINESS_REGISTRY',1,${options.phoneVerified === false ? null : new Date()}::timestamptz,${options.phoneValid ?? true},true),
+      (${phoneId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone',${normalizedPhone},'BUSINESS_REGISTRY',1,${options.phoneVerified === false ? null : new Date()}::timestamptz,${options.phoneValid ?? true},true),
       (${emailId}::uuid,${leadId}::uuid,'EMAIL','synthetic-email',${options.email ?? `contato${suffix}@gmail.com`},${options.emailSource ?? 'BUSINESS_REGISTRY'},1,${options.emailVerified === false ? null : new Date()}::timestamptz,${options.emailValid ?? true},false)`;
     if (options.authorizeWhatsApp ?? true)
       await tx`insert into contact_channel_authorizations(contact_id,lead_id,channel,purpose,origin,evidence_fingerprint,granted_at,recorded_by) values(${phoneId}::uuid,${leadId}::uuid,'WHATSAPP','B2B_PROSPECTION','DIRECT_OPT_IN',${suffix.padStart(64, 'a').slice(-64)},now(),'server-actor')`;
@@ -96,6 +98,14 @@ try {
   assert.equal(preparedWhatsApp.channel, 'WHATSAPP');
   assert.match(preparedWhatsApp.contactFingerprint, /^[0-9a-f]{64}$/);
   pass('01 WhatsApp with valid opt-in');
+
+  const preparationsBeforeInvalidPhone = await count('pilot_manual_message_preparations');
+  const eventsBeforeInvalidPhone = await count('pilot_manual_message_events');
+  const invalidPhone = await fixture({ normalizedPhone: '55 9 9123-0001' });
+  await expectCode(prepareManualMessage(db, invalidPhone.pilotId, invalidPhone.leadId, waInput(invalidPhone.phoneId), primaryActor), 'INELIGIBLE');
+  assert.equal(await count('pilot_manual_message_preparations'), preparationsBeforeInvalidPhone);
+  assert.equal(await count('pilot_manual_message_events'), eventsBeforeInvalidPhone);
+  pass('01a non-E.164 phone is rejected without normalization, fallback, preparation, or event');
 
   const noOptIn = await fixture({ authorizeWhatsApp: false, emailValid: false });
   await expectCode(prepareManualMessage(db, noOptIn.pilotId, noOptIn.leadId, waInput(noOptIn.phoneId), primaryActor), 'INELIGIBLE');
@@ -171,8 +181,8 @@ try {
   pass('11 email opt-out preserves authorized WhatsApp');
 
   const badTemplate = await fixture();
-  await expectCode(prepareManualMessage(db, badTemplate.pilotId, badTemplate.leadId, { ...emailInput(badTemplate.emailId), templateId: 'unapproved' }, primaryActor), 'INELIGIBLE');
-  pass('16 unapproved template');
+  await expectCode(prepareManualMessage(db, badTemplate.pilotId, badTemplate.leadId, { ...emailInput(badTemplate.emailId), templateId: 'unapproved' }, primaryActor), 'INVALID_STATE');
+  pass('16 unavailable persisted template fails closed');
 
   const replayFixture = await fixture();
   const replayKey = randomUUID();

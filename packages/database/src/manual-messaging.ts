@@ -79,9 +79,7 @@ async function exactEligibleContact(
     sql`select pg_advisory_xact_lock(hashtextextended(${`manual-messaging-purpose:${leadId}:${CONTACT_RESOLUTION_PURPOSE}`},0))`,
   );
   const rows = await tx.execute(
-    sql<
-      EligibleContact[]
-    >`select c.id contact_id,${requestedChannel}::text channel,
+    sql<EligibleContact[]>`select c.id contact_id,${requestedChannel}::text channel,
       c.contact_resolution_fingerprint contact_fingerprint,
       pg_catalog.encode(
         extensions.digest(
@@ -249,9 +247,7 @@ export async function prepareManualMessage(
       sql`select pg_advisory_xact_lock(hashtextextended(${`${pilotRunId}:${input.idempotencyKey}`},0))`,
     );
     const prior = await tx.execute(
-      sql<
-        { id: string; contact_id: string; channel: MessagingChannel; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; operator_principal_id: string }[]
-      >`select id,contact_id,channel,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
+      sql<{ id: string; contact_id: string; channel: MessagingChannel; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; operator_principal_id: string }[]>`select id,contact_id,channel,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
     );
     if (prior[0] && (prior[0].operator_principal_id !== auth.principalId || prior[0].payload_fingerprint !== fingerprint))
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
@@ -269,15 +265,15 @@ export async function prepareManualMessage(
         row,
         persistedChannel,
         persisted.result_snapshot,
-        persisted.result_fingerprint,
+        String(persisted.result_fingerprint),
       );
       const snapshot = snapshotRecord(persisted.result_snapshot);
       return {
         preparationId: persisted.id,
         state: 'PREPARED' as const,
         channel: persistedChannel,
-        templateId: snapshot['templateId'],
-        templateVersion: snapshot['templateVersion'],
+        templateId: String(snapshot['templateId']),
+        templateVersion: String(snapshot['templateVersion']),
         contactFingerprint: validated.contactFingerprint,
         messageFingerprint: validated.prepared.fingerprint,
         preparedAt: persisted.prepared_at,
@@ -292,9 +288,8 @@ export async function prepareManualMessage(
       input.requestedChannel,
     );
     const template = templateFor(input.requestedChannel, input.templateId, input.templateVersion);
-    if (
-      template.id !== input.templateId || template.version !== input.templateVersion
-    ) throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
+    if (template.id !== input.templateId || template.version !== input.templateVersion)
+      throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
     const variables = renderedVariablesFor(selected, input.requestedChannel);
     const prepared = provider.prepare(template, variables);
     const renderedInputsFingerprint = digest(variables);
@@ -309,12 +304,10 @@ export async function prepareManualMessage(
       messageFingerprint: prepared.fingerprint,
     };
     const saved = (
-        await tx.execute(
-          sql<
-            { id: string; prepared_at: Date }[]
-          >`insert into pilot_manual_message_preparations(pilot_run_id,lead_id,contact_id,channel,template_id,template_version,operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot) values(${pilotRunId}::uuid,${leadId}::uuid,${selected.contact_id}::uuid,${input.requestedChannel},${template.id},${template.version},${auth.principalId},${fingerprint},${input.idempotencyKey},${digest(snapshot)},${JSON.stringify(snapshot)}::jsonb) returning id,prepared_at`,
-        )
-      )[0]!;
+      await tx.execute(
+        sql<{ id: string; prepared_at: Date }[]>`insert into pilot_manual_message_preparations(pilot_run_id,lead_id,contact_id,channel,template_id,template_version,operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot) values(${pilotRunId}::uuid,${leadId}::uuid,${selected.contact_id}::uuid,${input.requestedChannel},${template.id},${template.version},${auth.principalId},${fingerprint},${input.idempotencyKey},${digest(snapshot)},${JSON.stringify(snapshot)}::jsonb) returning id,prepared_at`,
+      )
+    )[0]!;
     return {
       preparationId: saved.id,
       state: 'PREPARED' as const,
@@ -356,14 +349,7 @@ export async function resolveNarrowContact(
   const rows = await (async () => {
     try {
       return await db.execute(
-        sql<
-          {
-            contact_value: string;
-            contact_fingerprint: string;
-            contact_source: string;
-            lead_name: string | null;
-          }[]
-        >`select * from resolve_narrow_contact(
+        sql<{ contact_value: string; contact_fingerprint: string; contact_source: string; lead_name: string | null }[]>`select * from resolve_narrow_contact(
           ${input.pilotRunId}::uuid,
           ${input.leadId}::uuid,
           ${input.contactId}::uuid,
@@ -407,8 +393,7 @@ export const confirmManualResult = (
     observation?: string | undefined;
   },
   auth: AuthorizationContext,
-) =>
-  event(db, id, 'CONTACT_CONFIRMED', input.result, input.idempotencyKey, input.observation, auth);
+) => event(db, id, 'CONTACT_CONFIRMED', input.result, input.idempotencyKey, input.observation, auth);
 export const recordManualResponse = (
   db: Database,
   id: string,
@@ -440,20 +425,15 @@ async function event(
       sql`select pg_advisory_xact_lock(hashtextextended(${`manual-message-preparation:${id}`},0))`,
     );
     const prior = await tx.execute(
-      sql<
-        { id: string; payload_fingerprint: string; created_at: Date; operator_principal_id: string }[]
-      >`select id,payload_fingerprint,created_at,operator_principal_id from pilot_manual_message_events where preparation_id=${id}::uuid and event_type=${eventType} and idempotency_key=${key}`,
+      sql<{ id: string; payload_fingerprint: string; created_at: Date; operator_principal_id: string }[]>`select id,payload_fingerprint,created_at,operator_principal_id from pilot_manual_message_events where preparation_id=${id}::uuid and event_type=${eventType} and idempotency_key=${key}`,
     );
     if (
       prior[0] &&
-      (prior[0].operator_principal_id !== auth.principalId ||
-        prior[0].payload_fingerprint !== fingerprint)
+      (prior[0].operator_principal_id !== auth.principalId || prior[0].payload_fingerprint !== fingerprint)
     ) throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     const p = (
       await tx.execute(
-        sql<
-          { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]
-        >`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
+        sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
       )
     )[0] as unknown as
       | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }
@@ -461,7 +441,7 @@ async function event(
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
     const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
     if (eventType === 'OPENED')
-      validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, p.result_fingerprint);
+      validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, String(p.result_fingerprint));
     const existing = await tx.execute(
       sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,
     );
@@ -488,9 +468,7 @@ async function event(
       );
     const row = (
       await tx.execute(
-        sql<
-          { id: string; created_at: Date }[]
-        >`insert into pilot_manual_message_events(preparation_id,event_type,result,operator_principal_id,observation,payload_fingerprint,idempotency_key) values(${id}::uuid,${eventType},${result ?? null},${auth.principalId},${clean(observation) ?? null},${fingerprint},${key}) returning id,created_at`,
+        sql<{ id: string; created_at: Date }[]>`insert into pilot_manual_message_events(preparation_id,event_type,result,operator_principal_id,observation,payload_fingerprint,idempotency_key) values(${id}::uuid,${eventType},${result ?? null},${auth.principalId},${clean(observation) ?? null},${fingerprint},${key}) returning id,created_at`,
       )
     )[0]!;
     return {

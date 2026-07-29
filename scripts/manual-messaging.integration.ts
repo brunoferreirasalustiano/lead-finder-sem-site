@@ -364,12 +364,14 @@ try {
   assert.equal((await raw`select operator_principal_id from pilot_manual_message_preparations where id=${httpId}::uuid`)[0]?.operator_principal_id, 'http-operator');
   assert.equal((await app.inject({ method: 'POST', url, payload: { ...payload, requestedChannel: 'EMAIL', templateId: 'pilot-email-first-contact' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 422);
   const eligibleEmailUrl = `/pilots/${companyDomain.pilotId}/leads/${companyDomain.leadId}/manual-messages/prepare`;
-  assert.equal((await app.inject({
+  const eligibleEmailResponse = await app.inject({
     method: 'POST',
     url: eligibleEmailUrl,
     payload: { contactId: companyDomain.emailId, requestedChannel: 'EMAIL', templateId: 'pilot-email-first-contact', templateVersion: 'v1' },
     headers: { ...headers, 'idempotency-key': randomUUID() },
-  })).statusCode, 409);
+  });
+  assert.equal(eligibleEmailResponse.statusCode, 422);
+  assert.equal(eligibleEmailResponse.json().code, 'EMAIL_CONSUMER_UNAVAILABLE');
   const ineligibleUrl = `/pilots/${noOptIn.pilotId}/leads/${noOptIn.leadId}/manual-messages/prepare`;
   assert.equal((await app.inject({ method: 'POST', url: ineligibleUrl, payload: { ...payload, contactId: noOptIn.phoneId }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 422);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${randomUUID()}/open`, payload: {}, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 404);

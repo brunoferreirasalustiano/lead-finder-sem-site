@@ -17,6 +17,7 @@ const databaseUrl = process.env['DATABASE_URL'];
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 const raw = postgres(databaseUrl, { max: 8 });
 const migrationDatabase = postgres(databaseUrl, { max: 1 });
+const serviceRole = postgres(databaseUrl, { max: 1 });
 const database = createDatabase(databaseUrl, { max: 8 });
 const markerValues = [
   '+12025550100',
@@ -39,6 +40,77 @@ const actor = createAuthorizationContext({
 type PgcryptoScenario = 'absent' | 'extensions' | 'public';
 
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
+let createdServiceRole = false;
+let serviceRoleGrantedTo: string | undefined;
+
+async function provisionServiceRole() {
+  const currentRole = (await raw<{ name: string; superuser: boolean }[]>`
+    select current_user name,rolsuper superuser
+    from pg_roles where rolname=current_user`)[0]!;
+  const exists = (await raw<{ exists: boolean }[]>`
+    select exists(select 1 from pg_roles where rolname='service_role') exists`)[0]?.exists;
+  if (!exists) {
+    await raw.unsafe('CREATE ROLE service_role NOLOGIN BYPASSRLS');
+    createdServiceRole = true;
+  }
+  if (currentRole.name !== 'service_role' && !currentRole.superuser) {
+    const directMember = (await raw<{ member: boolean }[]>`
+      select exists(
+        select 1
+        from pg_auth_members membership
+        join pg_roles granted_role on granted_role.oid=membership.roleid
+        join pg_roles member_role on member_role.oid=membership.member
+        where granted_role.rolname='service_role' and member_role.rolname=${currentRole.name}
+      ) member`)[0]?.member;
+    if (!directMember) {
+      await raw.unsafe(`GRANT service_role TO ${quoteIdentifier(currentRole.name)}`);
+      serviceRoleGrantedTo = currentRole.name;
+    }
+  }
+}
+
+type RevocationSecurityState = {
+  triggerCount: number;
+  canSelect: boolean;
+  canInsert: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canTruncate: boolean;
+  canReferences: boolean;
+  canTrigger: boolean;
+};
+
+async function revocationSecurityState(): Promise<RevocationSecurityState> {
+  return (await raw<RevocationSecurityState[]>`
+    select
+      (select count(*)::int
+       from pg_trigger trigger_record
+       join pg_class table_record on table_record.oid=trigger_record.tgrelid
+       join pg_namespace namespace_record on namespace_record.oid=table_record.relnamespace
+       join pg_proc procedure_record on procedure_record.oid=trigger_record.tgfoid
+       where namespace_record.nspname='public'
+         and table_record.relname='contact_channel_authorization_revocations'
+         and trigger_record.tgname='contact_channel_authorization_revocations_append_only'
+         and not trigger_record.tgisinternal
+         and trigger_record.tgenabled<>'D'
+         and trigger_record.tgtype=27
+         and procedure_record.proname='reject_manual_messaging_history_mutation') "triggerCount",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','SELECT') "canSelect",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','INSERT') "canInsert",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','UPDATE') "canUpdate",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','DELETE') "canDelete",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','TRUNCATE') "canTruncate",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','REFERENCES') "canReferences",
+      has_table_privilege(
+        'service_role','public.contact_channel_authorization_revocations','TRIGGER') "canTrigger"`
+  )[0]!;
+}
 
 async function validatePgcryptoScenario(scenario: PgcryptoScenario) {
   const databaseName = `lf_pgcrypto_${scenario}_${randomUUID().replaceAll('-', '')}`.slice(0, 63);
@@ -320,11 +392,24 @@ const executablePublicFunctions = async () =>
     order by 1`;
 
 try {
+  await provisionServiceRole();
   await validatePgcryptoScenario('absent');
   await validatePgcryptoScenario('extensions');
   await validatePgcryptoScenario('public');
   await migrationDatabase.unsafe(migration);
   await migrationDatabase.unsafe(migration);
+  const initialRevocationSecurity = await revocationSecurityState();
+  assert.deepEqual(initialRevocationSecurity, {
+    triggerCount: 1,
+    canSelect: true,
+    canInsert: true,
+    canUpdate: false,
+    canDelete: false,
+    canTruncate: false,
+    canReferences: false,
+    canTrigger: false,
+  });
+  pass('revocation trigger and service_role ACL are exact');
   const exact = await fixture();
   const exactResolved = await resolve(exact);
   const initialFingerprints = await raw<{ id: string; fingerprint: string }[]>`
@@ -378,6 +463,8 @@ try {
   pass('04 original value rotates fingerprint');
 
   await migrationDatabase.unsafe(migration);
+  assert.deepEqual(await revocationSecurityState(), initialRevocationSecurity);
+  pass('revocation trigger and ACL remain stable after migration reapplication');
   assert.equal(
     (await raw<{ fingerprint: string }[]>`select contact_resolution_fingerprint fingerprint
       from lead_contacts where id=${exact.phoneId}::uuid`)[0]?.fingerprint,
@@ -445,10 +532,41 @@ try {
   );
   assert.equal(preparedBeforeRevocation.state, 'PREPARED');
   assert.ok(revoked.authorizationId);
-  await raw`insert into contact_channel_authorization_revocations(
+  await serviceRole.unsafe('SET ROLE service_role');
+  await serviceRole`insert into contact_channel_authorization_revocations(
     authorization_id,contact_id,lead_id,purpose,revoked_by,reason_fingerprint)
     values(${revoked.authorizationId!}::uuid,${revoked.phoneId}::uuid,${revoked.leadId}::uuid,
     'B2B_PROSPECTION','integration-test',${marker})`;
+  assert.equal(
+    Number((await serviceRole`select count(*)::int value
+      from contact_channel_authorization_revocations
+      where authorization_id=${revoked.authorizationId!}::uuid`)[0]?.value),
+    1,
+  );
+  await assert.rejects(serviceRole`update contact_channel_authorization_revocations
+    set revoked_by='forbidden-service-role-update'
+    where authorization_id=${revoked.authorizationId!}::uuid`);
+  await assert.rejects(serviceRole`delete from contact_channel_authorization_revocations
+    where authorization_id=${revoked.authorizationId!}::uuid`);
+  await assert.rejects(
+    serviceRole`truncate table contact_channel_authorization_revocations`,
+  );
+  pass('service_role can select and insert but cannot mutate or truncate revocations');
+
+  await assert.rejects(raw`update contact_channel_authorization_revocations
+    set revoked_by='forbidden-owner-update'
+    where authorization_id=${revoked.authorizationId!}::uuid`);
+  await assert.rejects(raw`delete from contact_channel_authorization_revocations
+    where authorization_id=${revoked.authorizationId!}::uuid`);
+  const persistedRevocation = (await raw<{
+    revokedBy: string;
+    reasonFingerprint: string;
+  }[]>`select revoked_by "revokedBy",reason_fingerprint "reasonFingerprint"
+    from contact_channel_authorization_revocations
+    where authorization_id=${revoked.authorizationId!}::uuid`)[0]!;
+  assert.equal(persistedRevocation.revokedBy, 'integration-test');
+  assert.equal(persistedRevocation.reasonFingerprint.trim(), marker);
+  pass('table owner cannot update or delete the original revocation');
   await ineligible(resolve(revoked));
   await ineligible(recordManualOpen(
     database.db,
@@ -721,7 +839,7 @@ try {
   );
   pass('35 removed role retains no grants while unrelated PUBLIC connect remains');
 
-  assert.equal(passed.length, 43);
+  assert.equal(passed.length, 47);
   console.log(JSON.stringify({
     result: 'NARROW_CONTACT_RESOLUTION_POSTGRES_PASS',
     mandatoryTests: passed.length,
@@ -736,6 +854,18 @@ try {
     roleRollbackExecuted: true,
   }));
 } finally {
+  await serviceRole.end();
+  if (serviceRoleGrantedTo) {
+    await raw.unsafe(
+      `REVOKE service_role FROM ${quoteIdentifier(serviceRoleGrantedTo)}`,
+    ).catch(() => undefined);
+  }
+  if (createdServiceRole) {
+    await raw.unsafe(
+      'REVOKE ALL ON TABLE public.contact_channel_authorization_revocations FROM service_role',
+    ).catch(() => undefined);
+    await raw.unsafe('DROP ROLE service_role').catch(() => undefined);
+  }
   await database.close();
   await migrationDatabase.end();
   await raw.end();

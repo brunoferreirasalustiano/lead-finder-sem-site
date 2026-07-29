@@ -38,14 +38,99 @@ const manualMessagingTriggers = [
 ] as const;
 
 export async function assertNarrowContactResolutionObjects(sql: Sql): Promise<void> {
-  const rows = await sql<{ functionExists: boolean; revocationTableExists: boolean }[]>`
+  const rows = await sql<{
+    functionExists: boolean;
+    revocationTableExists: boolean;
+    rowLevelSecurityEnabled: boolean;
+    appendOnlyTriggerValid: boolean;
+  }[]>`
     SELECT
       to_regprocedure('public.resolve_narrow_contact(uuid,uuid,uuid,text,text,text,text)') IS NOT NULL
         AS "functionExists",
       to_regclass('public.contact_channel_authorization_revocations') IS NOT NULL
-        AS "revocationTableExists"`;
-  if (!rows[0]?.functionExists || !rows[0].revocationTableExists) {
+        AS "revocationTableExists",
+      coalesce((
+        SELECT table_record.relrowsecurity
+        FROM pg_class table_record
+        JOIN pg_namespace namespace_record ON namespace_record.oid = table_record.relnamespace
+        WHERE namespace_record.nspname = 'public'
+          AND table_record.relname = 'contact_channel_authorization_revocations'
+          AND table_record.relkind = 'r'
+      ), false) AS "rowLevelSecurityEnabled",
+      EXISTS (
+        SELECT 1
+        FROM pg_trigger trigger_record
+        JOIN pg_class table_record ON table_record.oid = trigger_record.tgrelid
+        JOIN pg_namespace table_namespace ON table_namespace.oid = table_record.relnamespace
+        JOIN pg_proc procedure_record ON procedure_record.oid = trigger_record.tgfoid
+        JOIN pg_namespace procedure_namespace ON procedure_namespace.oid = procedure_record.pronamespace
+        WHERE table_namespace.nspname = 'public'
+          AND table_record.relname = 'contact_channel_authorization_revocations'
+          AND trigger_record.tgname = 'contact_channel_authorization_revocations_append_only'
+          AND NOT trigger_record.tgisinternal
+          AND trigger_record.tgenabled <> 'D'
+          AND trigger_record.tgtype = 27
+          AND procedure_namespace.nspname = 'public'
+          AND procedure_record.proname = 'reject_manual_messaging_history_mutation'
+      ) AS "appendOnlyTriggerValid"`;
+  if (
+    !rows[0]?.functionExists ||
+    !rows[0].revocationTableExists ||
+    !rows[0].rowLevelSecurityEnabled ||
+    !rows[0].appendOnlyTriggerValid
+  ) {
     throw new Error('migration 0025 is missing narrow contact resolution objects');
+  }
+
+  const exposed = await sql<CountRow[]>`
+    SELECT count(*)::int AS count
+    FROM pg_class table_record
+    JOIN pg_namespace namespace_record ON namespace_record.oid = table_record.relnamespace
+    CROSS JOIN LATERAL aclexplode(coalesce(
+      table_record.relacl,
+      acldefault('r', table_record.relowner)
+    )) privilege_record
+    LEFT JOIN pg_roles role_record ON role_record.oid = privilege_record.grantee
+    WHERE namespace_record.nspname = 'public'
+      AND table_record.relname = 'contact_channel_authorization_revocations'
+      AND table_record.relkind = 'r'
+      AND (
+        privilege_record.grantee = 0
+        OR role_record.rolname IN ('anon', 'authenticated')
+      )`;
+  if (exposed[0]?.count !== 0) {
+    throw new Error('migration 0025 exposes contact authorization revocations');
+  }
+
+  const serviceRole = await sql<CountRow[]>`
+    SELECT count(*)::int AS count FROM pg_roles WHERE rolname = 'service_role'`;
+  if (serviceRole[0]?.count === 1) {
+    const access = (await sql<AccessRow[]>`
+      SELECT
+        table_record.relname AS "tableName",
+        has_table_privilege('service_role', table_record.oid, 'SELECT') AS "canSelect",
+        has_table_privilege('service_role', table_record.oid, 'INSERT') AS "canInsert",
+        has_table_privilege('service_role', table_record.oid, 'UPDATE') AS "canUpdate",
+        has_table_privilege('service_role', table_record.oid, 'DELETE') AS "canDelete",
+        has_table_privilege('service_role', table_record.oid, 'TRUNCATE') AS "canTruncate",
+        has_table_privilege('service_role', table_record.oid, 'REFERENCES') AS "canReferences",
+        has_table_privilege('service_role', table_record.oid, 'TRIGGER') AS "canTrigger"
+      FROM pg_class table_record
+      JOIN pg_namespace namespace_record ON namespace_record.oid = table_record.relnamespace
+      WHERE namespace_record.nspname = 'public'
+        AND table_record.relname = 'contact_channel_authorization_revocations'
+        AND table_record.relkind = 'r'`)[0];
+    if (
+      !access?.canSelect ||
+      !access.canInsert ||
+      access.canUpdate ||
+      access.canDelete ||
+      access.canTruncate ||
+      access.canReferences ||
+      access.canTrigger
+    ) {
+      throw new Error('migration 0025 has incompatible service_role revocation ACL');
+    }
   }
 }
 

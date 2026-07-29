@@ -131,6 +131,14 @@ CREATE INDEX IF NOT EXISTS contact_channel_authorization_revocations_lookup_idx
 ALTER TABLE contact_channel_authorization_revocations ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON contact_channel_authorization_revocations FROM PUBLIC;
 
+DROP TRIGGER IF EXISTS contact_channel_authorization_revocations_append_only
+  ON public.contact_channel_authorization_revocations;
+CREATE TRIGGER contact_channel_authorization_revocations_append_only
+BEFORE UPDATE OR DELETE
+ON public.contact_channel_authorization_revocations
+FOR EACH ROW
+EXECUTE FUNCTION public.reject_manual_messaging_history_mutation();
+
 CREATE OR REPLACE FUNCTION lock_narrow_contact_resolution_write()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -304,6 +312,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
     REVOKE ALL ON contact_channel_authorization_revocations FROM authenticated;
     REVOKE ALL ON FUNCTION resolve_narrow_contact(uuid,uuid,uuid,text,text,text,text) FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+      ON TABLE public.contact_channel_authorization_revocations
+      FROM service_role;
+    GRANT SELECT, INSERT
+      ON TABLE public.contact_channel_authorization_revocations
+      TO service_role;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_api_runtime') THEN
     REVOKE ALL ON FUNCTION resolve_narrow_contact(uuid,uuid,uuid,text,text,text,text)

@@ -72,6 +72,7 @@ try {
       pilot_manual_message_events,
       pilot_manual_message_preparations,
       contact_email_business_evidence,
+      contact_channel_authorization_revocations,
       contact_channel_authorizations,
       pilot_timeline_events,
       pilot_idempotency_keys,

@@ -179,7 +179,7 @@ try {
     ${legacyPreparationId}::uuid,${legacy.pilotId}::uuid,${legacy.leadId}::uuid,
     ${legacy.contactId}::uuid,'WHATSAPP',${legacyInput.templateId},${legacyInput.templateVersion},
     ${principalId},${legacyPayloadFingerprint},${legacyInput.idempotencyKey},
-    ${digest(legacySnapshot)},${JSON.stringify(legacySnapshot)}::jsonb
+    ${digest(legacySnapshot)},${raw.json(legacySnapshot)}::jsonb
   )`;
 
   await raw.unsafe(migration0025);

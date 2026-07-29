@@ -98,7 +98,10 @@ async function exactEligibleContact(
             and c.normalized_value ~ '^\+[1-9][0-9]{7,14}$'
             and exists(select 1 from contact_channel_authorizations a
               where a.contact_id=c.id and a.lead_id=l.id
-                and a.channel='WHATSAPP' and a.purpose=${CONTACT_RESOLUTION_PURPOSE}))
+                and a.channel='WHATSAPP' and a.purpose=${CONTACT_RESOLUTION_PURPOSE}
+                and not exists(select 1 from contact_channel_authorization_revocations rev
+                  where rev.authorization_id=a.id and rev.contact_id=c.id
+                    and rev.lead_id=l.id and rev.purpose=${CONTACT_RESOLUTION_PURPOSE})))
           or
           (${requestedChannel}='EMAIL'
             and upper(c.type)='EMAIL'

@@ -31,4 +31,56 @@
 20. Review `deploy/supabase/cron/six-daily-runs.example.sql`, store the invoke token in Vault, and manually create at most six jobs. No SQL in the repository activates jobs.
 21. Pause/remove each job with `cron.unschedule`, then confirm no recent runs before disabling Plan B.
 
+## Migrations 0021-0026: forward-only recovery
+
+`ROLLBACK_CLASSIFICATION=FORWARD_ONLY_WITH_SNAPSHOT_RESTORE`
+
+Migrations `0021` through `0026` do not have SQL down migrations. Migrations
+`0022` through `0024` deliberately remove sensitive values from persisted JSON.
+Those removed values are not reconstructable, and a SQL rollback must not
+reintroduce sensitive information. The role rollback scripts remove only their
+respective runtime roles and privileges; they are not migration rollbacks.
+
+Before applying this sequence, all of these preconditions are mandatory:
+
+- `PROVIDERS_DISABLED`: external providers remain disabled.
+- `CONSUMERS_STOPPED`: API consumers and workers are stopped.
+- `SNAPSHOT_VERIFIED`: the backup or snapshot is complete and verifiable.
+- `SNAPSHOT_ID_RECORDED`: its identifier and UTC creation time are recorded.
+- `DISPOSABLE_RESTORE_PROVED`: restore has passed on an isolated disposable
+  PostgreSQL instance.
+- `OPERATIONAL_OWNER_IDENTIFIED`: one accountable operator owns the change and
+  recovery decision.
+- `MIGRATION_HEAD_RECORDED`: the approved Git HEAD and checksums for migrations
+  `0021` through `0026` are recorded.
+- `POSTGRESQL_17_VALIDATED`: the exact sequence and post-apply checks have
+  passed on PostgreSQL 17.
+
+Stop before the first mutation, or stop the rollout without advancing services,
+when any of these conditions is true:
+
+- `STOP_BACKUP_UNVERIFIABLE`: the backup is absent or cannot be verified.
+- `STOP_RESTORE_UNTESTED`: the isolated restore rehearsal has not passed.
+- `STOP_MIGRATION_REGISTRY_DIVERGED`: either migration registry differs from
+  the approved inventory.
+- `STOP_PGCRYPTO_NOT_RELOCATABLE`: `pgcrypto` is outside `extensions` and
+  cannot be relocated.
+- `STOP_0026_HISTORICAL_TUPLE_MISMATCH`: historical authorization-revocation
+  tuples are incompatible with the `0026` constraints.
+- `STOP_RUNTIME_ROLE_UNRECONCILED`: either restricted runtime role exists in an
+  unreviewed state.
+- `STOP_ACTIVE_SESSIONS_OR_CONSUMERS`: consumers, workers, or unexpected
+  database sessions are active.
+- `STOP_HEAD_MISMATCH`: the checked-out or deployment HEAD differs from the
+  approved SHA.
+
+Recovery is manual and requires separate authorization. Stop API and workers,
+prevent new writes, and preserve sanitized evidence and logs without PII.
+Restore the recorded snapshot into an isolated instance, never automatically
+over the active database. Validate both migration registries, required
+constraints, aggregate row counts, suppression state, and application
+readiness. Only after independent approval may operators promote the restored
+instance or repoint services. Providers remain disabled throughout recovery.
+No hosted migration or restore is authorized by this runbook alone.
+
 The current pilot does not authorize provider, webhook, automated outreach or real message delivery. The repository has no frontend application today. A future static bundle should use `PUBLIC_API_URL`, restrictive CSP/CORS and Render Static Site or GitHub Pages; no privileged key may enter its bundle.

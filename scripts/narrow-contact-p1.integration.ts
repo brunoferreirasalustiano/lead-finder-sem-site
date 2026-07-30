@@ -78,6 +78,10 @@ const fixture = async (
   sequence += 1;
   const channel = options.channel ?? 'WHATSAPP';
   const name = options.name ?? `Empresa P1 ${sequence}`;
+  const phoneValue = sequence === 1
+    ? phone
+    : `+1202555${String(1000 + sequence).padStart(4, '0')}`;
+  const emailValue = sequence === 1 ? email : `business${sequence}@example.test`;
   const pilotId = randomUUID();
   const leadId = randomUUID();
   const contactId = randomUUID();
@@ -104,7 +108,7 @@ const fixture = async (
         id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,
         is_valid,possible_whatsapp
       ) values(
-        ${contactId}::uuid,${leadId}::uuid,'TELEFONE',${phone},${phone},${source},1,
+        ${contactId}::uuid,${leadId}::uuid,'TELEFONE',${phoneValue},${phoneValue},${source},1,
         now(),true,true
       )`;
       await tx`insert into contact_channel_authorizations(
@@ -118,7 +122,7 @@ const fixture = async (
         id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,
         is_valid,possible_whatsapp
       ) values(
-        ${contactId}::uuid,${leadId}::uuid,'EMAIL',${email},${email},${source},1,
+        ${contactId}::uuid,${leadId}::uuid,'EMAIL',${emailValue},${emailValue},${source},1,
         now(),true,false
       )`;
       await tx`insert into contact_email_business_evidence(

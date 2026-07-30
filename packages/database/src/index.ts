@@ -41,7 +41,7 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0024_crm_idempotency_safe_results'): Promise<void> {
+export async function checkExpectedMigration(db: Database, version = '0026_narrow_contact_resolution_hardening'): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version
     FROM public.schema_migrations

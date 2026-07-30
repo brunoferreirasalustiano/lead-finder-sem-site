@@ -719,7 +719,7 @@ try {
   assert.equal(acl[0]?.count, 0); pass('29 PUBLIC has no resolver execute');
 
   const driverCreateRoleSql = createRoleSql.replace(/^\\set ON_ERROR_STOP on\s*/m, '');
-  await raw.unsafe(driverCreateRoleSql);
+  await migrationDatabase.unsafe(driverCreateRoleSql);
   const attributes = (await raw<{
     rolcanlogin: boolean;
     rolinherit: boolean;

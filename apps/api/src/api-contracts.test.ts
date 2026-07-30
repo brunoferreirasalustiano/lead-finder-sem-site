@@ -12,6 +12,7 @@ import {
   safeEligibleCampaignLeadDto,
   safeHistoryDto,
   safeLeadDto,
+  safeManualPreparationDto,
 } from './api-contracts.js';
 
 const piiCanaries = [
@@ -43,6 +44,23 @@ const expectNoPii = (value: unknown) => {
 };
 
 describe('safe PII HTTP contracts', () => {
+  it('allowlists manual preparation metadata and drops raw contact or message fields', () => {
+    const value = safeManualPreparationDto({
+      preparationId: 'preparation-id', state: 'PREPARED', channel: 'WHATSAPP',
+      templateId: 'template-id', templateVersion: 'v1',
+      contactFingerprint: 'a'.repeat(64), messageFingerprint: 'b'.repeat(64),
+      preparedAt: '2026-07-29T00:00:00.000Z', replayed: false,
+      phone: '+12025550100', email: 'private@example.test',
+      message: 'synthetic marker', link: 'https://wa.me/12025550100',
+    });
+    expect(value).toEqual({
+      preparationId: 'preparation-id', state: 'PREPARED', channel: 'WHATSAPP',
+      templateId: 'template-id', templateVersion: 'v1',
+      contactFingerprint: 'a'.repeat(64), messageFingerprint: 'b'.repeat(64),
+      preparedAt: '2026-07-29T00:00:00.000Z', replayed: false,
+    });
+    expectNoPii(value);
+  });
   it('projects lead list and detail fields with an explicit allowlist', () => {
     const result = safeLeadDto({
       ...sensitive,

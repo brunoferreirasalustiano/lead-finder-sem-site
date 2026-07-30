@@ -2,11 +2,9 @@ import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import {
-  confirmManualResult,
   createDatabase,
   ManualMessagingError,
   prepareManualMessage,
-  recordManualOpen,
 } from '@lead-finder/database';
 import { createAuthorizationContext } from '@lead-finder/shared';
 
@@ -18,11 +16,7 @@ const inspector = postgres(databaseUrl, { max: 1 });
 const { db, close } = createDatabase(databaseUrl, { max: 8 });
 const primaryActor = createAuthorizationContext({
   principalId: 'manual-concurrency-operator',
-  permissions: new Set([
-    'manual-messaging:prepare',
-    'manual-messaging:open',
-    'manual-messaging:confirm',
-  ]),
+  permissions: new Set(['manual-messaging:prepare']),
   authenticationMethod: 'integration-test',
 });
 
@@ -167,104 +161,62 @@ const report: string[] = [];
 const pass = (name: string) => report.push(name);
 
 try {
-  const replayFixture = await fixture();
-  const replayKey = randomUUID();
-  const replayInput = emailInput(replayFixture.emailId, replayKey);
-  const replayPreparation = await prepareManualMessage(
-    db,
-    replayFixture.pilotId,
-    replayFixture.leadId,
-    replayInput,
-    primaryActor,
-  );
-  const replayPreparationCount = await count(
-    'pilot_manual_message_preparations',
-    `where lead_id='${replayFixture.leadId}'::uuid`,
-  );
-  const replayEventCount = await count(
-    'pilot_manual_message_events',
-    `where preparation_id='${replayPreparation.preparationId}'::uuid`,
-  );
-  const replayOutboxCount = await count('campaign_outbox');
-  const replayProviderCount = await count('campaign_provider_events');
+  const baselinePreparations = await count('pilot_manual_message_preparations');
+  const baselineEvents = await count('pilot_manual_message_events');
+  const baselineOutbox = await count('campaign_outbox');
+  const baselineProviders = await count('campaign_provider_events');
 
-  const unfavorableReplayEvidence = await beginEvidenceTransaction(replayFixture, {
+  const unfavorableFixture = await fixture();
+  const unfavorableEvidence = await beginEvidenceTransaction(unfavorableFixture, {
     version: 2,
     ownership: 'PERSONAL',
     humanDecision: 'APPROVED',
     fingerprint: 'b'.repeat(64),
   });
-  const replayObserved = observe(
+  const unfavorableObserved = observe(
     prepareManualMessage(
       db,
-      replayFixture.pilotId,
-      replayFixture.leadId,
-      replayInput,
+      unfavorableFixture.pilotId,
+      unfavorableFixture.leadId,
+      emailInput(unfavorableFixture.emailId),
       primaryActor,
     ),
   );
-  await assertPending(replayObserved, 'manual-message replay');
-  unfavorableReplayEvidence.release();
-  await unfavorableReplayEvidence.done;
-  assertRejectedCode(await replayObserved, 'INELIGIBLE');
-  assert.equal(
-    await count(
-      'pilot_manual_message_preparations',
-      `where lead_id='${replayFixture.leadId}'::uuid`,
-    ),
-    replayPreparationCount,
-  );
-  assert.equal(
-    await count(
-      'pilot_manual_message_events',
-      `where preparation_id='${replayPreparation.preparationId}'::uuid`,
-    ),
-    replayEventCount,
-  );
-  assert.equal(await count('campaign_outbox'), replayOutboxCount);
-  assert.equal(await count('campaign_provider_events'), replayProviderCount);
-  pass('concurrent unfavorable evidence blocks replay before link reconstruction');
+  await assertPending(unfavorableObserved, 'ineligible email preparation');
+  unfavorableEvidence.release();
+  await unfavorableEvidence.done;
+  assertRejectedCode(await unfavorableObserved, 'INELIGIBLE');
+  assert.equal(await count('pilot_manual_message_preparations'), baselinePreparations);
+  assert.equal(await count('pilot_manual_message_events'), baselineEvents);
+  assert.equal(await count('campaign_outbox'), baselineOutbox);
+  assert.equal(await count('campaign_provider_events'), baselineProviders);
+  pass('concurrent unfavorable evidence wins before email fail-closed evaluation');
 
-  const confirmationFixture = await fixture();
-  const confirmationPreparation = await prepareManualMessage(
-    db,
-    confirmationFixture.pilotId,
-    confirmationFixture.leadId,
-    emailInput(confirmationFixture.emailId),
-    primaryActor,
-  );
-  await recordManualOpen(
-    db,
-    confirmationPreparation.preparationId,
-    { idempotencyKey: randomUUID() },
-    primaryActor,
-  );
-  const unfavorableConfirmationEvidence = await beginEvidenceTransaction(confirmationFixture, {
+  const favorableFixture = await fixture();
+  const favorableEvidence = await beginEvidenceTransaction(favorableFixture, {
     version: 2,
     ownership: 'BUSINESS',
-    humanDecision: 'REJECTED',
+    humanDecision: 'APPROVED',
     fingerprint: 'c'.repeat(64),
   });
-  const confirmationObserved = observe(
-    confirmManualResult(
+  const favorableObserved = observe(
+    prepareManualMessage(
       db,
-      confirmationPreparation.preparationId,
-      { result: 'SENT_CONFIRMED', idempotencyKey: randomUUID() },
+      favorableFixture.pilotId,
+      favorableFixture.leadId,
+      emailInput(favorableFixture.emailId),
       primaryActor,
     ),
   );
-  await assertPending(confirmationObserved, 'manual-message confirmation');
-  unfavorableConfirmationEvidence.release();
-  await unfavorableConfirmationEvidence.done;
-  assertRejectedCode(await confirmationObserved, 'INELIGIBLE');
-  assert.equal(
-    await count(
-      'pilot_manual_message_events',
-      `where preparation_id='${confirmationPreparation.preparationId}'::uuid and event_type='CONTACT_CONFIRMED'`,
-    ),
-    0,
-  );
-  pass('concurrent unfavorable evidence blocks CONTACT_CONFIRMED');
+  await assertPending(favorableObserved, 'eligible email preparation');
+  favorableEvidence.release();
+  await favorableEvidence.done;
+  assertRejectedCode(await favorableObserved, 'EMAIL_CONSUMER_UNAVAILABLE');
+  assert.equal(await count('pilot_manual_message_preparations'), baselinePreparations);
+  assert.equal(await count('pilot_manual_message_events'), baselineEvents);
+  assert.equal(await count('campaign_outbox'), baselineOutbox);
+  assert.equal(await count('campaign_provider_events'), baselineProviders);
+  pass('concurrent favorable evidence reaches stable email fail-closed result without persistence');
 
   const sequenceFixture = await fixture();
   const versionTwo = await beginEvidenceTransaction(sequenceFixture, {
@@ -294,16 +246,9 @@ try {
     versions.map((row) => Number(row.version)),
     [1, 2, 3],
   );
-  assert.equal(
-    await count(
-      'contact_email_business_evidence',
-      `where contact_id='${sequenceFixture.emailId}'::uuid`,
-    ),
-    3,
-  );
   pass('concurrent favorable evidence preserves sequential versions without deadlock');
 
-  assert.equal(await count('campaign_provider_events'), replayProviderCount);
+  assert.equal(await count('campaign_provider_events'), baselineProviders);
   console.log(
     JSON.stringify({
       result: 'MANUAL_MESSAGING_CONCURRENCY_POSTGRES_PASS',

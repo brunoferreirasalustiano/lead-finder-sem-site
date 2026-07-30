@@ -16,6 +16,17 @@ import {
 
 const FICTIONAL_E164 = '+12025550100';
 const FICTIONAL_DIGITS = '12025550100';
+const SAFE_PREPARATION = {
+  preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
+  state: 'PREPARED',
+  channel: 'WHATSAPP',
+  templateId: 'pilot-whatsapp-first-contact',
+  templateVersion: 'v1',
+  contactFingerprint: 'a'.repeat(64),
+  messageFingerprint: 'b'.repeat(64),
+  preparedAt: '2026-07-29T00:00:00.000Z',
+  replayed: false,
+} as const;
 
 type LocalResponse = Readonly<{
   status: number;
@@ -114,42 +125,34 @@ describe('manual WhatsApp operator console', () => {
   });
 
   it('validates a safe WhatsApp preparation response', () => {
-    const preparation = validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
-      channel: 'WHATSAPP',
-      templateId: 'pilot-whatsapp-first-contact',
-      templateVersion: 'v1',
-      message: 'Teste',
-      link: `https://wa.me/${FICTIONAL_DIGITS}?text=Teste`,
-      replayed: false,
-    });
+    const preparation = validatePreparation(SAFE_PREPARATION);
     expect(preparation.channel).toBe('WHATSAPP');
+    expect(Object.keys(preparation).sort()).toEqual(Object.keys(SAFE_PREPARATION).sort());
   });
 
-  it('rejects a preparation whose link text differs from the displayed message', () => {
+  it.each([
+    ['message', 'synthetic message'],
+    ['subject', 'synthetic subject'],
+    ['link', `https://wa.me/${FICTIONAL_DIGITS}`],
+    ['url', `https://wa.me/${FICTIONAL_DIGITS}`],
+    ['phone', FICTIONAL_E164],
+    ['email', 'private@example.test'],
+    ['contactValue', FICTIONAL_E164],
+    ['normalizedValue', FICTIONAL_E164],
+    ['recipient', FICTIONAL_E164],
+    ['destination', FICTIONAL_E164],
+  ])('rejects forbidden HTTP preparation field %s', (field, marker) => {
     expect(() => validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
-      channel: 'WHATSAPP',
-      templateId: 'pilot-whatsapp-first-contact',
-      templateVersion: 'v1',
-      message: 'Texto exibido',
-      link: `https://wa.me/${FICTIONAL_DIGITS}?text=Outro%20texto`,
-      replayed: false,
+      ...SAFE_PREPARATION,
+      [field]: marker,
     })).toThrow('INVALID_PREPARATION_RESPONSE');
   });
 
   it('rejects non-WhatsApp and unsafe preparation responses', () => {
     expect(() => validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
+      ...SAFE_PREPARATION,
       channel: 'EMAIL',
       templateId: 'pilot-email-first-contact',
-      templateVersion: 'v1',
-      message: 'Teste',
-      link: 'https://example.com',
-      replayed: false,
     })).toThrow('INVALID_PREPARATION_RESPONSE');
   });
 

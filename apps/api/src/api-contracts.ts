@@ -236,6 +236,21 @@ export const safeCampaignSimulationDto = (value: unknown) => {
   };
 };
 
+export const safeManualPreparationDto = (value: unknown) => {
+  const item = row(value);
+  return {
+    preparationId: item['preparationId'],
+    state: item['state'],
+    channel: item['channel'],
+    templateId: item['templateId'],
+    templateVersion: item['templateVersion'],
+    contactFingerprint: item['contactFingerprint'],
+    messageFingerprint: item['messageFingerprint'],
+    preparedAt: item['preparedAt'],
+    replayed: item['replayed'],
+  };
+};
+
 export function findForbiddenPiiResponseKeys(value: unknown, path = '$'): string[] {
   if (Array.isArray(value)) {
     return value.flatMap((item, index) => findForbiddenPiiResponseKeys(item, `${path}[${index}]`));

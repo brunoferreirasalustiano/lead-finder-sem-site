@@ -275,6 +275,23 @@ export function assertApiKillSwitchReleased(enabled: boolean): void {
   if (enabled) throw new Error('PILOT_KILL_SWITCH_ENGAGED');
 }
 
+const contactResolverSchema = z.object({
+  CONTACT_RESOLVER_DATABASE_URL: z.string().url().startsWith('postgresql://'),
+  MANUAL_MESSAGING_ENABLED: z.literal('true').transform(() => true as const),
+  CONTACT_RESOLUTION_KILL_SWITCH_ENABLED: z.literal('false').transform(() => false as const),
+  CONTACT_RESOLUTION_MODE: z.literal('LOCAL_MANUAL').transform(() => 'LOCAL_MANUAL' as const),
+  CONTACT_RESOLUTION_NO_PROVIDER_MODE: z.literal('true').transform(() => true as const),
+  REAL_PROVIDERS_ENABLED: z.literal('false').transform(() => false as const),
+  REAL_PROVIDER_CONFIGURED: z.literal('false').transform(() => false as const),
+  DATABASE_SSL_MODE: z.enum(['disable', 'require', 'verify-full']).default('disable'),
+});
+
+export function parseContactResolverConfig(environment: NodeJS.ProcessEnv) {
+  const result = contactResolverSchema.safeParse(environment);
+  if (!result.success) throw formatConfigurationError(result.error);
+  return result.data;
+}
+
 export function parseWorkerConfig(environment: NodeJS.ProcessEnv) {
   const result = workerSchema.safeParse(environment);
   if (!result.success) throw formatConfigurationError(result.error);

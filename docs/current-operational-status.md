@@ -1,219 +1,171 @@
 # Estado operacional consolidado
 
-**Última revisão:** 27 de julho de 2026  
+**Última revisão:** 30 de julho de 2026  
 **Repositório oficial:** `brunoferreirasalustiano/lead-finder-sem-site`  
-**`main` verificada:** `612a756635602ad803b2a44b50af0a04ac82622e`  
-**Branch HML:** `hml/render-supabase-plan-b`  
-**HEAD HML verificado:** `341ff87579d4b19a324bc77b76b569e37c222651`  
-**Gate central:** issue #117  
+**`main` verificada:** `d0018fcdbad01cec6369ef857ef7fd59d3b38aef`  
+**Gate de produção controlada:** issue #167  
+**Estado técnico:** `READY_FOR_HOSTED_HOMOLOGATION`  
 **Estado comercial:** `REAL_MANUAL_PILOT_BLOCKED=true`  
-**Mensagens:** `NOT_SENT`  
-**Leads autorizados:** `0`  
-**Envios comerciais:** `0`
+**Mensagens reais enviadas:** `0`
 
-Este documento registra o baseline operacional verificável. Quando houver divergência, prevalecem o estado live verificado, este documento na `main` atual, a issue #117 e as issues específicas, nessa ordem.
+Este documento registra o baseline operacional verificável. Quando houver divergência, prevalecem o estado remoto live verificado, a `main` atual, a issue #167 e as issues específicas, nessa ordem.
 
 ## Veredito executivo
 
-A base de código permanece íntegra e com CI verde. As PRs #150 e #149 foram integradas, concluindo a remoção de fixtures pessoais e a conexão da console localhost auditada às rotas `OPERATOR_TEST`.
+As PRs #164 e #165 foram integradas. O código atingiu `READY_FOR_HOSTED_HOMOLOGATION`, com CI e smoke verdes no ciclo aprovado, sem P1 aberto conhecido. A implementação de resolução estreita de contato e os controles de privacidade persistente estão presentes na `main` atual.
 
-A única pull request aberta é a Draft PR #151, `security: enforce safe API PII contracts`, no HEAD `d47c9b4d2cfc8475c8df8acf1dcb24a799fbddee`. Ela permanece em draft, sem merge ou deploy.
-
-É permitido pesquisar e qualificar até cinco empresas reais de forma privada, usando somente fontes empresariais públicas e sem publicar PII. Não é permitido contatar nenhuma empresa até o veredito explícito `REAL_MANUAL_PILOT_READY`.
+Isso não autoriza deploy, DDL hospedado, habilitação de provider ou contato real. O ambiente de homologação ainda precisa ser reconciliado de forma controlada.
 
 Estados atuais:
 
 - `CODEBASE_HEALTHY=true`;
 - `CI_GREEN=true`;
-- `PR_149_MERGED=true`;
-- `PR_150_MERGED=true`;
-- `PR_151_DRAFT=true`;
-- `HML_API_SYNC_PENDING=true`;
-- `RENDER_NEW_CODE_NOT_DEPLOYED=true`;
-- `MIGRATION_0021_NOT_APPLIED=true`;
-- `LEAST_PRIVILEGE_DATABASE_ROLE_PENDING=true`;
-- `META_CLOUD_API_ENABLED=false`;
-- `REAL_MANUAL_PILOT_BLOCKED=true`;
-- `MESSAGES_NOT_SENT=true`.
+- `SMOKE_GREEN=true`;
+- `PR_164_MERGED=true`;
+- `PR_165_MERGED=true`;
+- `HOSTED_BASELINE_PARTIALLY_VERIFIED=true`;
+- `HOSTED_MIGRATIONS_0021_TO_0025_PENDING=true`;
+- `LEAD_FINDER_API_RUNTIME_ROLE_PENDING=true`;
+- `LEAD_FINDER_CONTACT_RESOLVER_RUNTIME_ROLE_PENDING=true`;
+- `RENDER_LIVE_SHA_NOT_REVALIDATED=true`;
+- `REAL_PROVIDERS_ENABLED=false`;
+- `REAL_SEND_ENABLED=false`;
+- `REAL_MANUAL_PILOT_BLOCKED=true`.
 
 ## Baseline Git e PRs
 
-- `main`: `612a756635602ad803b2a44b50af0a04ac82622e`, merge da PR #149;
-- PR #150: integrada no merge commit `a27b310d12610da21244c75ccb6ec9c8367f2e7e`;
-- PR #149: integrada no merge commit `612a756635602ad803b2a44b50af0a04ac82622e`;
-- PR #151: aberta, draft, mergeável e não integrada;
-- branch da PR #151: `agent/pii-safe-api-contracts`;
-- HEAD verificado da PR #151: `d47c9b4d2cfc8475c8df8acf1dcb24a799fbddee`;
-- threads de revisão abertas na PR #151: `0` antes desta atualização documental.
+- `main`: `d0018fcdbad01cec6369ef857ef7fd59d3b38aef`, merge da PR #165;
+- PR #164: integrada;
+- PR #165: integrada;
+- P1 aberto conhecido no gate aprovado: `0`;
+- nenhuma alteração hospedada foi realizada como parte desta atualização documental.
 
-A comparação `hml/render-supabase-plan-b...main` está divergente: a `main` contém 35 commits ausentes na HML e a HML contém 9 commits administrativos ausentes na `main`. A sincronização deve ser feita por PR controlada, sem mover a referência por force-push.
+## Supabase de homologação
 
-## Evidência de CI da PR #151
-
-No HEAD `d47c9b4d2cfc8475c8df8acf1dcb24a799fbddee`:
-
-- CI #582, run `30289647565`: `success`;
-- Deployment smoke #263, run `30289647710`: `success`;
-- typecheck: aprovado;
-- lint: aprovado;
-- testes unitários: 4.583 aprovados e 7 ignorados;
-- cobertura geral: 93,21% statements e 88,69% branches;
-- cobertura PII no Node 22: 100% em statements, functions e lines;
-- build: aprovado;
-- audit: 0 vulnerabilidades no nível configurado;
-- integração PostgreSQL: aprovada;
-- restore-compose: aprovado;
-- multiarch AMD64/ARM64: aprovado;
-- `git diff --check`: aprovado.
-
-A falha anterior da CI #581 foi corrigida. O checkout limpo não resolvia `@lead-finder/shared`, enquanto artefatos locais mascaravam o problema. O teste de integração também dependia de `timelineEvent.metadata`, removido do contrato HTTP seguro.
-
-## Fronteira HTTP e PII
-
-A PR #151 introduz projeções SQL explícitas e DTOs allowlisted para os contratos definidos em `docs/api-pii-contracts.md`.
-
-Protegido pela PR #151:
-
-- lista, detalhe e CSV de leads;
-- contatos e histórico de qualificação;
-- evidências;
-- agregado CRM;
-- timeline CRM;
-- filas de tarefas vencidas e follow-ups;
-- elegibilidade, recipients, attempts e simulations de campanhas.
-
-Telefones, WhatsApp, e-mails, endereço, coordenadas, valores normalizados, snapshots persistidos, payloads aninhados e conteúdo renderizado não são serializados nesses contratos.
-
-As rotas individuais de oportunidades, notas, tags e tarefas permanecem contratos operacionais autenticados por `crm:read` ou `crm:write`. Elas podem conter conteúdo criado pelo operador e não devem ser tratadas como DTOs públicos ou reutilizadas em contextos com menor privilégio. Qualquer futura redução desses contratos deve ocorrer em mudança separada e compatível com os consumidores CRM.
-
-A PR #151 não reduz PII persistida. Histórico JSON, resultados de idempotência CRM, snapshots de campanha, outbox e dead letters continuam dependendo da frente de minimização persistente planejada.
-
-## OPERATOR_TEST
-
-Concluído no código:
-
-- núcleo persistente append-only;
-- rotas HTTP específicas;
-- permissões `operator-test:*` separadas;
-- console localhost em `127.0.0.1`;
-- validação estrita das respostas da API;
-- binding criptográfico de destinatário;
-- telefone, mensagem e `wa.me` mantidos apenas em memória local;
-- confirmação humana `SENT_CONFIRMED` ou `NOT_SENT`;
-- nenhum provider, webhook ou envio automático.
-
-Pendente no ambiente hospedado:
-
-- sincronizar a HML;
-- criar role PostgreSQL de runtime com privilégio mínimo;
-- comprovar backup e rollback;
-- aplicar somente a migration `0021`;
-- configurar secrets privados `OPERATOR_TEST`;
-- selecionar e implantar manualmente o SHA aprovado;
-- validar health, SHA live, logs, grants, restart, kill switch e ausência de egress;
-- executar um único teste fechado usando número pertencente ao operador.
-
-O teste fechado não autoriza contato com lead real.
-
-## Role PostgreSQL de privilégio mínimo
-
-A issue #144 permanece aberta e é bloqueio real.
-
-A role de runtime deve:
-
-- não ser owner, superuser ou possuir `BYPASSRLS`;
-- não possuir `CREATEDB`, `CREATEROLE`, `REPLICATION` ou DDL;
-- receber `USAGE` somente nos schemas necessários;
-- receber `SELECT` somente nas tabelas necessárias;
-- receber `EXECUTE` somente nas funções allowlisted;
-- não receber escrita direta nas tabelas `OPERATOR_TEST`;
-- não escrever nos registros de migrations;
-- usar credencial separada da credencial operacional de migrations e restore.
-
-Antes de qualquer troca no Render, a matriz de privilégios, o SQL de criação, o rollback e os testes negativos devem passar em PostgreSQL descartável.
-
-## Supabase e migration 0021
-
-Projeto de homologação previamente confirmado:
+Projeto verificado:
 
 - projeto: `lead-finder-brasil-homologacao`;
 - project ref: `ondvzdvlwntrnieodifi`;
 - região: `sa-east-1`;
-- estado previamente observado: `ACTIVE_HEALTHY`.
+- estado: `ACTIVE_HEALTHY`;
+- PostgreSQL: `17.6.1`.
 
-Registros comprovados anteriormente:
+Registros de migrations observados:
 
 - `public.schema_migrations`: `0001` a `0018`;
-- `supabase_migrations.schema_migrations`: `0019` e `0020`.
+- `supabase_migrations.schema_migrations`: contém as migrations importadas `0019_manual_assisted_messaging` e `0020_manual_messaging_append_only_acl`.
 
-Regras:
+Regras obrigatórias:
 
 - não reaplicar `0019` ou `0020`;
-- não inserir versões artificialmente;
-- aplicar somente `0021`, de forma transacional e reversível;
-- interromper diante de qualquer divergência;
-- validar objetos, funções, triggers, constraints, RLS, grants e registros imediatamente após a aplicação.
+- não inserir versões artificialmente em nenhum registry;
+- validar a paridade dos objetos e ACLs importados antes de avançar;
+- aplicar `0021` a `0025` somente em ordem, após preflight completo;
+- interromper diante de qualquer divergência de schema, grants, RLS, trigger, função ou registry;
+- validar cada migration imediatamente após a aplicação;
+- preservar rollback e evidência do estado anterior.
 
-A migration `0021` ainda não foi aplicada no Supabase hospedado.
+## Sequência pendente de migrations
+
+A sequência hospedada pendente deve ser tratada como uma unidade ordenada:
+
+1. `0021_operator_channel_test`;
+2. migrations intermediárias `0022` e `0023`, conforme os arquivos presentes no SHA aprovado;
+3. `0024_crm_idempotency_safe_results`;
+4. `0025_narrow_contact_resolution`.
+
+A migration `0024` é o gate mínimo de readiness esperado pela aplicação para privacidade dos resultados de idempotência CRM. A migration `0025` adiciona a resolução estreita de contato, revogações de autorização, locks transacionais e a função `resolve_narrow_contact`.
+
+Nenhuma migration dessa sequência deve ser aplicada isoladamente sem conferir dependências, transação, reexecução, pós-validação e rollback.
+
+## Roles PostgreSQL de privilégio mínimo
+
+As roles abaixo ainda não foram comprovadas no ambiente hospedado:
+
+- `lead_finder_api_runtime`;
+- `lead_finder_contact_resolver_runtime`.
+
+Requisitos invariáveis:
+
+- não ser owner, superuser ou possuir `BYPASSRLS`;
+- não possuir `CREATEDB`, `CREATEROLE` ou `REPLICATION`;
+- não receber DDL;
+- receber `USAGE` somente nos schemas necessários;
+- receber acesso somente às tabelas e funções allowlisted;
+- a role de API não deve executar `resolve_narrow_contact`;
+- somente a role de resolução deve receber `EXECUTE` em `resolve_narrow_contact`;
+- nenhuma role de runtime deve escrever nos registries de migration;
+- credenciais de runtime devem ser separadas das credenciais de migration e restore.
+
+Antes de qualquer troca no Render, os scripts de criação e rollback e os testes negativos devem passar em PostgreSQL descartável ou ambiente equivalente controlado.
+
+## Segurança e fronteira de dados
+
+Continuam obrigatórios:
+
+- RLS habilitado nas tabelas internas sensíveis;
+- ausência de policies permissivas para `anon` e `authenticated`;
+- `service_role` limitado aos privilégios explicitamente necessários;
+- histórico manual append-only;
+- opt-out, `DO_NOT_CONTACT` e `NAO_CONTATAR` preservados;
+- kill switches mantidos;
+- PII não publicada em logs, issues, PRs ou documentação;
+- contato resolvido somente no fluxo estreito, auditado e autorizado.
+
+Avisos `RLS_ENABLED_NO_POLICY` do Supabase Advisor são compatíveis com o desenho deny-all para tabelas internas, desde que `anon` e `authenticated` permaneçam sem privilégios e nenhuma policy permissiva seja introduzida.
 
 ## Render de homologação
 
-Estado previamente confirmado:
+Estado previamente conhecido, ainda exigindo revalidação autenticada:
 
 - workspace: `Bruno's workspace`;
-- serviço: `lead-finder-api-hml`;
-- branch: `hml/render-supabase-plan-b`;
-- auto-deploy: `off`;
-- health check: `/health/ready`;
+- serviço esperado: `lead-finder-api-hml`;
+- auto-deploy esperado: `off`;
+- health check esperado: `/health/ready`;
 - `REAL_SEND_ENABLED=false`;
 - `REAL_PROVIDERS_ENABLED=false`;
 - `REAL_PROVIDER_CONFIGURED=false`;
 - `COLLECTION_EGRESS_ENABLED=false`.
 
-Não afirmar que o serviço executa a `main` ou a PR #151. O SHA live exato deve ser comprovado antes e depois de qualquer deploy controlado.
+O SHA live, a branch implantada, as variáveis efetivas, os grants usados pelo runtime e o estado de readiness devem ser comprovados antes e depois de qualquer deploy controlado.
 
-## Pesquisa privada de empresas reais
+## Gate de homologação hospedada
 
-Permitido agora:
+Antes de qualquer escrita hospedada, comprovar:
 
-- reconstruir até cinco fichas privadas;
-- confirmar nome empresarial, atividade, localização e operação;
-- registrar fontes empresariais públicas;
-- identificar oportunidade digital real;
-- eliminar duplicidades e homônimos;
-- consultar opt-out, `DO_NOT_CONTACT`, `NAO_CONTATAR` e bloqueios;
-- aplicar rubrica mínima 8/10, sem dimensão em zero;
-- manter cada ficha em revisão privada.
+1. SHA exato da `main` aprovada;
+2. CI e smoke verdes no SHA alvo;
+3. backup e procedimento de restore;
+4. registries de migration reconciliados;
+5. matriz `0021–0025` com dependências, pós-validação e rollback;
+6. scripts das roles com testes positivos e negativos;
+7. Render com auto-deploy desligado e SHA live conhecido;
+8. providers e envio real desligados;
+9. ausência de egress não autorizado;
+10. stop conditions registradas.
 
-Não permitido agora:
+Qualquer falha preserva `REAL_MANUAL_PILOT_BLOCKED=true`.
 
-- publicar telefone, e-mail ou outros dados de contato;
-- considerar número público como opt-in para WhatsApp;
-- preparar disparo automático;
-- enviar mensagem comercial;
-- habilitar Meta Cloud API;
-- marcar lead como autorizado sem aprovação individual.
+## Preparação do piloto manual
 
-`BUSINESS_CANDIDATE` não autoriza contato.
+Somente após a homologação hospedada aprovada:
 
-## Sequência controlada de seis dias
+- validar health, readiness, SHA live e logs;
+- validar grants reais das roles;
+- validar restart e rollback;
+- executar teste fechado somente com dados pertencentes ao operador;
+- confirmar ausência de provider e envio automático;
+- emitir GO/NO-GO separado para o primeiro contato manual real.
 
-1. fechar a revisão e a documentação da PR #151;
-2. planejar minimização persistente, readiness e resolução estreita de contatos;
-3. preparar e testar a role PostgreSQL mínima;
-4. reconciliar HML, backup e rollback;
-5. aplicar migration e deploy somente após todos os gates;
-6. executar teste fechado do operador e emitir `GO/NO-GO`.
-
-O prazo de seis dias é um objetivo de execução, não autorização para reduzir controles. Falha em qualquer gate implica rollback e preservação de `REAL_MANUAL_PILOT_BLOCKED`.
+Mesmo com homologação aprovada, nenhum lead real pode ser contatado sem revisão humana individual, canal permitido, autorização aplicável, opt-out verificado e gate explícito `REAL_MANUAL_PILOT_READY`.
 
 ## Regras invariáveis
 
 Continuam desligados:
 
 - WhatsApp Cloud API;
-- SMTP/provider de e-mail;
-- webhooks;
+- SMTP/provider de e-mail para campanhas;
+- webhooks de envio;
 - follow-ups automáticos;
 - n8n para campanhas reais;
 - automação de WhatsApp Web;
@@ -223,9 +175,9 @@ Nunca publicar:
 
 - tokens, senhas ou connection strings;
 - telefone ou e-mail de lead;
-- mensagem integral;
+- mensagem integral associada a lead real;
 - payload bruto ou snapshots com PII;
 - prints com PII;
 - chaves HMAC ou valores de secrets.
 
-Toda mudança de arquitetura, ambiente, segurança, provider, piloto ou estado operacional deve atualizar este documento, a issue #117 e as issues específicas.
+Toda mudança de arquitetura, ambiente, segurança, provider, piloto ou estado operacional deve atualizar este documento, a issue #167 e as issues específicas.

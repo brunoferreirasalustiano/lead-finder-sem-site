@@ -107,6 +107,37 @@ describe('environment configuration', () => {
     }).API_AUTH_PERMISSIONS).toContain('pilot:complete');
   });
 
+  it('keeps the real operator email test bound to one internal mailbox', () => {
+    const enabled = {
+      ...database,
+      API_AUTH_PERMISSIONS: `${database.API_AUTH_PERMISSIONS},operator-email-test:send`,
+      OPERATOR_EMAIL_TEST_ENABLED: 'true',
+      OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: 'false',
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_SENDER: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_SMTP_USER: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: 'abcdefghijklmnop',
+      OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: 'operator-email-test-fingerprint-key-0001',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      OPERATOR_EMAIL_TEST_ENABLED: true,
+      OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: false,
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
+    });
+    expect(() => parseApiConfig({
+      ...enabled,
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'lead@example.test',
+    })).toThrow('recipient, sender, and SMTP user must be identical');
+    expect(() => parseApiConfig({
+      ...enabled,
+      OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: undefined,
+    })).toThrow('OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD');
+    expect(() => parseApiConfig({
+      ...database,
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
+    })).toThrow('OPERATOR_EMAIL_TEST_ENABLED must be true');
+  });
+
   it.each([
     ['OVERPASS_TIMEOUT_MS', '999'],
     ['OVERPASS_MAX_RETRIES', '-1'],

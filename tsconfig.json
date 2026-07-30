@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/shared" },
     { "path": "packages/messaging" },
+    { "path": "packages/email" },
     { "path": "packages/whatsapp" },
     { "path": "packages/ai" },
     { "path": "packages/lead-scoring" },

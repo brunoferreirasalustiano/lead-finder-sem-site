@@ -127,6 +127,14 @@ export const approvedTemplates = {
     approved: true,
     body: 'Olá! Este é um teste interno autorizado do canal manual de WhatsApp do Lead Finder Brasil. Nenhum lead real está envolvido. Confirme o recebimento apenas para validar o fluxo técnico.',
   }),
+  operatorEmailTestV1: templateSchema.parse({
+    id: 'operator-email-channel-test',
+    version: 'v1',
+    channel: 'EMAIL',
+    approved: true,
+    subject: 'Teste interno de e-mail — Lead Finder Brasil',
+    body: 'Olá, Bruno. Este é o teste interno autorizado do canal de e-mail da Lead Finder Brasil. Nenhum lead real está envolvido e nenhuma ação é necessária. O objetivo é validar exclusivamente a entrega técnica para a conta comercial do operador.',
+  }),
   emailV1: templateSchema.parse({
     id: 'pilot-email-first-contact',
     version: 'v1',

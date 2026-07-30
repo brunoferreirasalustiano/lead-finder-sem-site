@@ -17,6 +17,17 @@ describe('fake messaging provider', () => {
     ).toEqual(a);
     expect(JSON.stringify(a)).not.toMatch(/sent|delivered/i);
   });
+
+  it('keeps the operator email test fixed and unrelated to lead content', () => {
+    const prepared = new DeterministicFakeMessagingProvider().prepare(
+      approvedTemplates.operatorEmailTestV1,
+      {},
+    );
+    expect(prepared.subject).toBe('Teste interno de e-mail — Lead Finder Brasil');
+    expect(prepared.body).toContain('Nenhum lead real está envolvido');
+    expect(prepared.body).not.toContain('[EMPRESA]');
+    expect(prepared.body).not.toContain('[FONTE]');
+  });
 });
 
 describe('channel-specific authorization contracts', () => {

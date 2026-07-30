@@ -33,3 +33,10 @@ services:
       - { key: INTERNAL_CRON_SECRET, sync: false }
       - { key: CORS_ALLOWED_ORIGINS, sync: false }
       - { key: PILOT_KILL_SWITCH_ENABLED, value: 'false' }
+      - { key: OPERATOR_EMAIL_TEST_ENABLED, value: 'false' }
+      - { key: OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED, value: 'true' }
+      - { key: OPERATOR_EMAIL_TEST_RECIPIENT, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_SENDER, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_SMTP_USER, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, sync: false }

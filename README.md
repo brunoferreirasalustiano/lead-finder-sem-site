@@ -188,6 +188,19 @@ Documentos:
 - [Runbook do ciclo controlado](docs/pilot-real-controlled-runbook.md)
 - [Matriz de prontidão](docs/commercial-readiness-matrix.md)
 
+### Teste interno do canal de e-mail
+
+O endpoint `POST /operator-tests/email/send` existe somente para verificar o
+canal do próprio operador. Ele aceita exclusivamente o template imutável
+`operator-email-channel-test` v1 e exige que remetente, usuário SMTP e
+destinatário sejam a mesma caixa interna autorizada.
+
+O recurso inicia desligado e com kill switch ativo. As credenciais e a chave de
+fingerprint são segredos externos ao repositório. O teste registra apenas
+fingerprints e estado append-only; não persiste endereço, corpo, assunto ou
+identificador do provedor. Esse endpoint não habilita envio para leads e não
+altera `REAL_SEND_ENABLED=false` nem `REAL_PROVIDERS_ENABLED=false`.
+
 ## WhatsApp e IA
 
 Estado: arquitetura e controles documentados; integração real ausente.

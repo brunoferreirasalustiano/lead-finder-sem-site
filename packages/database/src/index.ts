@@ -20,6 +20,7 @@ export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
 export * from './operator-channel-test.js';
+export * from './operator-email-test.js';
 export * from './deployment-processing.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>

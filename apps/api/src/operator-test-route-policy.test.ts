@@ -26,6 +26,11 @@ describe('operator test route authorization policy', () => {
         path: '/operator-test-preparations/:id/response',
         permission: 'operator-test:response',
       },
+      {
+        method: 'POST',
+        path: '/operator-tests/email/send',
+        permission: 'operator-email-test:send',
+      },
     ]);
     expect(operatorPolicies.every((item) => !item.permission.startsWith('pilot:'))).toBe(true);
     expect(operatorPolicies.every((item) => !item.permission.startsWith('manual-messaging:'))).toBe(true);

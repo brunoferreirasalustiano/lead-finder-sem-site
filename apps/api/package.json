@@ -11,6 +11,7 @@
   "dependencies": {
     "@lead-finder/batch-processor": "*",
     "@lead-finder/database": "*",
+    "@lead-finder/email": "*",
     "@lead-finder/shared": "*",
     "fastify": "^5.4.0",
     "zod": "^3.25.67"

@@ -25,6 +25,7 @@ export const apiAuthPermissions = [
   'operator-test:open',
   'operator-test:confirm',
   'operator-test:response',
+  'operator-email-test:send',
 ] as const;
 export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
 
@@ -121,6 +122,23 @@ const apiSchema = commonSchema.extend({
   OPERATOR_TEST_RECIPIENT_BINDING_KEY: optionalEnvironmentString(
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must contain printable non-space ASCII characters only'),
   ),
+  OPERATOR_EMAIL_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  OPERATOR_EMAIL_TEST_RECIPIENT: optionalEnvironmentString(
+    z.string().trim().toLowerCase().email().max(320),
+  ),
+  OPERATOR_EMAIL_TEST_SENDER: optionalEnvironmentString(
+    z.string().trim().toLowerCase().email().max(320),
+  ),
+  OPERATOR_EMAIL_TEST_SMTP_USER: optionalEnvironmentString(
+    z.string().trim().toLowerCase().email().max(320),
+  ),
+  OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: optionalEnvironmentString(
+    z.string().min(16).max(128).regex(/^[A-Za-z0-9]+$/, 'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD must contain letters and digits only'),
+  ),
+  OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: optionalEnvironmentString(
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY must contain printable non-space ASCII characters only'),
+  ),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
@@ -177,6 +195,71 @@ const apiSchema = commonSchema.extend({
       code: 'custom',
       path: ['OPERATOR_TEST_RECIPIENT_BINDING_KEY'],
       message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from OPERATOR_TEST_FINGERPRINT_KEY',
+    });
+  }
+  const operatorEmailSecretsConfigured = configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_SENDER !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_SMTP_USER !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY !== undefined;
+  if (!configuration.OPERATOR_EMAIL_TEST_ENABLED && operatorEmailSecretsConfigured) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_EMAIL_TEST_ENABLED'],
+      message: 'OPERATOR_EMAIL_TEST_ENABLED must be true when operator email test secrets are configured',
+    });
+  }
+  if (configuration.OPERATOR_EMAIL_TEST_ENABLED) {
+    const required = [
+      ['OPERATOR_EMAIL_TEST_RECIPIENT', configuration.OPERATOR_EMAIL_TEST_RECIPIENT],
+      ['OPERATOR_EMAIL_TEST_SENDER', configuration.OPERATOR_EMAIL_TEST_SENDER],
+      ['OPERATOR_EMAIL_TEST_SMTP_USER', configuration.OPERATOR_EMAIL_TEST_SMTP_USER],
+      ['OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD', configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD],
+      ['OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY],
+    ] as const;
+    for (const [name, value] of required) {
+      if (!value) {
+        context.addIssue({
+          code: 'custom',
+          path: [name],
+          message: `${name} is required when OPERATOR_EMAIL_TEST_ENABLED=true`,
+        });
+      }
+    }
+    if (
+      configuration.OPERATOR_EMAIL_TEST_RECIPIENT
+      && configuration.OPERATOR_EMAIL_TEST_SENDER
+      && configuration.OPERATOR_EMAIL_TEST_SMTP_USER
+      && (
+        configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== configuration.OPERATOR_EMAIL_TEST_SENDER
+        || configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== configuration.OPERATOR_EMAIL_TEST_SMTP_USER
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['OPERATOR_EMAIL_TEST_RECIPIENT'],
+        message: 'operator email test recipient, sender, and SMTP user must be identical',
+      });
+    }
+  }
+  if (
+    configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY
+    && configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY === configuration.API_AUTH_TOKEN
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_EMAIL_TEST_FINGERPRINT_KEY'],
+      message: 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY must differ from API_AUTH_TOKEN',
+    });
+  }
+  if (
+    configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD
+    && configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD === configuration.API_AUTH_TOKEN
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD'],
+      message: 'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD must differ from API_AUTH_TOKEN',
     });
   }
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {

@@ -44,6 +44,7 @@
     "test:manual-messaging": "tsx scripts/manual-messaging.integration.ts && tsx scripts/manual-messaging-concurrency.integration.ts && tsx scripts/operator-channel-test.integration.ts",
     "test:narrow-contact-resolution": "tsx scripts/narrow-contact-resolution.integration.ts && tsx scripts/narrow-contact-p1.integration.ts && tsx scripts/narrow-contact-hardening.integration.ts && tsx scripts/contact-resolver-role-replay.integration.ts",
     "test:operator-channel": "tsx scripts/operator-channel-test.integration.ts",
+    "test:operator-email": "tsx scripts/operator-email-test.integration.ts",
     "test:migration-registry": "tsx scripts/migration-registry-compatibility.integration.ts"
   },
   "devDependencies": {

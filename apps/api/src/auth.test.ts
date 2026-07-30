@@ -241,6 +241,11 @@ describe('API authentication boundary', () => {
       { method: 'POST', path: '/manual-message-preparations/:id/confirm', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/response', permission: 'manual-messaging:confirm' },
     ]);
+    expect(routePolicies).toContainEqual({
+      method: 'POST',
+      path: '/operator-tests/email/send',
+      permission: 'operator-email-test:send',
+    });
     expect(routePolicies.length).toBeGreaterThan(40);
     expect(new Set(routePolicies.map(({ method, path }) => `${method} ${path}`)).size).toBe(routePolicies.length);
   });

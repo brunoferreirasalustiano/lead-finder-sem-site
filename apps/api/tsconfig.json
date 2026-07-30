@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/database" }, { "path": "../../packages/batch-processor" }]
+  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/email" }, { "path": "../../packages/database" }, { "path": "../../packages/batch-processor" }]
 }

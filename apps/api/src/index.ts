@@ -2,7 +2,9 @@ import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, 
 import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
+import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
+import { createGmailOperatorEmailConsumer } from '@lead-finder/email';
 import { hostname } from 'node:os';
 
 const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
@@ -58,6 +60,28 @@ registerOperatorTestRoutes(app, db, {
   fingerprintKey: config.OPERATOR_TEST_FINGERPRINT_KEY,
   recipientBindingKey: config.OPERATOR_TEST_RECIPIENT_BINDING_KEY,
 });
+const operatorEmailConsumer = config.OPERATOR_EMAIL_TEST_ENABLED
+  ? createGmailOperatorEmailConsumer({
+      sender: config.OPERATOR_EMAIL_TEST_SENDER!,
+      recipient: config.OPERATOR_EMAIL_TEST_RECIPIENT!,
+      smtpUser: config.OPERATOR_EMAIL_TEST_SMTP_USER!,
+      smtpAppPassword: config.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD!,
+    })
+  : undefined;
+registerOperatorEmailTestRoute(
+  app,
+  db,
+  {
+    enabled: config.OPERATOR_EMAIL_TEST_ENABLED,
+    killSwitchEnabled: config.OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED,
+    authorizedRecipient: config.OPERATOR_EMAIL_TEST_RECIPIENT,
+    authorizedSender: config.OPERATOR_EMAIL_TEST_SENDER,
+    fingerprintKey: config.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY,
+  },
+  operatorEmailConsumer
+    ? (message) => operatorEmailConsumer.sendInternalTest(message)
+    : () => Promise.reject(new Error('OPERATOR_EMAIL_TEST_DISABLED')),
+);
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
   process.exitCode = exitCode;

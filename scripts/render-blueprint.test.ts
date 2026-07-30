@@ -23,6 +23,8 @@ describe('Render Plan B blueprint', () => {
     ['REAL_PROVIDERS_ENABLED', 'false'],
     ['REAL_PROVIDER_CONFIGURED', 'false'],
     ['COLLECTION_EGRESS_ENABLED', 'false'],
+    ['OPERATOR_EMAIL_TEST_ENABLED', 'false'],
+    ['OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED', 'true'],
     ['DAILY_LEAD_LIMIT', '60'],
   ])('pins %s to its safe homologation value', (key, value) => {
     expect(blueprint).toContain(`{ key: ${key}, value: '${value}' }`);
@@ -34,6 +36,11 @@ describe('Render Plan B blueprint', () => {
     'API_AUTH_PERMISSIONS',
     'INTERNAL_CRON_SECRET',
     'CORS_ALLOWED_ORIGINS',
+    'OPERATOR_EMAIL_TEST_RECIPIENT',
+    'OPERATOR_EMAIL_TEST_SENDER',
+    'OPERATOR_EMAIL_TEST_SMTP_USER',
+    'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD',
+    'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY',
   ])('requires %s to be supplied outside the repository', (key) => {
     expect(blueprint).toContain(`{ key: ${key}, sync: false }`);
   });

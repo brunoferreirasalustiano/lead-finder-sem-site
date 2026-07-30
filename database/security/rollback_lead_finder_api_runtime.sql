@@ -1,5 +1,9 @@
 BEGIN;
 
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events;
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts;
 DROP POLICY IF EXISTS lead_finder_api_runtime_operator_events_select
   ON public.operator_channel_test_events;
 DROP POLICY IF EXISTS lead_finder_api_runtime_operator_preparations_select

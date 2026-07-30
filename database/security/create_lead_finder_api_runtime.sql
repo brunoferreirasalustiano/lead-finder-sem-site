@@ -45,12 +45,16 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM lead_finder_api_runtime;
 GRANT SELECT ON TABLE public.schema_migrations TO lead_finder_api_runtime;
 GRANT SELECT ON TABLE
   public.operator_channel_test_preparations,
-  public.operator_channel_test_events
+  public.operator_channel_test_events,
+  public.operator_email_test_attempts,
+  public.operator_email_test_events
 TO lead_finder_api_runtime;
 
 GRANT EXECUTE ON FUNCTION
   public.create_operator_channel_test_preparation(char, char, char, char, char, char),
-  public.append_operator_channel_test_event(uuid, text, text, char, char, char)
+  public.append_operator_channel_test_event(uuid, text, text, char, char, char),
+  public.create_operator_email_test_attempt(char, char, char, char, char, char),
+  public.append_operator_email_test_event(uuid, text, char, char, char)
 TO lead_finder_api_runtime;
 
 DO $$
@@ -88,6 +92,20 @@ DROP POLICY IF EXISTS lead_finder_api_runtime_operator_events_select
   ON public.operator_channel_test_events;
 CREATE POLICY lead_finder_api_runtime_operator_events_select
   ON public.operator_channel_test_events
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts;
+CREATE POLICY lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events;
+CREATE POLICY lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events
   FOR SELECT TO lead_finder_api_runtime
   USING (true);
 

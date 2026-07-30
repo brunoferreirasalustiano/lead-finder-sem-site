@@ -195,9 +195,16 @@ jobs:
         with: { node-version: 22, cache: npm }
       - name: Use PostgreSQL 17 client tools
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client-17
-          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/postgres17-bin"
+          for tool in pg_dump pg_restore; do
+            wrapper="$RUNNER_TEMP/postgres17-bin/$tool"
+            printf '%s\n' \
+              '#!/bin/sh' \
+              "exec docker run --rm --network host --volume /tmp:/tmp postgres:17-alpine $tool \"\$@\"" \
+              > "$wrapper"
+            chmod +x "$wrapper"
+          done
+          echo "$RUNNER_TEMP/postgres17-bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm run build
       - run: npm run db:migrate

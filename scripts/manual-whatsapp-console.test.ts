@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { approvedTemplates, DeterministicFakeMessagingProvider } from '@lead-finder/messaging';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOperatorTestWhatsAppUrl,
@@ -12,6 +13,7 @@ import {
   resolveApiConfig,
   startManualWhatsAppConsole,
   validatePreparation,
+  verifyLocalWhatsAppMessage,
 } from './manual-whatsapp-console.js';
 
 const FICTIONAL_E164 = '+12025550100';
@@ -27,6 +29,8 @@ const SAFE_PREPARATION = {
   preparedAt: '2026-07-29T00:00:00.000Z',
   replayed: false,
 } as const;
+
+const messagingProvider = new DeterministicFakeMessagingProvider();
 
 type LocalResponse = Readonly<{
   status: number;
@@ -128,6 +132,57 @@ describe('manual WhatsApp operator console', () => {
     const preparation = validatePreparation(SAFE_PREPARATION);
     expect(preparation.channel).toBe('WHATSAPP');
     expect(Object.keys(preparation).sort()).toEqual(Object.keys(SAFE_PREPARATION).sort());
+  });
+
+  it('accepts only the locally rendered message that matches the prepared fingerprint', () => {
+    const prepared = messagingProvider.prepare(approvedTemplates.whatsappV1, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toBe(prepared.body);
+  });
+
+  it('fails closed when the locally rendered fingerprint differs', () => {
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: approvedTemplates.whatsappV1.id,
+      templateVersion: approvedTemplates.whatsappV1.version,
+      messageFingerprint: '0'.repeat(64),
+    }, 'Empresa Sintética')).toThrow('MESSAGE_FINGERPRINT_CHANGED');
+  });
+
+  it('fails closed when the approved template id or version drifts', () => {
+    const prepared = messagingProvider.prepare(approvedTemplates.whatsappV1, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: 'outro-template',
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toThrow('MESSAGE_TEMPLATE_CHANGED');
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: 'v2',
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toThrow('MESSAGE_TEMPLATE_CHANGED');
+  });
+
+  it('renders every occurrence of an approved placeholder through the deterministic provider', () => {
+    const repeatedTemplate = {
+      ...approvedTemplates.whatsappV1,
+      id: 'pilot-whatsapp-repeated-placeholder-test',
+      body: '[EMPRESA] / [EMPRESA]',
+    } as const;
+    const prepared = messagingProvider.prepare(repeatedTemplate, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética', repeatedTemplate)).toBe('Empresa Sintética / Empresa Sintética');
   });
 
   it.each([

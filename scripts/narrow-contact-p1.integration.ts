@@ -135,7 +135,7 @@ const fixture = async (
 
 try {
   await administrator.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
-  raw = postgres(scenarioUrl.toString(), { max: 4 });
+  raw = postgres(scenarioUrl.toString(), { max: 1 });
   const baselineMigrations = (await readdir(migrationsUrl))
     .filter((file) => /^\d{4}.*\.sql$/.test(file) && file < '0025_narrow_contact_resolution.sql')
     .sort();

@@ -41,7 +41,7 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0024_crm_idempotency_safe_results'): Promise<void> {
+export async function checkExpectedMigration(db: Database, version = '0026_narrow_contact_resolution_hardening'): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version
     FROM public.schema_migrations
@@ -107,67 +107,5 @@ export async function listLeads(db: Database, f: LeadFilters) {
     db.select({ value: count() }).from(leads).where(where),
   ]);
   const total = totalRows[0]?.value ?? 0;
-  return {
-    items,
-    pagination: {
-      page: f.page,
-      pageSize: f.pageSize,
-      total,
-      totalPages: Math.ceil(total / f.pageSize),
-    },
-  };
-}
-export async function getLead(db: Database, id: string) {
-  return (await db.select(safeLeadSelection).from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
-}
-export interface CollectionEgressAuthorization {
-  enabled: true;
-  configurationVersion: 1;
-}
-
-const collectionAuthorization = { enabled: true, configurationVersion: 1 } as const;
-
-export async function enqueueCollection(
-  db: Database,
-  payload: unknown,
-  authorization?: CollectionEgressAuthorization,
-) {
-  if (authorization?.enabled !== true || authorization.configurationVersion !== 1) {
-    throw new Error('COLLECTION_EGRESS_DISABLED');
-  }
-  return (
-    await db
-      .insert(collectionJobs)
-      .values({ payload: { input: payload, collectionEgress: collectionAuthorization } })
-      .returning({ id: collectionJobs.id, status: collectionJobs.status })
-  )[0];
-}
-export async function claimCollection(db: Database) {
-  return db.transaction(async (tx) => {
-    const job = (
-      await tx
-        .select()
-        .from(collectionJobs)
-        .where(and(
-          eq(collectionJobs.status, 'PENDING'),
-          sql`${collectionJobs.payload} @> ${JSON.stringify({ collectionEgress: collectionAuthorization })}::jsonb`,
-        ))
-        .orderBy(collectionJobs.createdAt)
-        .limit(1)
-        .for('update', { skipLocked: true })
-    )[0];
-    if (!job) return null;
-    await tx
-      .update(collectionJobs)
-      .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, job.id));
-    const envelope = job.payload as { input: unknown };
-    return { ...job, payload: envelope.input };
-  });
-}
-export async function finishCollection(db: Database, id: string, error?: string) {
-  await db
-    .update(collectionJobs)
-    .set({ status: error ? 'FAILED' : 'COMPLETED', error: error ?? null, updatedAt: new Date() })
-    .where(eq(collectionJobs.id, id));
+  return { items, total, page: f.page, pageSize: f.pageSize };
 }

@@ -1,7 +1,5 @@
 \set ON_ERROR_STOP on
 
-BEGIN;
-
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_contact_resolver_runtime') THEN
@@ -48,5 +46,3 @@ BEGIN
     EXECUTE format('REVOKE %I FROM lead_finder_contact_resolver_runtime',membership.granted_role);
   END LOOP;
 END $$;
-
-COMMIT;

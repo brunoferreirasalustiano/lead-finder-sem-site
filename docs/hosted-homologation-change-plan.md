@@ -3,8 +3,8 @@
 **Estado do plano:** `PREPARED_NOT_APPROVED`  
 **Projeto Supabase:** `lead-finder-brasil-homologacao` (`ondvzdvlwntrnieodifi`)  
 **Região:** `sa-east-1`  
-**Runtime candidato:** árvore da PR #173 no HEAD `4fc15817cc8a0b772fb0ae554f6873b6787fb9f5`  
-**SHA final de `main`:** `PENDING_PR_173_MERGE`  
+**Runtime aprovado:** `946cc79d8b89414a65a621b8e2996adbd8caaab1`  
+**`main` verificada:** `946cc79d8b89414a65a621b8e2996adbd8caaab1`  
 **Gate operacional:** issue #167  
 **Execução hospedada realizada:** `false`  
 **Mensagens reais enviadas:** `0`
@@ -15,10 +15,11 @@ Este documento é um plano executável para uma autorização futura. Ele não a
 
 ### Git e qualidade
 
-- PRs #164, #165, #166 e #169 integradas antes deste preflight.
+- PRs #164, #165, #166, #169 e #173 integradas.
 - PR #173 corrige atomicidade de migration/registry e reforça replay da role resolvera.
-- CI completa, smoke, PII, PostgreSQL, registry, readiness, restart e multiarch devem estar verdes no HEAD exato antes do merge e novamente no SHA alvo de execução.
-- Deep scan dedicado não está exposto; revisão estruturada, CI, testes PostgreSQL, PII, revisão Codex padrão e inspeção manual continuam obrigatórios.
+- CI #698, Deployment smoke #363, PII, PostgreSQL, dual registry, readiness, restart e multiarch passaram no HEAD exato da PR #173.
+- O único P1 da revisão Sol da PR #173 foi corrigido por scanner SQL de nível superior, comprovado pela CI e resolvido.
+- Deep scan dedicado não está exposto; revisão estruturada, CI, testes PostgreSQL, PII, revisão Codex padrão e inspeção manual foram usados sem inventar resultado de deep scan.
 
 ### Supabase autenticado
 
@@ -91,7 +92,7 @@ Observado em modo somente leitura:
 **Dependências:** `pgcrypto`, 0019/0020, leads/contatos, piloto, reviews, autorizações, evidência de e-mail, opt-outs e blocos administrativos.  
 **Cria/altera:** fingerprint opaco em contatos; rotação; revogações append-only; locks; função SECURITY DEFINER `resolve_narrow_contact`; preparação com fingerprint de mensagem; RLS/revokes/grants; sanitização de snapshots anteriores.  
 **Preflight:** `pgcrypto` relocável; contatos sem ambiguidade; objetos 0019/0020 compatíveis.  
-**Reexecução:** validada em PostgreSQL descartável; wrapper externo é removido pelo runner seguro.  
+**Reexecução:** validada em PostgreSQL descartável; wrappers transacionais externos são removidos pelo scanner SQL do runner.  
 **Pós-validação:** exatamente um contato; cross-lead/revogado/opt-out/stale/template drift bloqueados; PII não persiste.  
 **Rollback:** restore integral pré-change; não remover fingerprints/revogações isoladamente.
 
@@ -323,7 +324,7 @@ Interromper imediatamente em:
 
 `GO` para solicitar autorização de execução somente quando:
 
-- PR #173 integrada e `main` exata registrada;
+- `main` exata `946cc79d8b89414a65a621b8e2996adbd8caaab1` ou sucessora exclusivamente documental;
 - migrations preflight `PASS`;
 - roles preflight `PASS`;
 - Supabase read-only preflight `PASS`;
@@ -339,11 +340,12 @@ Caso contrário:
 
 ## 13. Estado atual
 
-- `MIGRATIONS_PREFLIGHT=PASS_AFTER_PR_173_MERGE`;
-- `ROLES_PREFLIGHT=PASS_AFTER_PR_173_MERGE`;
+- `MIGRATIONS_PREFLIGHT=PASS`;
+- `ROLES_PREFLIGHT=PASS`;
 - `SUPABASE_PREFLIGHT=PASS`;
 - `RENDER_PREFLIGHT=BLOCKED_AUTHENTICATED_EVIDENCE_MISSING`;
 - `ROLLBACK_PLAN=PASS`;
+- `HOSTED_CHANGE_PLAN_APPROVED=false`;
 - `HOSTED_MUTATIONS=0`;
 - `HOSTED_HOMOLOGATION_EXECUTED=false`;
 - `REAL_MANUAL_PILOT_BLOCKED=true`;

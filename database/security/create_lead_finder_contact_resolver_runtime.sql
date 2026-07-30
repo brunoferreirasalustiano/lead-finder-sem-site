@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 
+BEGIN;
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_contact_resolver_runtime') THEN
@@ -12,6 +14,10 @@ BEGIN
       NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
+
+ALTER ROLE lead_finder_contact_resolver_runtime SET search_path = pg_catalog, public;
+ALTER ROLE lead_finder_contact_resolver_runtime SET statement_timeout = '15s';
+ALTER ROLE lead_finder_contact_resolver_runtime SET idle_in_transaction_session_timeout = '15s';
 
 DO $$
 BEGIN
@@ -42,3 +48,5 @@ BEGIN
     EXECUTE format('REVOKE %I FROM lead_finder_contact_resolver_runtime',membership.granted_role);
   END LOOP;
 END $$;
+
+COMMIT;

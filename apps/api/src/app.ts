@@ -112,11 +112,45 @@ import { timingSafeEqual } from 'node:crypto';
 import type { LeadBatchReport } from '@lead-finder/batch-processor';
 import { simulateCampaignMessage } from './campaign-simulation.js';
 import {
+  safeCampaignAttemptDto,
+  safeCampaignRecipientDto,
+  safeCampaignSimulationDto,
+  safeContactDto,
+  safeCrmDto,
+  safeCrmQueueItemDto,
+  safeCrmTimelineDto,
+  safeEligibleCampaignLeadDto,
+  safeEvidenceDto,
+  safeHistoryDto,
+  safeLeadDto,
+  safeManualPreparationDto,
+} from './api-contracts.js';
+import {
   authorizationContextFor, installAuthorization, requirePermission, serializeRequestForLog,
   type AuthenticationOptions,
 } from './auth.js';
 
 const idSchema = z.string().uuid();
+type HttpContractQueries = Readonly<{
+  listLeads: typeof listLeads;
+  getLead: typeof getLead;
+  getQualification: typeof getQualification;
+  listEvidence: typeof listEvidence;
+  addEvidence: typeof addEvidence;
+  listContacts: typeof listContacts;
+  upsertContact: typeof upsertContact;
+  listHistory: typeof listHistory;
+  getCrm: typeof getCrm;
+  listTimeline: typeof listTimeline;
+  listOverdueTasks: typeof listOverdueTasks;
+  listUpcomingFollowUps: typeof listUpcomingFollowUps;
+  listEligibleCampaignLeads: typeof listEligibleCampaignLeads;
+  listCampaignTemplates: typeof listCampaignTemplates;
+  listCampaignRecipients: typeof listCampaignRecipients;
+  listRecipientAttempts: typeof listRecipientAttempts;
+  reserveSimulatedRecipient: typeof reserveSimulatedRecipient;
+  createAttemptWithOutbox: typeof createAttemptWithOutbox;
+}>;
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
   const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
   const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
@@ -170,12 +204,34 @@ export function buildApp(db: Database, options: {
   completeBatchInvocation?: (key: string) => Promise<void>;
   abandonBatchInvocation?: (key: string) => Promise<void>;
   corsAllowedOrigins?: readonly string[];
+  contractQueries?: Partial<HttpContractQueries>;
 } = {}) {
   const dailyLeadLimit = options.dailyLeadLimit ?? 50;
   const collectionEgressEnabled = options.collectionEgressEnabled ?? false;
   const shadowModeEnabled = options.shadowModeEnabled ?? false;
   const realProviderConfigured = options.realProviderConfigured ?? false;
   const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
+  const contractQueries: HttpContractQueries = {
+    listLeads,
+    getLead,
+    getQualification,
+    listEvidence,
+    addEvidence,
+    listContacts,
+    upsertContact,
+    listHistory,
+    getCrm,
+    listTimeline,
+    listOverdueTasks,
+    listUpcomingFollowUps,
+    listEligibleCampaignLeads,
+    listCampaignTemplates,
+    listCampaignRecipients,
+    listRecipientAttempts,
+    reserveSimulatedRecipient,
+    createAttemptWithOutbox,
+    ...options.contractQueries,
+  };
   const app = Fastify({
     logger: { serializers: { req: serializeRequestForLog } },
     bodyLimit: 16_384,
@@ -268,13 +324,14 @@ export function buildApp(db: Database, options: {
     const parsed = listLeadsSchema.safeParse(request.query);
     if (!parsed.success)
       return reply.status(400).send({ error: 'Invalid query', details: parsed.error.flatten() });
-    return listLeads(db, parsed.data);
+    const result = await contractQueries.listLeads(db, parsed.data);
+    return { ...result, items: result.items.map(safeLeadDto) };
   });
   app.get('/leads/:id', async (request, reply) => {
     const parsed = idSchema.safeParse((request.params as { id?: unknown }).id);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid id' });
-    const lead = await getLead(db, parsed.data);
-    return lead ?? reply.status(404).send({ error: 'Lead not found' });
+    const lead = await contractQueries.getLead(db, parsed.data);
+    return lead ? safeLeadDto(lead) : reply.status(404).send({ error: 'Lead not found' });
   });
   const qualificationError = (
     error: unknown,
@@ -347,8 +404,8 @@ export function buildApp(db: Database, options: {
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
     try {
       return {
-        ...(await getQualification(db, id.data)),
-        evidence: await listEvidence(db, id.data),
+        ...(await contractQueries.getQualification(db, id.data)),
+        evidence: (await contractQueries.listEvidence(db, id.data)).map(safeEvidenceDto),
       };
     } catch (error) {
       return qualificationError(error, reply);
@@ -359,7 +416,7 @@ export function buildApp(db: Database, options: {
     const body = evidenceInputSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid evidence' });
     try {
-      return reply.status(201).send(await addEvidence(db, id.data, body.data));
+      return reply.status(201).send(safeEvidenceDto(await contractQueries.addEvidence(db, id.data, body.data)));
     } catch (error) {
       return qualificationError(error, reply);
     }
@@ -369,7 +426,7 @@ export function buildApp(db: Database, options: {
     const body = contactInputSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid contact' });
     try {
-      return await upsertContact(db, id.data, body.data);
+      return safeContactDto(await contractQueries.upsertContact(db, id.data, body.data));
     } catch (error) {
       return qualificationError(error, reply);
     }
@@ -378,8 +435,8 @@ export function buildApp(db: Database, options: {
     const id = leadId(request);
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
     try {
-      await getQualification(db, id.data);
-      return listContacts(db, id.data);
+      await contractQueries.getQualification(db, id.data);
+      return (await contractQueries.listContacts(db, id.data)).map(safeContactDto);
     } catch (error) {
       return qualificationError(error, reply);
     }
@@ -390,7 +447,7 @@ export function buildApp(db: Database, options: {
     if (!id.success || !body.success)
       return reply.status(400).send({ error: 'Invalid qualification update' });
     try {
-      return await updateQualification(db, id.data, body.data);
+      return safeLeadDto(await updateQualification(db, id.data, body.data));
     } catch (error) {
       return qualificationError(error, reply);
     }
@@ -399,33 +456,33 @@ export function buildApp(db: Database, options: {
     const id = leadId(request);
     if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
     try {
-      await getQualification(db, id.data);
-      return listHistory(db, id.data);
+      await contractQueries.getQualification(db, id.data);
+      return (await contractQueries.listHistory(db, id.data)).map(safeHistoryDto);
     } catch (error) {
       return qualificationError(error, reply);
     }
   });
   app.get('/leads/:id/crm', async (request, reply) => {
     const id = leadId(request); if (!id.success) return reply.status(400).send({ error: 'Invalid id' });
-    return crmRoute(reply, () => getCrm(db, id.data));
+    return crmRoute(reply, async () => safeCrmDto(await contractQueries.getCrm(db, id.data)));
   });
   app.patch('/leads/:id/crm/stage', async (request, reply) => {
     const id = leadId(request); const body = crmStageChangeSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM stage change', details: body.success ? undefined : body.error.flatten() });
     if (body.data.action === 'REACTIVATE'
       && !requirePermission(request, reply, 'crm:reactivate-do-not-contact')) return;
-    return crmRoute(reply, async () => (await changeCrmStage(
+    return crmRoute(reply, async () => safeLeadDto((await changeCrmStage(
       db, id.data, body.data, authorizationContextFor(request),
-    )).data);
+    )).data));
   });
   app.patch('/leads/:id/crm', async (request, reply) => {
     const id = leadId(request); const body = crmAssignmentUpdateSchema.safeParse(request.body);
     if (!id.success || !body.success) return reply.status(400).send({ error: 'Invalid CRM assignment update' });
     const { nextActionAt, ...input } = body.data;
-    return crmRoute(reply, async () => (await updateCrmAssignment(db, id.data, {
+    return crmRoute(reply, async () => safeLeadDto((await updateCrmAssignment(db, id.data, {
       ...input,
       nextActionAt: nextActionAt === undefined ? undefined : nextActionAt === null ? null : new Date(nextActionAt),
-    })).data);
+    })).data));
   });
   app.get('/leads/:id/opportunities', async (request, reply) => {
     const id = leadId(request); const query = opportunityListFilterSchema.safeParse(request.query);
@@ -486,16 +543,27 @@ export function buildApp(db: Database, options: {
   app.get('/leads/:id/timeline', async (request, reply) => {
     const id = leadId(request); const query = noteListFilterSchema.safeParse(request.query);
     if (!id.success || !query.success) return reply.status(400).send({ error: 'Invalid timeline query' });
-    return crmRoute(reply, async () => page(await listTimeline(db, id.data, listOptions(query.data)), query.data));
+    return crmRoute(reply, async () => page(
+      (await contractQueries.listTimeline(db, id.data, listOptions(query.data))).map(safeCrmTimelineDto),
+      query.data,
+    ));
   });
   app.get('/crm/tasks/overdue', async (request, reply) => {
     const query = followUpFilterSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid overdue query' });
     const now = query.data.to ?? query.data.from; if (!now) return reply.status(400).send({ error: 'A deterministic UTC from or to timestamp is required' });
-    return crmRoute(reply, () => listOverdueTasks(db, new Date(now), query.data.pageSize));
+    return crmRoute(reply, async () =>
+      (await contractQueries.listOverdueTasks(db, new Date(now), query.data.pageSize)).map(safeCrmQueueItemDto));
   });
   app.get('/crm/follow-ups/upcoming', async (request, reply) => {
     const query = followUpFilterSchema.safeParse(request.query); if (!query.success || !query.data.from || !query.data.to) return reply.status(400).send({ error: 'Valid UTC from and to timestamps are required' });
-    return crmRoute(reply, () => listUpcomingFollowUps(db, new Date(query.data.from!), new Date(query.data.to!), query.data.pageSize, query.data.owner));
+    return crmRoute(reply, async () =>
+      (await contractQueries.listUpcomingFollowUps(
+        db,
+        new Date(query.data.from!),
+        new Date(query.data.to!),
+        query.data.pageSize,
+        query.data.owner,
+      )).map(safeCrmQueueItemDto));
   });
   app.post('/campaigns/preview', async (request, reply) => {
     const body = campaignPreviewSchema.safeParse(request.body);
@@ -546,33 +614,42 @@ export function buildApp(db: Database, options: {
   });
   app.get('/campaigns/eligible/leads', async (request, reply) => {
     const query = campaignEligibleListSchema.safeParse(request.query); if (!query.success) return reply.status(400).send({ error: 'Invalid eligibility query', code: 'INVALID_REQUEST' });
-    const items = await listEligibleCampaignLeads(db, query.data.channel, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
-    return page(items, query.data);
+    const items = await contractQueries.listEligibleCampaignLeads(db, query.data.channel, query.data.pageSize, (query.data.page - 1) * query.data.pageSize);
+    return page(items.map(safeEligibleCampaignLeadDto), query.data);
   });
   app.post('/campaigns/:id/simulations', async (request, reply) => {
     const id = parseId(request.params); const body = campaignSimulationSchema.safeParse(request.body); const key = idempotencyKey(request.headers);
     if (!id.success || !body.success || !key.success) return reply.status(400).send({ error: 'Invalid campaign simulation', code: 'INVALID_REQUEST' });
     return campaignRoute(reply, async () => {
-      const templates = await listCampaignTemplates(db, body.data.campaignVersionId);
+      const templates = await contractQueries.listCampaignTemplates(db, body.data.campaignVersionId);
       const template = templates.find((item) => item.channel === body.data.channel);
       if (!template) throw new CampaignPersistenceError('Template not found for channel', 'NOT_FOUND');
-      const eligible = await listEligibleCampaignLeads(db, body.data.channel, body.data.pageSize, (body.data.page - 1) * body.data.pageSize);
+      const eligible = await contractQueries.listEligibleCampaignLeads(db, body.data.channel, body.data.pageSize, (body.data.page - 1) * body.data.pageSize);
       const items = [];
       for (const item of eligible) {
         const snapshot = { leadId: item.lead.id, name: item.lead.name ?? '', contact: item.contact.normalizedValue, channel: body.data.channel };
-        const recipient = await reserveSimulatedRecipient(db, { campaignId: id.data, campaignVersionId: body.data.campaignVersionId, leadId: item.lead.id, channel: body.data.channel, snapshot, idempotencyKey: `${key.data}:${item.lead.id}` });
+        const recipient = await contractQueries.reserveSimulatedRecipient(db, { campaignId: id.data, campaignVersionId: body.data.campaignVersionId, leadId: item.lead.id, channel: body.data.channel, snapshot, idempotencyKey: `${key.data}:${item.lead.id}` });
         const allowedVariables = template.allowedVariables as string[];
         const values = Object.fromEntries(allowedVariables.map((name) => [name, name === 'name' || name === 'business' ? snapshot.name : name === 'contact' ? snapshot.contact : '']));
         const simulated = simulateCampaignMessage({ channel: body.data.channel, content: template.content, allowedVariables, values });
-        const attempt = await createAttemptWithOutbox(db, { recipientId: recipient.data.id, payloadSnapshot: { ...simulated }, idempotencyKey: `${key.data}:${item.lead.id}:attempt` });
+        const attempt = await contractQueries.createAttemptWithOutbox(db, { recipientId: recipient.data.id, payloadSnapshot: { ...simulated }, idempotencyKey: `${key.data}:${item.lead.id}:attempt` });
         items.push({ recipient: recipient.data, attempt: attempt.data, simulation: simulated });
       }
-      return { mode: 'SIMULATION', dispatched: false, items, pagination: { page: body.data.page, pageSize: body.data.pageSize, hasMore: eligible.length === body.data.pageSize } };
+      return safeCampaignSimulationDto({
+        mode: 'SIMULATION',
+        dispatched: false,
+        items,
+        pagination: {
+          page: body.data.page,
+          pageSize: body.data.pageSize,
+          hasMore: eligible.length === body.data.pageSize,
+        },
+      });
     });
   });
   const campaignLists: Array<[string, (id: string, limit: number, offset: number) => Promise<unknown[]>, ((item: unknown) => unknown)?]> = [
-    ['/campaigns/:id/recipients', (id: string, limit: number, offset: number) => listCampaignRecipients(db, id, limit, offset)],
-    ['/recipients/:id/attempts', (id: string, limit: number, offset: number) => listRecipientAttempts(db, id, limit, offset)],
+    ['/campaigns/:id/recipients', (id: string, limit: number, offset: number) => contractQueries.listCampaignRecipients(db, id, limit, offset), safeCampaignRecipientDto],
+    ['/recipients/:id/attempts', (id: string, limit: number, offset: number) => contractQueries.listRecipientAttempts(db, id, limit, offset), safeCampaignAttemptDto],
     ['/campaigns/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset), safeCampaignAuditItem],
     ['/campaign-versions/:id/audit', (id: string, limit: number, offset: number) => listCampaignAudit(db, id, limit, offset), safeCampaignAuditItem],
   ];
@@ -677,7 +754,7 @@ export function buildApp(db: Database, options: {
   const confirmManualMessageSchema=z.object({result:z.enum(['SENT_CONFIRMED','NOT_SENT','INVALID_CONTACT','CHANNEL_UNAVAILABLE','OPERATIONAL_ERROR']),observation:z.string().max(500).optional()}).strict();
   const recordManualResponseSchema=z.object({result:z.enum(['POSITIVE_REPLY','NEGATIVE_REPLY','OPT_OUT']),observation:z.string().max(500).optional()}).strict();
   const manualMessagingRoute=async(reply:Parameters<typeof pilotRoute>[0],action:()=>Promise<unknown>)=>{try{return await action();}catch(error){if(error instanceof ManualMessagingError){const status=error.code==='NOT_FOUND'?404:error.code==='IDEMPOTENCY_CONFLICT'?409:422;return reply.status(status).send({error:'Manual messaging operation failed',code:error.code});}throw error;}};
-  app.post('/pilots/:id/leads/:leadId/manual-messages/prepare',async(request,reply)=>{const pilot=parseId(request.params);const lead=parseId(request.params,'leadId');const body=prepareManualMessageSchema.safeParse(request.body);const key=idempotencyKey(request.headers);if(!pilot.success||!lead.success||!body.success||!key.success)return reply.status(400).send({error:'Invalid manual messaging request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await prepareManualMessage(db,pilot.data,lead.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_prepared',preparationId:result.preparationId,channel:result.channel,state:result.state,templateId:result.templateId,templateVersion:result.templateVersion,principalId:request.principal!.id,replayed:result.replayed},'manual_message_prepared');return reply.status(creationStatus(result.replayed)).send(result);});});
+  app.post('/pilots/:id/leads/:leadId/manual-messages/prepare',async(request,reply)=>{const pilot=parseId(request.params);const lead=parseId(request.params,'leadId');const body=prepareManualMessageSchema.safeParse(request.body);const key=idempotencyKey(request.headers);if(!pilot.success||!lead.success||!body.success||!key.success)return reply.status(400).send({error:'Invalid manual messaging request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await prepareManualMessage(db,pilot.data,lead.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_prepared',requestId:request.id,preparationId:result.preparationId,channel:result.channel,state:result.state,templateId:result.templateId,templateVersion:result.templateVersion,principalId:request.principal!.id,replayed:result.replayed},'manual_message_prepared');return reply.status(creationStatus(result.replayed)).send(safeManualPreparationDto(result));});});
   app.post('/manual-message-preparations/:id/open',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);if(!id.success||!key.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid open request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await recordManualOpen(db,id.data,{idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_opened',preparationId:id.data,state:result.state,principalId:request.principal!.id,replayed:result.replayed},'manual_message_opened');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/confirm',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=confirmManualMessageSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid confirmation request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await confirmManualResult(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_confirmed',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_confirmed');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/response',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=recordManualResponseSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid response request',code:'INVALID_REQUEST'});if(body.data.result==='OPT_OUT'&&!request.principal?.permissions.has('manual-messaging:opt-out'))return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await recordManualResponse(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_response_recorded',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_response_recorded');return reply.status(creationStatus(result.replayed)).send(result);});});
@@ -713,23 +790,27 @@ export function buildApp(db: Database, options: {
     const query = typeof request.query === 'object' && request.query !== null ? request.query : {};
     const parsed = listLeadsSchema.safeParse({ ...query, page: 1, pageSize: 100 });
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid query' });
-    const result = await listLeads(db, parsed.data);
+    const result = await contractQueries.listLeads(db, parsed.data);
     const fields = [
       'id',
       'name',
       'category',
-      'phone',
-      'whatsapp',
-      'email',
-      'instagram',
-      'facebook',
-      'address',
       'city',
       'state',
+      'website',
       'score',
       'status',
-      'osmType',
-      'osmId',
+      'qualificationStatus',
+      'isBlocked',
+      'doNotContact',
+      'isClosed',
+      'crmStage',
+      'crmPriority',
+      'crmOwner',
+      'crmNextActionAt',
+      'crmVersion',
+      'createdAt',
+      'updatedAt',
     ] as const;
     const csv = [
       fields.join(','),

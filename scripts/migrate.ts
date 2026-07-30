@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
 import { getMigrationSource } from './migration-registry-plan.js';
 import { assertImportedMigrationParity, loadMigrationRegistry } from './migration-registry.js';
+import { prepareMigrationSqlForRunner } from './migration-sql.js';
 
 const url = process.env['DATABASE_URL'];
 if (!url) throw new Error('DATABASE_URL is required');
@@ -28,7 +29,9 @@ try {
       continue;
     }
 
-    const migration = await readFile(new URL(file, directory), 'utf8');
+    const migration = prepareMigrationSqlForRunner(
+      await readFile(new URL(file, directory), 'utf8'),
+    );
     await sql.begin(async (transaction) => {
       await transaction.unsafe(migration);
       await transaction`INSERT INTO public.schema_migrations (version) VALUES (${version})`;

@@ -2,11 +2,33 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  approvedTemplates,
+  DeterministicFakeMessagingProvider,
+  type MessageTemplate,
+} from '@lead-finder/messaging';
+import {
+  CONTACT_RESOLUTION_PURPOSE,
+  createDatabase,
+  resolveNarrowContact,
+} from '@lead-finder/database';
+import { parseContactResolverConfig } from '@lead-finder/shared';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
 const BODY_LIMIT_BYTES = 8_192;
+const PREPARATION_RESPONSE_FIELDS = new Set([
+  'preparationId',
+  'state',
+  'channel',
+  'templateId',
+  'templateVersion',
+  'contactFingerprint',
+  'messageFingerprint',
+  'preparedAt',
+  'replayed',
+]);
 export const OPERATOR_TEST_MESSAGE =
   'Olá! Este é um teste interno autorizado do canal manual de WhatsApp do Lead Finder Brasil.\n\n' +
   'Nenhum lead real está envolvido. Não é necessário responder.';
@@ -17,9 +39,15 @@ type Preparation = Readonly<{
   channel: 'WHATSAPP';
   templateId: string;
   templateVersion: string;
-  message: string;
-  link: string;
+  contactFingerprint: string;
+  messageFingerprint: string;
+  preparedAt: string;
   replayed: boolean;
+}>;
+type LocalPreparation = Preparation & Readonly<{
+  pilotRunId: string;
+  leadId: string;
+  contactId: string;
 }>;
 
 type OperatorTestConfig = Readonly<{
@@ -34,6 +62,8 @@ type ApiConfig = Readonly<{
 }>;
 
 type ApiErrorBody = Readonly<{ code?: unknown }>;
+
+const localMessagingProvider = new DeterministicFakeMessagingProvider();
 
 export const escapeHtml = (value: string) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -111,23 +141,46 @@ export function operatorTestConfig(environment: NodeJS.ProcessEnv): OperatorTest
 export function validatePreparation(value: unknown): Preparation {
   if (typeof value !== 'object' || value === null) throw new Error('INVALID_PREPARATION_RESPONSE');
   const item = value as Record<string, unknown>;
-  const message = item['message'];
-  const link = item['link'];
   if (
-    typeof item['preparationId'] !== 'string'
+    Object.keys(item).some((key) => !PREPARATION_RESPONSE_FIELDS.has(key))
+    || Object.keys(item).length !== PREPARATION_RESPONSE_FIELDS.size
+    || typeof item['preparationId'] !== 'string'
     || !UUID_PATTERN.test(item['preparationId'])
     || item['state'] !== 'PREPARED'
     || item['channel'] !== 'WHATSAPP'
     || typeof item['templateId'] !== 'string'
     || typeof item['templateVersion'] !== 'string'
-    || typeof message !== 'string'
-    || message.length < 1
-    || message.length > 2_000
-    || typeof link !== 'string'
-    || !isSafeWhatsAppUrl(link, message)
+    || typeof item['contactFingerprint'] !== 'string'
+    || !/^[0-9a-f]{64}$/.test(item['contactFingerprint'])
+    || typeof item['messageFingerprint'] !== 'string'
+    || !/^[0-9a-f]{64}$/.test(item['messageFingerprint'])
+    || typeof item['preparedAt'] !== 'string'
     || typeof item['replayed'] !== 'boolean'
   ) throw new Error('INVALID_PREPARATION_RESPONSE');
   return item as Preparation;
+}
+
+export function verifyLocalWhatsAppMessage(
+  preparation: Readonly<{
+    templateId: string;
+    templateVersion: string;
+    messageFingerprint: string;
+  }>,
+  leadName: string,
+  template: MessageTemplate = approvedTemplates.whatsappV1,
+): string {
+  if (
+    template.channel !== 'WHATSAPP'
+    || preparation.templateId !== template.id
+    || preparation.templateVersion !== template.version
+  ) {
+    throw new Error('MESSAGE_TEMPLATE_CHANGED');
+  }
+  const prepared = localMessagingProvider.prepare(template, { EMPRESA: leadName });
+  if (prepared.fingerprint !== preparation.messageFingerprint) {
+    throw new Error('MESSAGE_FINGERPRINT_CHANGED');
+  }
+  return prepared.body;
 }
 
 const page = (title: string, body: string) => `<!doctype html>
@@ -251,7 +304,6 @@ const renderPrepared = (csrfToken: string, preparation: Preparation) => page(
     <dt>Preparação</dt><dd><code>${escapeHtml(preparation.preparationId)}</code></dd>
     <dt>Template</dt><dd><code>${escapeHtml(preparation.templateId)} ${escapeHtml(preparation.templateVersion)}</code></dd>
   </dl>
-  <pre>${escapeHtml(preparation.message)}</pre>
   <form method="post" action="/open" target="_blank">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="preparationId" value="${escapeHtml(preparation.preparationId)}">
@@ -308,12 +360,19 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
   const api = resolveApiConfig(environment);
   const test = operatorTestConfig(environment);
   if (!api && !test) throw new Error('Configure the operator test or the pilot API before starting the console');
+  const resolverConfig = api ? parseContactResolverConfig(environment) : undefined;
+  const resolverDatabase = resolverConfig
+    ? createDatabase(resolverConfig.CONTACT_RESOLVER_DATABASE_URL, {
+        max: 1,
+        ssl: resolverConfig.DATABASE_SSL_MODE,
+      })
+    : undefined;
 
   const port = Number(environment['MANUAL_WHATSAPP_CONSOLE_PORT'] ?? '4173');
   if (!Number.isInteger(port) || port < 1_024 || port > 65_535) throw new Error('Invalid MANUAL_WHATSAPP_CONSOLE_PORT');
 
   const csrfToken = randomUUID();
-  const preparations = new Map<string, Preparation>();
+  const preparations = new Map<string, LocalPreparation>();
   const expectedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
 
   const server = createServer(async (request, response) => {
@@ -353,12 +412,17 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
           {
             contactId,
             requestedChannel: 'WHATSAPP',
-            templateId: 'pilot-whatsapp-first-contact',
-            templateVersion: 'v1',
+            templateId: approvedTemplates.whatsappV1.id,
+            templateVersion: approvedTemplates.whatsappV1.version,
           },
         );
         const preparation = validatePreparation(payload);
-        preparations.set(preparation.preparationId, preparation);
+        preparations.set(preparation.preparationId, {
+          ...preparation,
+          pilotRunId,
+          leadId,
+          contactId,
+        });
         sendHtml(response, 200, renderPrepared(csrfToken, preparation));
         return;
       }
@@ -368,13 +432,34 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
       if (!preparation) throw new Error('PREPARATION_NOT_IN_LOCAL_SESSION');
 
       if (url.pathname === '/open') {
+        if (!resolverDatabase || !resolverConfig) throw new Error('CONTACT_RESOLVER_NOT_CONFIGURED');
+        const resolved = await resolveNarrowContact(resolverDatabase.db, {
+          pilotRunId: preparation.pilotRunId,
+          leadId: preparation.leadId,
+          contactId: preparation.contactId,
+          requestedChannel: 'WHATSAPP',
+          principalId: 'localhost-manual-console',
+          action: 'MANUAL_MESSAGE_OPEN',
+          purpose: CONTACT_RESOLUTION_PURPOSE,
+          localManualMode: true,
+          noProviderMode: resolverConfig.CONTACT_RESOLUTION_NO_PROVIDER_MODE,
+          killSwitchEnabled: resolverConfig.CONTACT_RESOLUTION_KILL_SWITCH_ENABLED,
+          manualMessagingEnabled: resolverConfig.MANUAL_MESSAGING_ENABLED,
+          realProviderEnabled: resolverConfig.REAL_PROVIDERS_ENABLED
+            || resolverConfig.REAL_PROVIDER_CONFIGURED,
+        });
+        if (resolved.fingerprint !== preparation.contactFingerprint) {
+          throw new Error('CONTACT_FINGERPRINT_CHANGED');
+        }
+        const message = verifyLocalWhatsAppMessage(preparation, resolved.leadName);
+        const link = createOperatorTestWhatsAppUrl(resolved.value, message);
         await apiRequest(
           api,
           `/manual-message-preparations/${preparationId}/open`,
           randomUUID(),
           {},
         );
-        redirect(response, preparation.link);
+        redirect(response, link);
         return;
       }
 
@@ -404,6 +489,9 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
     console.log('The console is loopback-only and never sends automatically.');
     console.log(test ? `Operator test enabled for ${test.maskedPhone}.` : 'Operator test is disabled.');
     console.log(api ? `Pilot API configured for ${new URL(api.baseUrl).origin}.` : 'Pilot API is disabled.');
+  });
+  server.on('close', () => {
+    void resolverDatabase?.close();
   });
   return server;
 }

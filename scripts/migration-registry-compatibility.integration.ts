@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import postgres from 'postgres';
 import { getMigrationSource } from './migration-registry-plan.js';
-import { assertImportedMigrationParity, loadMigrationRegistry } from './migration-registry.js';
+import {
+  assertImportedMigrationParity,
+  assertNarrowContactResolutionObjects,
+  loadMigrationRegistry,
+} from './migration-registry.js';
 
 const execFileAsync = promisify(execFile);
 const sourceUrl = process.env['DATABASE_URL'];
@@ -132,16 +136,22 @@ try {
 
     const firstOutput = await runMigrationRunner(fixtureUrl.toString());
     const secondOutput = await runMigrationRunner(fixtureUrl.toString());
+    await assertNarrowContactResolutionObjects(db);
     assert.match(firstOutput, /0019_manual_assisted_messaging already applied \(source=SUPABASE\)/);
     assert.match(firstOutput, /0020_manual_messaging_append_only_acl already applied \(source=SUPABASE\)/);
     assert.match(secondOutput, /0019_manual_assisted_messaging already applied \(source=SUPABASE\)/);
     assert.match(secondOutput, /0020_manual_messaging_append_only_acl already applied \(source=SUPABASE\)/);
+    assert.match(secondOutput, /0025_narrow_contact_resolution already applied \(source=LOCAL\)/);
 
     const localImportedRows = await db<{ count: number }[]>`
       SELECT count(*)::int AS count
       FROM public.schema_migrations
       WHERE version IN ('0019_manual_assisted_messaging', '0020_manual_messaging_append_only_acl')`;
     assert.equal(localImportedRows[0]?.count, 0);
+    const narrowRows = await db<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.schema_migrations
+      WHERE version='0025_narrow_contact_resolution'`;
+    assert.equal(narrowRows[0]?.count, 1);
 
     const after = await snapshotProtectedObjects(db);
     assert.deepEqual(after, before);

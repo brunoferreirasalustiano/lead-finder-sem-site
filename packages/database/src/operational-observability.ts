@@ -10,6 +10,7 @@ export interface OperationalSnapshot {
 
 export interface ReadinessThresholds { backlogCount: number; oldestPendingAgeMs: number; }
 export type ReadinessStatus = 'ready' | 'degraded' | 'unhealthy';
+export type ReadinessMode = 'operational' | 'restricted';
 
 const number = (value: unknown) => Number(value ?? 0);
 export async function getOperationalSnapshot(db: Database, now = new Date()): Promise<OperationalSnapshot> {
@@ -55,10 +56,26 @@ export async function verifyMigrationsCompatible(db: Database): Promise<void> {
   if ((rows[0]?.missing ?? 0) !== 0) throw new Error('MIGRATIONS_INCOMPATIBLE');
 }
 
+export async function canReadOperationalSnapshot(db: Database): Promise<boolean> {
+  const rows = await db.execute<{ allowed: boolean }>(sql`
+    SELECT
+      has_table_privilege(current_user, 'public.campaign_outbox', 'SELECT')
+      AND has_table_privilege(current_user, 'public.campaign_dead_letters', 'SELECT')
+      AND has_table_privilege(current_user, 'public.campaign_dead_letter_recoveries', 'SELECT')
+      AS allowed
+  `);
+  if (rows.length !== 1) throw new Error('READINESS_CAPABILITY_EMPTY');
+  return rows[0]?.allowed === true;
+}
+
 export async function getReadiness(db: Database, thresholds: ReadinessThresholds, now = new Date()) {
   try {
-    await verifyMigrationsCompatible(db); const snapshot = await getOperationalSnapshot(db, now);
+    await verifyMigrationsCompatible(db);
+    if (!await canReadOperationalSnapshot(db)) {
+      return { status: 'ready' as ReadinessStatus, mode: 'restricted' as ReadinessMode, snapshot: null };
+    }
+    const snapshot = await getOperationalSnapshot(db, now);
     const degraded = snapshot.duePendingCount >= thresholds.backlogCount || snapshot.oldestPendingAgeMs >= thresholds.oldestPendingAgeMs;
-    return { status: degraded ? 'degraded' : 'ready' as ReadinessStatus, snapshot };
-  } catch { return { status: 'unhealthy' as ReadinessStatus, snapshot: null }; }
+    return { status: degraded ? 'degraded' : 'ready' as ReadinessStatus, mode: 'operational' as ReadinessMode, snapshot };
+  } catch { return { status: 'unhealthy' as ReadinessStatus, mode: 'restricted' as ReadinessMode, snapshot: null }; }
 }

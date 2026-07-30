@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { approvedTemplates, DeterministicFakeMessagingProvider } from '@lead-finder/messaging';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOperatorTestWhatsAppUrl,
@@ -12,7 +13,24 @@ import {
   resolveApiConfig,
   startManualWhatsAppConsole,
   validatePreparation,
+  verifyLocalWhatsAppMessage,
 } from './manual-whatsapp-console.js';
+
+const FICTIONAL_E164 = '+12025550100';
+const FICTIONAL_DIGITS = '12025550100';
+const SAFE_PREPARATION = {
+  preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
+  state: 'PREPARED',
+  channel: 'WHATSAPP',
+  templateId: 'pilot-whatsapp-first-contact',
+  templateVersion: 'v1',
+  contactFingerprint: 'a'.repeat(64),
+  messageFingerprint: 'b'.repeat(64),
+  preparedAt: '2026-07-29T00:00:00.000Z',
+  replayed: false,
+} as const;
+
+const messagingProvider = new DeterministicFakeMessagingProvider();
 
 type LocalResponse = Readonly<{
   status: number;
@@ -71,82 +89,125 @@ describe('manual WhatsApp operator console', () => {
 
   it('accepts only a canonical wa.me destination with exactly the displayed message', () => {
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Ol%C3%A1',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1`,
       'Olá',
     )).toBe(true);
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Outro',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Outro`,
       'Olá',
     )).toBe(false);
     expect(isSafeWhatsAppUrl(
-      'https://wa.me/5519971519337?text=Ol%C3%A1&source=test',
+      `https://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1&source=test`,
       'Olá',
     )).toBe(false);
-    expect(isSafeWhatsAppUrl('https://example.com/5519971519337?text=Ol%C3%A1')).toBe(false);
-    expect(isSafeWhatsAppUrl('http://wa.me/5519971519337?text=Ol%C3%A1')).toBe(false);
-    expect(isSafeWhatsAppUrl('https://wa.me/5519971519337')).toBe(false);
+    expect(isSafeWhatsAppUrl(`https://example.com/${FICTIONAL_DIGITS}?text=Ol%C3%A1`)).toBe(false);
+    expect(isSafeWhatsAppUrl(`http://wa.me/${FICTIONAL_DIGITS}?text=Ol%C3%A1`)).toBe(false);
+    expect(isSafeWhatsAppUrl(`https://wa.me/${FICTIONAL_DIGITS}`)).toBe(false);
   });
 
   it('requires strict E.164 for the operator-only number', () => {
-    expect(parseOperatorTestPhone('+5519971519337')).toBe('+5519971519337');
-    expect(() => parseOperatorTestPhone('19 97151-9337')).toThrow(/E.164/);
-    expect(() => parseOperatorTestPhone('5519971519337')).toThrow(/E.164/);
+    expect(parseOperatorTestPhone(FICTIONAL_E164)).toBe(FICTIONAL_E164);
+    expect(() => parseOperatorTestPhone('202 555-0100')).toThrow(/E.164/);
+    expect(() => parseOperatorTestPhone(FICTIONAL_DIGITS)).toThrow(/E.164/);
   });
 
   it('creates a safe operator-only wa.me link without persisting the phone', () => {
-    const link = createOperatorTestWhatsAppUrl('+5519971519337', 'Teste interno');
-    expect(link).toBe('https://wa.me/5519971519337?text=Teste%20interno');
+    const link = createOperatorTestWhatsAppUrl(FICTIONAL_E164, 'Teste interno');
+    expect(link).toBe(`https://wa.me/${FICTIONAL_DIGITS}?text=Teste%20interno`);
     expect(isSafeWhatsAppUrl(link, 'Teste interno')).toBe(true);
   });
 
   it('requires an explicit authorization flag for operator test mode', () => {
     expect(operatorTestConfig({})).toBeUndefined();
     expect(() => operatorTestConfig({
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
     })).toThrow(/AUTHORIZED/);
     expect(operatorTestConfig({
       OPERATOR_TEST_AUTHORIZED: 'true',
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
-    })?.maskedPhone).toBe('••••9337');
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
+    })?.maskedPhone).toBe('••••0100');
   });
 
   it('validates a safe WhatsApp preparation response', () => {
-    const preparation = validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
-      channel: 'WHATSAPP',
-      templateId: 'pilot-whatsapp-first-contact',
-      templateVersion: 'v1',
-      message: 'Teste',
-      link: 'https://wa.me/5519971519337?text=Teste',
-      replayed: false,
-    });
+    const preparation = validatePreparation(SAFE_PREPARATION);
     expect(preparation.channel).toBe('WHATSAPP');
+    expect(Object.keys(preparation).sort()).toEqual(Object.keys(SAFE_PREPARATION).sort());
   });
 
-  it('rejects a preparation whose link text differs from the displayed message', () => {
+  it('accepts only the locally rendered message that matches the prepared fingerprint', () => {
+    const prepared = messagingProvider.prepare(approvedTemplates.whatsappV1, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toBe(prepared.body);
+  });
+
+  it('fails closed when the locally rendered fingerprint differs', () => {
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: approvedTemplates.whatsappV1.id,
+      templateVersion: approvedTemplates.whatsappV1.version,
+      messageFingerprint: '0'.repeat(64),
+    }, 'Empresa Sintética')).toThrow('MESSAGE_FINGERPRINT_CHANGED');
+  });
+
+  it('fails closed when the approved template id or version drifts', () => {
+    const prepared = messagingProvider.prepare(approvedTemplates.whatsappV1, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: 'outro-template',
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toThrow('MESSAGE_TEMPLATE_CHANGED');
+    expect(() => verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: 'v2',
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética')).toThrow('MESSAGE_TEMPLATE_CHANGED');
+  });
+
+  it('renders every occurrence of an approved placeholder through the deterministic provider', () => {
+    const repeatedTemplate = {
+      ...approvedTemplates.whatsappV1,
+      id: 'pilot-whatsapp-repeated-placeholder-test',
+      body: '[EMPRESA] / [EMPRESA]',
+    } as const;
+    const prepared = messagingProvider.prepare(repeatedTemplate, {
+      EMPRESA: 'Empresa Sintética',
+    });
+    expect(verifyLocalWhatsAppMessage({
+      templateId: prepared.templateId,
+      templateVersion: prepared.templateVersion,
+      messageFingerprint: prepared.fingerprint,
+    }, 'Empresa Sintética', repeatedTemplate)).toBe('Empresa Sintética / Empresa Sintética');
+  });
+
+  it.each([
+    ['message', 'synthetic message'],
+    ['subject', 'synthetic subject'],
+    ['link', `https://wa.me/${FICTIONAL_DIGITS}`],
+    ['url', `https://wa.me/${FICTIONAL_DIGITS}`],
+    ['phone', FICTIONAL_E164],
+    ['email', 'private@example.test'],
+    ['contactValue', FICTIONAL_E164],
+    ['normalizedValue', FICTIONAL_E164],
+    ['recipient', FICTIONAL_E164],
+    ['destination', FICTIONAL_E164],
+  ])('rejects forbidden HTTP preparation field %s', (field, marker) => {
     expect(() => validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
-      channel: 'WHATSAPP',
-      templateId: 'pilot-whatsapp-first-contact',
-      templateVersion: 'v1',
-      message: 'Texto exibido',
-      link: 'https://wa.me/5519971519337?text=Outro%20texto',
-      replayed: false,
+      ...SAFE_PREPARATION,
+      [field]: marker,
     })).toThrow('INVALID_PREPARATION_RESPONSE');
   });
 
   it('rejects non-WhatsApp and unsafe preparation responses', () => {
     expect(() => validatePreparation({
-      preparationId: 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b',
-      state: 'PREPARED',
+      ...SAFE_PREPARATION,
       channel: 'EMAIL',
       templateId: 'pilot-email-first-contact',
-      templateVersion: 'v1',
-      message: 'Teste',
-      link: 'https://example.com',
-      replayed: false,
     })).toThrow('INVALID_PREPARATION_RESPONSE');
   });
 
@@ -156,7 +217,7 @@ describe('manual WhatsApp operator console', () => {
     const server = startManualWhatsAppConsole({
       MANUAL_WHATSAPP_CONSOLE_PORT: String(port),
       OPERATOR_TEST_AUTHORIZED: 'true',
-      OPERATOR_TEST_WHATSAPP_E164: '+5519971519337',
+      OPERATOR_TEST_WHATSAPP_E164: FICTIONAL_E164,
     });
 
     try {
@@ -176,7 +237,7 @@ describe('manual WhatsApp operator console', () => {
         new URLSearchParams({ csrf: csrf ?? '' }).toString(),
       );
       expect(opened.status).toBe(303);
-      expect(opened.headers.location).toMatch(/^https:\/\/wa\.me\/5519971519337\?text=/);
+      expect(opened.headers.location).toMatch(new RegExp(`^https://wa\\.me/${FICTIONAL_DIGITS}\\?text=`));
       expect(apiFetch).not.toHaveBeenCalled();
     } finally {
       apiFetch.mockRestore();

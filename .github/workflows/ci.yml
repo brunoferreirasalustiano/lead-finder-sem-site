@@ -10,6 +10,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  pii-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:coverage:pii-contracts
   validate:
     runs-on: ubuntu-latest
     strategy:
@@ -190,6 +198,8 @@ jobs:
         run: npm run test:supabase-data-api-security
       - name: Verify manual assisted messaging on PostgreSQL 16
         run: npm run test:manual-messaging
+      - name: Verify narrow contact resolution on PostgreSQL 16
+        run: npm run test:narrow-contact-resolution
       - name: Run automated synthetic batch gate on PostgreSQL
         run: npm run test:batch-gate
       - name: Run restore suppression reconciliation on PostgreSQL 16

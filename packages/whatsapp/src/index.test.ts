@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createWhatsAppManualUrl, FakeWhatsAppProvider, normalizePhoneE164 } from './index.js';
+
+const FICTIONAL_NANPA_NUMBER = '+12025550100';
+
 describe('phone', () => {
   it.each([
-    ['+55 (19) 97151-9337', '+5519971519337'],
-    ['(19) 97151-9337', '+5519971519337'],
+    ['+55 (11) 90000-0000', '+5511900000000'],
+    ['(11) 90000-0000', '+5511900000000'],
     ['55 3222-1234', '+555532221234'],
     ['55 9 9123-4567', '+5555991234567'],
     ['+55 55 3222-1234', '+555532221234'],
@@ -27,16 +30,16 @@ describe('phone', () => {
     'rejects %s',
     (input) => expect(normalizePhoneE164(input)).toMatchObject({ ok: false }),
   );
-  it('encodes URL content', () =>
-    expect(createWhatsAppManualUrl('+5519971519337', 'Olá & teste?')).toBe(
-      'https://wa.me/5519971519337?text=Ol%C3%A1%20%26%20teste%3F',
+  it('encodes URL content with a fictional reserved number', () =>
+    expect(createWhatsAppManualUrl(FICTIONAL_NANPA_NUMBER, 'Olá & teste?')).toBe(
+      'https://wa.me/12025550100?text=Ol%C3%A1%20%26%20teste%3F',
     ));
   it('generates the correct wa.me destination for national DDD 55', () =>
     expect(createWhatsAppManualUrl('55 9 9123-4567', 'teste')).toBe(
       'https://wa.me/5555991234567?text=teste',
     ));
   it('never sends', () =>
-    expect(new FakeWhatsAppProvider().prepare('+5519971519337', 'teste')).toMatchObject({
+    expect(new FakeWhatsAppProvider().prepare(FICTIONAL_NANPA_NUMBER, 'teste')).toMatchObject({
       networkCalls: 0,
       sent: false,
     }));

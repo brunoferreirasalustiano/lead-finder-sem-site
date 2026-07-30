@@ -158,8 +158,17 @@ try {
   assert.equal((await db.select({ value: count() }).from(campaignRecipients).where(eq(campaignRecipients.idempotencyKey, rollbackKey)))[0]?.value, 0);
 
   await db.update(leads).set({ name: 'Lead Changed Later' }).where(eq(leads.id, lead.id));
-  const storedSnapshot = (await db.select().from(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)).limit(1))[0]!.recipientSnapshot;
-  assert.deepEqual(storedSnapshot, recipientInput.snapshot);
+  const storedSnapshot = (await db.select().from(campaignRecipients).where(eq(campaignRecipients.id, recipient.id)).limit(1))[0]!.recipientSnapshot as Record<string, unknown>;
+  assert.equal(storedSnapshot['schemaVersion'], 1);
+  assert.equal(storedSnapshot['recipientId'], recipient.id);
+  assert.equal(storedSnapshot['campaignId'], createdCampaign.data.id);
+  assert.equal(storedSnapshot['campaignVersionId'], version.id);
+  assert.equal(storedSnapshot['leadId'], lead.id);
+  assert.equal(storedSnapshot['channel'], 'EMAIL');
+  assert.equal(storedSnapshot['state'], 'PENDENTE');
+  assert.equal(storedSnapshot['version'], 1);
+  assert.equal(Object.hasOwn(storedSnapshot, 'leadName'), false);
+  assert.equal(Object.hasOwn(storedSnapshot, 'address'), false);
   await assert.rejects(db.update(campaignRecipients).set({ recipientSnapshot: { leadName: 'Mutated' } }).where(eq(campaignRecipients.id, recipient.id)), (error) => hasPgCode(error, '55000'));
 
   const validTransition = await updateRecipientState(db, {

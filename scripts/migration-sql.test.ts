@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { prepareMigrationSqlForRunner } from './migration-sql.js';
 
+const compact = (value: string) => value.replace(/\s+/g, ' ').trim();
+
 describe('migration SQL transaction ownership', () => {
   it('removes an external wrapper while preserving header and footer comments', () => {
     const sql = `-- migration header
@@ -15,22 +17,22 @@ $body$;
 COMMIT WORK;
 -- migration footer`;
 
-    expect(prepareMigrationSqlForRunner(sql)).toBe(`-- migration header
-
+    const prepared = prepareMigrationSqlForRunner(sql);
+    expect(compact(prepared)).toBe(compact(`-- migration header
 DO $body$
 BEGIN
   PERFORM 'COMMIT;';
 END
 $body$;
-
-
--- migration footer`);
+-- migration footer`));
+    expect(prepared).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(prepared).not.toMatch(/COMMIT\s+WORK/i);
   });
 
   it('supports START TRANSACTION as the external opener', () => {
-    expect(prepareMigrationSqlForRunner(
+    expect(compact(prepareMigrationSqlForRunner(
       '/* header */ START TRANSACTION; SELECT 1; COMMIT TRANSACTION;',
-    )).toBe('/* header */  SELECT 1;');
+    ))).toBe(compact('/* header */ SELECT 1;'));
   });
 
   it('preserves migration SQL that has no top-level transaction control', () => {

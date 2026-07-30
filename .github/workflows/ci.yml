@@ -167,6 +167,41 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression npm run db:migrate
           docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm restore-suppression node --input-type=module -e "import postgres from 'postgres'; const sql=postgres(process.env.DATABASE_URL,{max:1}); const rows=await sql\`select count(*)::int count from public.schema_migrations\`; if(!rows[0]?.count)process.exit(2); await sql.end(); console.log(JSON.stringify({result:'RESTORE_COMPOSE_REACHABLE'}));"
           [[ "$(docker compose -f docker-compose.yml -f docker-compose.production.yml --profile tools ps --services --status running)" == postgres ]]
+  postgres17-migration-preflight:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: leadfinder_preflight
+          POSTGRES_USER: leadfinder_preflight
+          POSTGRES_PASSWORD: synthetic-postgres17-preflight-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U leadfinder_preflight -d leadfinder_preflight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://leadfinder_preflight:synthetic-postgres17-preflight-only@127.0.0.1:5432/leadfinder_preflight
+      REAL_SEND_ENABLED: 'false'
+      REAL_PROVIDERS_ENABLED: 'false'
+      COLLECTION_EGRESS_ENABLED: 'false'
+      SHADOW_MODE_ENABLED: 'true'
+      PILOT_KILL_SWITCH_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm run db:migrate
+      - run: npm run db:migrate
+      - run: npm run test:migration-registry
+      - run: npm run test:supabase-data-api-security
+      - run: npm run test:manual-messaging
+      - run: npm run test:narrow-contact-resolution
+      - run: npm run test:restore-suppression
   integration:
     runs-on: ubuntu-latest
     services:

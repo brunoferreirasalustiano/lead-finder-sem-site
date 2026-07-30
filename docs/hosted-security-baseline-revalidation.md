@@ -7,14 +7,15 @@
 ## Baseline Git
 
 - `main` observado antes desta PR: `9e77949bb2147d177144ed1b1e76f897fc2561fb`;
-- commit funcional de segurança: `946cc79d8b89414a65a621b8e2996adbd8caaab1`;
+- commit funcional de segurança: `946cc79d8b89414a65a621b8e2996adbd8caaab1`, merge da PR #173;
+- HEAD validado da PR #173: `4fc15817cc8a0b772fb0ae554f6873b6787fb9f5`;
 - os commits administrativos posteriores `c26c8b08d7a2605c7bc3a4fc344162d825a15809` e `9e77949bb2147d177144ed1b1e76f897fc2561fb` adicionaram e removeram o mesmo arquivo temporário;
 - a comparação Git entre `946cc79d8b89414a65a621b8e2996adbd8caaab1` e `9e77949bb2147d177144ed1b1e76f897fc2561fb` possui zero arquivos diferentes;
-- portanto, a árvore funcional atual é a árvore de `946cc79d8b89414a65a621b8e2996adbd8caaab1`.
+- portanto, a árvore funcional atual é a árvore integrada pela PR #173.
 
-## Alterações funcionais do commit de segurança
+## Alterações funcionais validadas pela PR #173
 
-O commit `946cc79d8b89414a65a621b8e2996adbd8caaab1`:
+A PR #173:
 
 - centraliza no migration runner a propriedade da transação;
 - remove wrappers externos `BEGIN`/`COMMIT` de maneira lexicalmente segura antes da execução atômica pelo runner;
@@ -25,10 +26,21 @@ O commit `946cc79d8b89414a65a621b8e2996adbd8caaab1`:
 - prova ausência de membership, ownership, DDL, leitura ampla e escrita nos registries;
 - adiciona cobertura para comentários, literais, dollar quotes e variantes de controle transacional.
 
-## Evidência atual
+## Evidência vinculante da PR #173
 
-- deployment smoke pós-merge do commit funcional: `success`;
-- CI completa de pull request para esta árvore: pendente nesta PR;
+- CI #698: `success` no HEAD exato `4fc15817cc8a0b772fb0ae554f6873b6787fb9f5`;
+- Deployment smoke #363: `success`;
+- aplicação de migrations duas vezes: `success`;
+- compatibilidade dos dois registries: `success`;
+- PostgreSQL, role replay, mensageria manual e narrow resolver: `success`;
+- readiness, restart, PII, restore e multiarch: `success`;
+- P1 do Codex sobre parsing dos wrappers: corrigido e resolvido;
+- threads P0/P1 abertas: `0`.
+
+A CI desta PR documental revalida que a árvore integrada e este registro permanecem compatíveis, mas não substitui as evidências funcionais da PR #173.
+
+## Estado hospedado
+
 - migrations hospedadas aplicadas: `false`;
 - roles hospedadas criadas: `false`;
 - deploy de homologação executado: `false`;
@@ -49,16 +61,21 @@ O commit `946cc79d8b89414a65a621b8e2996adbd8caaab1`:
 - `pgcrypto` instalado no schema `extensions`;
 - roles restritas ainda ausentes.
 
-## Gates restantes antes de qualquer escrita hospedada
+## Gates realmente restantes antes de qualquer escrita hospedada
 
-1. CI completa verde sobre a árvore funcional atual;
-2. revisão de segurança sem P0/P1 aberto;
-3. baseline autenticado do Render com serviço, branch, SHA live, auto-deploy, health check e kill switches comprovados;
-4. evidência de backup restaurável ou procedimento equivalente aprovado para o banco de homologação;
-5. autorização preservada para a sequência controlada `0021`–`0026`, roles, identidade de runtime e deploy;
-6. pós-validação e rollback executáveis.
+1. baseline autenticado do Render com serviço, branch, SHA live, auto-deploy, health check, identidade PostgreSQL e kill switches comprovados;
+2. evidência de backup restaurável ou procedimento equivalente formalmente aprovado para o banco de homologação;
+3. execução com pós-validação e rollback conforme a autorização registrada na issue #167.
 
-Enquanto qualquer gate permanecer pendente:
+Não são bloqueios atuais:
+
+- ordem das migrations `0021`–`0026`: confirmada;
+- pré-condição de `pgcrypto`: confirmada;
+- atomicidade do migration runner: validada;
+- criação e rollback da role resolver: validados;
+- revisão de segurança da PR #173: aprovada sem P0/P1 aberto.
+
+Enquanto os gates hospedados permanecerem pendentes:
 
 - `HOSTED_HOMOLOGATION_EXECUTED=false`;
 - `REAL_MANUAL_PILOT_BLOCKED=true`;

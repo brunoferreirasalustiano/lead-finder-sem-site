@@ -1,113 +1,114 @@
 # Plano controlado de mudança — homologação hospedada
 
-**Estado do plano:** `PREPARED_NOT_APPROVED`  
-**Projeto Supabase:** `lead-finder-brasil-homologacao` (`ondvzdvlwntrnieodifi`)  
+**Estado:** `PREPARED_NOT_APPROVED`  
+**Supabase:** `lead-finder-brasil-homologacao` (`ondvzdvlwntrnieodifi`)  
 **Região:** `sa-east-1`  
-**Runtime de referência:** `946cc79d8b89414a65a621b8e2996adbd8caaab1`  
+**Runtime anterior à PR atual:** `946cc79d8b89414a65a621b8e2996adbd8caaab1`  
 **Gate operacional:** issue #167  
-**Execução hospedada realizada:** `false`  
-**Mensagens reais enviadas:** `0`
+**Hosted mutations:** `0`  
+**Mensagens reais:** `0`
 
-Este documento prepara uma autorização futura. Ele não autoriza deploy, restart, DDL/DML hospedado, criação de role, rotação de credencial, alteração de segredo, provider, egress, dados reais ou envio.
+Este plano prepara uma autorização futura. Ele não autoriza deploy, restart, DDL/DML hospedado, roles, credenciais, secrets, providers, egress, dados reais ou envios.
 
-## 1. Estado comprovado
+## 1. Evidência consolidada
 
 ### Git e qualidade
 
 - PRs #164, #165, #166, #169 e #173 integradas.
-- PR #173 tornou atômicos migration + registro e reforçou o replay da role resolvera.
-- CI #698 e Deployment smoke #363 passaram no HEAD final da PR #173.
-- Migrations duas vezes, dual registry, PostgreSQL, roles, readiness, restart, PII, restore e multiarch passaram.
-- O P1 do scanner SQL foi corrigido e resolvido.
-- `DEEP_SECURITY_SCAN_AVAILABLE=false`; revisão estruturada, CI, testes PostgreSQL, PII, Codex padrão e inspeção manual foram usados sem inventar resultado de deep scan.
+- PR #173 tornou atômicos migration + registry e reforçou o replay da role resolvera.
+- Na PR atual, CI #705 e Deployment smoke #368 passaram no HEAD `aa80168ab1f8dc111130188212aad8f559ba295e`.
+- Typecheck, lint, testes, cobertura, PII, migrations duas vezes, dual registry, PostgreSQL, readiness, restart, restore e multiarch passaram.
+- Deep scan dedicado não está exposto; revisão estruturada, CI, testes PostgreSQL, PII e Codex padrão foram usados sem inventar resultado.
 
 ### Supabase autenticado, somente leitura
 
 - PostgreSQL `17.6.1.147`.
 - `pgcrypto` 1.3 no schema `extensions`.
-- `public.schema_migrations`: `0001` a `0018`.
+- `public.schema_migrations`: `0001`–`0018`.
 - `supabase_migrations.schema_migrations`: `0019_manual_assisted_messaging` e `0020_manual_messaging_append_only_acl`.
 - `0021`–`0026` ausentes dos dois registries.
-- Objetos importados de 0019/0020 presentes, com RLS e triggers esperados.
+- Objetos importados de 0019/0020 presentes, com RLS, triggers e ACLs esperados.
 - Roles `lead_finder_api_runtime` e `lead_finder_contact_resolver_runtime` ausentes.
-- `anon` e `authenticated` sem privilégios efetivos na superfície pública examinada.
-- A tabela de revogações ainda não existe; a checagem de tuplas incompatíveis é `NOT_APPLICABLE_TABLE_ABSENT` antes de 0025.
+- `anon` e `authenticated` sem privilégios efetivos na superfície examinada.
+- A tabela de revogações ainda não existe; checagem de tuplas incompatíveis é `NOT_APPLICABLE_TABLE_ABSENT` antes de 0025.
 
 ## 2. Invariantes
 
 1. Não reaplicar 0019/0020.
 2. Não inserir versões artificialmente no registry local.
-3. Cada migration e seu registro local pertencem à mesma transação do runner.
+3. Migration e registro local pertencem à mesma transação.
 4. Aplicar exatamente uma migration por gate hospedado.
-5. Não iniciar a próxima migration antes de validar a anterior.
-6. Sanitizações históricas de 0022–0024 só podem ser revertidas por restore comprovado do backup pré-change.
-7. Criar roles somente após 0026 e todas as pós-validações verdes.
+5. Não iniciar a próxima antes da pós-validação da anterior.
+6. Sanitizações de 0022–0024 só podem ser revertidas pelo backup pré-change comprovadamente restaurável.
+7. Criar roles somente após 0026 e pós-validações verdes.
 8. API sem `resolve_narrow_contact`; resolvera sem leitura direta de tabelas ou registries.
-9. Credenciais de migration, API e resolvera são separadas.
-10. A credencial resolvera permanece fora do serviço de API do Render.
-11. Providers, envio, coleta externa e egress permanecem desligados.
+9. Credenciais de migration, API e resolvera separadas.
+10. Credencial resolvera fora do serviço API do Render.
+11. Providers, envio, coleta externa e egress desligados.
 
-## 3. Ordem e gates das migrations
+## 3. Runner hospedado por versão
 
-A execução hospedada futura deve usar uma invocação por versão:
+Cada gate usa:
 
 ```bash
 MIGRATION_ONLY_VERSION=<EXACT_FILENAME_STEM> npm run db:migrate
 ```
 
-O runner bloqueia alvo desconhecido e bloqueia quando qualquer predecessor ainda está `PENDING`. Sem `MIGRATION_ONLY_VERSION`, o comportamento completo permanece reservado a CI/local; não é o procedimento hospedado aprovado.
+Regras fail-closed do runner:
 
-### Gate M21 — `0021_operator_channel_test`
+- variável ausente: preserva somente o comportamento completo de CI/local;
+- variável presente vazia ou só com espaços: `MIGRATION_ONLY_VERSION_BLANK`;
+- identificador inexistente: `MIGRATION_ONLY_VERSION_UNKNOWN`;
+- predecessor pendente: `MIGRATION_ONLY_PREDECESSOR_PENDING`;
+- somente o alvo pode estar pendente na invocação hospedada.
 
-**Dependências:** piloto, leads, contatos, reviews, autorizações, opt-outs e `service_role`.  
-**Cria:** tabelas de preparação/eventos, constraints, índices, append-only, transição e funções SECURITY DEFINER.  
-**Segurança:** RLS; PUBLIC/anon/authenticated revogados; service_role allowlisted.  
-**Histórico:** sem sanitização destrutiva.  
-**Pós-validação antes de M22:** registry contém somente 0021 entre as pendentes; tabelas, triggers, funções, RLS e ACLs exatos; teste operador ainda desabilitado.  
-**Stop:** qualquer objeto, ACL, trigger ou registry divergente.
+## 4. Gates M21–M26
 
-### Gate M22 — `0022_persisted_pii_audit_json`
+### M21 — `0021_operator_channel_test`
 
-**Dependências:** 0021 validada, `lead_qualification_history`, `crm_timeline_events`.  
-**Altera:** projeções PII-safe, triggers e backfill histórico.  
-**Impacto:** remove contato, nomes, notas, descrições, owners e JSON arbitrário.  
-**Pós-validação antes de M23:** canários PII ausentes, triggers ativos, função sem EXECUTE público, registry exato.  
-**Rollback:** restore do backup pré-change; não existe down migration capaz de reconstruir dados removidos.
+Dependências: piloto, leads, contatos, reviews, autorizações, opt-outs e `service_role`.
 
-### Gate M23 — `0023_reference_only_campaign_payloads`
+Cria tabelas de preparação/eventos, constraints, índices, append-only, transições e funções SECURITY DEFINER. Habilita RLS e revoga PUBLIC/anon/authenticated.
 
-**Dependências:** M22 validada; recipients, attempts, outbox, dead letters e provider events.  
-**Altera:** payloads reference-only, cinco triggers e backfill.  
-**Impacto:** remove snapshots/payloads livres e preserva apenas IDs/estados allowlisted.  
-**Pós-validação antes de M24:** zero canários PII, cinco triggers ativos, função sem EXECUTE público, registry exato.  
-**Rollback:** restore do backup pré-change.
+Antes de M22 validar:
 
-### Gate M24 — `0024_crm_idempotency_safe_results`
+- registry contém 0021 e nenhuma migration posterior;
+- tabelas, triggers, funções, RLS e ACLs exatos;
+- teste operador ainda desabilitado.
 
-**Dependências:** M23 validada e `crm_idempotency_keys`.  
-**Altera:** função replay-safe, trigger e backfill de `result`.  
-**Impacto:** remove nomes, contatos, notas, descrições e owners.  
-**Pós-validação antes de M25:** replay determinístico, zero canários PII, trigger e registry exatos.  
-**Rollback:** restore do backup pré-change.
+### M22 — `0022_persisted_pii_audit_json`
 
-### Gate M25 — `0025_narrow_contact_resolution`
+Cria projeções PII-safe, triggers e backfill de `lead_qualification_history` e `crm_timeline_events`. Remove contato, nomes, notas, descrições, owners e JSON arbitrário.
 
-**Dependências:** M24 validada, pgcrypto, 0019/0020, piloto, contatos, reviews, autorizações, evidência de e-mail, opt-outs e bloqueios.  
-**Cria/altera:** fingerprint opaco, rotação, revogações append-only, locks, resolver SECURITY DEFINER, fingerprint de mensagem, RLS/revokes/grants e sanitização de snapshots.  
-**Pós-validação antes de M26:** resolução de exatamente um contato; cross-lead, revogado, opt-out, stale e template drift bloqueados; nenhuma PII persistida; registry exato.  
-**Rollback:** restore integral pré-change.
+Antes de M23 validar canários PII ausentes, triggers ativos, função sem EXECUTE público e registry exato.
 
-### Gate M26 — `0026_narrow_contact_resolution_hardening`
+### M23 — `0023_reference_only_campaign_payloads`
 
-**Dependências:** M25 validada.  
-**Altera:** normaliza pgcrypto para `extensions`; unique tuple; preflight agregado e FK composta de revogação.  
-**Stop:** qualquer revogação histórica cuja tupla não corresponda à autorização.  
-**Pós-validação final de schema:** pgcrypto em `extensions`, FK composta, readiness exigindo 0026, registry completo 0021–0026.  
-**Rollback:** restore integral pré-change.
+Transforma recipients, attempts, outbox, dead letters e provider events em payloads reference-only, com cinco triggers e backfill.
 
-## 4. Preflight SQL obrigatório
+Antes de M24 validar zero canários PII, cinco triggers ativos, função sem EXECUTE público e registry exato.
 
-Executar com identidade de migration e sem retornar PII:
+### M24 — `0024_crm_idempotency_safe_results`
+
+Cria resultado replay-safe, trigger e backfill de `crm_idempotency_keys`, removendo nomes, contatos, notas, descrições e owners.
+
+Antes de M25 validar replay determinístico, zero canários, trigger e registry exatos.
+
+### M25 — `0025_narrow_contact_resolution`
+
+Cria fingerprint opaco, rotação, revogações append-only, locks, resolver SECURITY DEFINER, fingerprint de mensagem, RLS/revokes/grants e sanitização de snapshots.
+
+Antes de M26 validar exatamente um contato e bloqueios cross-lead, revogado, opt-out, stale e template drift; nenhuma PII persistida; registry exato.
+
+### M26 — `0026_narrow_contact_resolution_hardening`
+
+Normaliza `pgcrypto` para `extensions`, cria unique tuple e FK composta de revogação. Falha fechado diante de revogação histórica incompatível.
+
+Pós-validação final: `pgcrypto` em `extensions`, FK composta presente, readiness exigindo 0026 e registry completo 0021–0026.
+
+## 5. Preflight SQL
+
+Executar com identidade de migration, sem retornar PII:
 
 ```sql
 SELECT current_database(), current_setting('server_version');
@@ -138,41 +139,44 @@ LEFT JOIN public.contact_channel_authorizations a
 WHERE a.id IS NULL;
 ```
 
-## 5. Backup aceito somente após restore descartável
+## 6. Backup aceito somente após restore descartável
 
 Antes de qualquer DDL:
 
 1. criar dump privado em formato custom;
-2. validar o catálogo do dump;
-3. restaurar esse mesmo artefato em banco descartável isolado;
-4. executar `verify-database-migration`, inventário de constraints/índices/triggers/funções/RLS/roles, row-count/hash comparisons, `setval` e smoke da aplicação;
-5. registrar apenas identificador, timestamp e resultado, nunca URL ou segredo;
-6. provar que o banco fonte permanece intacto e pode voltar a receber clientes;
-7. manter API e worker parados durante o restore de prova e a janela real.
+2. validar o catálogo;
+3. restaurar o mesmo artefato em banco descartável isolado;
+4. executar `verify-database-migration`;
+5. comparar constraints, índices, triggers, funções, RLS, roles, row counts, hashes e sequences;
+6. executar smoke da aplicação;
+7. registrar apenas identificador, timestamp e resultado;
+8. manter API e worker parados durante restore de prova e janela real.
 
-**Stop pré-DDL:** backup não é aceito sem restore descartável e verificação de integridade concluídos com sucesso.
+**Stop pré-DDL:** backup não é aceito sem restore descartável e integridade comprovada.
 
-## 6. Roles e credenciais
+Como M22–M25 sanitizam dados, rollback dessas migrations é restore integral do backup pré-change; não existe down migration segura para reconstruir conteúdo removido.
+
+## 7. Roles e credenciais
 
 ### API runtime
 
-Provar LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, zero memberships/ownership, search path/timeouts, tabelas/funções allowlisted, sem resolver, sem outbox/dead-letter/lead_contacts, sem DML amplo, registries ou DDL.
+Provar LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, zero memberships/ownership, search path/timeouts, allowlists exatas, sem resolver, sem outbox/dead-letter/lead_contacts, sem registries e sem DDL.
 
 ### Resolver runtime
 
 Provar os mesmos atributos restritos, somente USAGE necessário e EXECUTE na assinatura exata do resolver; sem SELECT direto, registries ou DDL; criação duas vezes e rollback duas vezes.
 
-Scripts de role devem ser executados por um único proprietário de transação, por exemplo:
+Executar scripts de role por um proprietário único de transação, por exemplo:
 
 ```bash
 psql --single-transaction --set ON_ERROR_STOP=on
 ```
 
-Ordem: schema M21–M26 → pós-validação → roles → testes positivos/negativos → criação/rotação de credenciais → troca controlada das conexões → deploy → pós-deploy.
+Ordem: M21–M26 → pós-validação → roles → testes de privilégio → credenciais separadas → conexões → deploy → pós-deploy.
 
-## 7. Baseline autenticado obrigatório do Render
+## 8. Baseline autenticado obrigatório do Render
 
-Confirmar em modo somente leitura:
+Confirmar somente leitura:
 
 - workspace e serviço `lead-finder-api-hml`;
 - branch e SHA live exatos;
@@ -180,113 +184,118 @@ Confirmar em modo somente leitura:
 - health check `/health/ready`;
 - identidade PostgreSQL atual;
 - health, readiness e logs sanitizados;
-- presença, sem revelar valores, de:
+- presença sem revelar valores de:
   - `DATABASE_URL`;
   - `API_AUTH_TOKEN`;
   - `API_AUTH_PERMISSIONS`;
   - `INTERNAL_CRON_SECRET`;
   - `CORS_ALLOWED_ORIGINS`;
-- valores efetivos esperados:
+- valores efetivos:
   - `DEPLOYMENT_PROFILE=supabase-render`;
   - `DRY_RUN=true`;
   - `SHADOW_MODE_ENABLED=true`;
+  - `PILOT_KILL_SWITCH_ENABLED=false`;
   - `REAL_SEND_ENABLED=false`;
   - `REAL_PROVIDERS_ENABLED=false`;
   - `REAL_PROVIDER_CONFIGURED=false`;
   - `COLLECTION_EGRESS_ENABLED=false`.
 
-Não exigir variáveis que o runtime/blueprint não consome. Sem esta evidência autenticada, `RENDER_PREFLIGHT=BLOCKED`.
+Não exigir variáveis não consumidas pelo runtime/blueprint. Sem evidência autenticada, `RENDER_PREFLIGHT=BLOCKED`.
 
-## 8. Teste sintético do operador
+## 9. Teste sintético do operador
 
-Não executar o fluxo após as mutations sem prepará-lo antes. Na fase de configuração autorizada, confirmar temporariamente:
+Antes do ensaio autorizado, configurar temporariamente:
 
 - `OPERATOR_TEST_ENABLED=true`;
-- `OPERATOR_TEST_KILL_SWITCH_ENABLED=false` somente durante o ensaio;
-- `OPERATOR_TEST_WHATSAPP_E164` contém valor sintético autorizado;
-- `OPERATOR_TEST_FINGERPRINT_KEY` presente;
-- `OPERATOR_TEST_RECIPIENT_BINDING_KEY` presente;
-- `API_AUTH_PERMISSIONS` inclui:
+- `OPERATOR_TEST_KILL_SWITCH_ENABLED=false`;
+- `OPERATOR_TEST_WHATSAPP_E164` com valor sintético autorizado;
+- `OPERATOR_TEST_FINGERPRINT_KEY`;
+- `OPERATOR_TEST_RECIPIENT_BINDING_KEY`;
+- `API_AUTH_PERMISSIONS` com:
   - `operator-test:prepare`;
   - `operator-test:open`;
   - `operator-test:confirm`;
   - `operator-test:response`.
 
-O teste permanece provider-free e não usa contato real. Após a evidência, restaurar `OPERATOR_TEST_ENABLED=false` e `OPERATOR_TEST_KILL_SWITCH_ENABLED=true`, revalidando readiness e ausência de envio/egress.
+O ensaio é provider-free e não usa contato real.
 
-## 9. Sequência futura autorizável
+Teardown obrigatório antes de readiness final:
+
+1. remover `OPERATOR_TEST_WHATSAPP_E164`;
+2. remover `OPERATOR_TEST_FINGERPRINT_KEY`;
+3. remover `OPERATOR_TEST_RECIPIENT_BINDING_KEY`;
+4. remover as quatro permissões temporárias de `API_AUTH_PERMISSIONS`, restaurando a allowlist anterior;
+5. definir `OPERATOR_TEST_ENABLED=false`;
+6. definir `OPERATOR_TEST_KILL_SWITCH_ENABLED=true`;
+7. revalidar configuração, readiness, zero provider, zero send e zero egress.
+
+Não desabilitar o teste enquanto qualquer segredo `OPERATOR_TEST_*` permanecer configurado.
+
+## 10. Sequência futura autorizável
 
 1. Revalidar main, CI, smoke, reviews e zero P0/P1.
 2. Concluir Render read-only preflight.
 3. Provar backup por restore descartável.
-4. Congelar writes e manter API/worker parados conforme runbook.
-5. Aplicar M21 com `MIGRATION_ONLY_VERSION`; validar Gate M21.
+4. Congelar writes e parar API/worker conforme runbook.
+5. Aplicar M21 com alvo exato; validar Gate M21.
 6. Aplicar M22; validar Gate M22.
 7. Aplicar M23; validar Gate M23.
 8. Aplicar M24; validar Gate M24.
 9. Aplicar M25; validar Gate M25.
 10. Aplicar M26; validar schema/readiness final.
-11. Criar roles com cliente transacional; executar testes de privilégios.
+11. Criar roles transacionalmente e testar privilégios.
 12. Criar/rotacionar credenciais separadas sem revelar valores.
-13. Atualizar a API somente com a credencial da role de API.
-14. Manter a credencial resolvera somente no consumidor local restrito.
+13. Atualizar API somente com a credencial da role de API.
+14. Manter a credencial resolvera somente no consumidor local.
 15. Configurar pré-requisitos sintéticos do operador.
 16. Implantar SHA aprovado com auto-deploy desligado.
-17. Validar SHA live, health, readiness, logs, grants, PII e egress.
+17. Validar SHA, health, readiness, logs, grants, PII e egress.
 18. Executar fluxo sintético provider-free.
-19. Desabilitar novamente o teste operador e validar os kill switches.
-20. Emitir `HOSTED_HOMOLOGATION_GREEN` ou executar rollback.
+19. Executar teardown completo dos secrets/permissões do teste.
+20. Revalidar readiness e kill switches.
+21. Emitir `HOSTED_HOMOLOGATION_GREEN` ou executar rollback.
 
-## 10. Rollback
+## 11. Rollback
 
-### Banco
+- Falha em M21–M26 interrompe a sequência imediatamente.
+- Banco: restore integral pré-change comprovado.
+- Roles: restaurar conexões anteriores, executar rollback transacional e verificar grants residuais.
+- Credenciais: restaurar credencial anterior, provar reconexão e só então revogar a nova; API/resolvera separadamente.
+- Aplicação: restaurar SHA live anterior, manter auto-deploy desligado e validar `/health/ready`, identidade PostgreSQL, logs e kill switches.
 
-Falha em qualquer gate M21–M26 interrompe a sequência. Como M22–M25 sanitizam dados, o rollback da unidade é restore do backup pré-change comprovado. Nunca apagar histórico nem remover constraints para prosseguir.
-
-### Roles
-
-Restaurar primeiro as conexões anteriores; depois executar rollback transacional das roles e confirmar ausência de grants residuais.
-
-### Credenciais
-
-Preservar referência segura à credencial anterior, restaurar conexão anterior, provar reconexão e só então revogar a nova. API e resolvera são revertidas separadamente.
-
-### Aplicação
-
-Restaurar SHA live anterior conhecido, manter auto-deploy desligado, validar `/health/ready`, identidade PostgreSQL, logs e kill switches.
-
-## 11. Stop conditions
+## 12. Stop conditions
 
 - registry divergente;
 - 0019/0020 ausente, duplicada ou sem paridade;
-- predecessor pendente para `MIGRATION_ONLY_VERSION`;
-- restore descartável do backup falhou;
+- alvo ausente, vazio, desconhecido ou com predecessor pendente;
+- restore descartável falhou;
 - pgcrypto não reconciliável;
 - revogação histórica incompatível;
-- objeto/ACL/trigger pós-migration divergente;
+- objeto, ACL ou trigger divergente;
 - role com membership, ownership, BYPASSRLS, DDL ou grant não allowlisted;
 - readiness diferente do schema;
 - PII/segredo em resposta, log ou artefato;
-- SHA live desconhecido ou auto-deploy ativo;
+- SHA live desconhecido, auto-deploy ativo ou pilot kill switch incompatível;
 - configuração do teste operador incompleta;
+- teste desabilitado com secrets/permissões temporários ainda presentes;
 - provider, envio ou egress inesperado;
 - qualquer P0/P1 aberto.
 
-## 12. Gates separados
+## 13. Gates separados
 
 ### Gate A — plano pronto para autorização
 
-Declarar `HOSTED_CHANGE_PLAN_APPROVED` somente quando migrations, roles, Supabase, Render, backup/restore, segurança, rollback e stop conditions estiverem comprovados em modo somente leitura. Este status apenas permite solicitar a autorização humana específica; não permite mutations.
+`HOSTED_CHANGE_PLAN_APPROVED` exige migrations, roles, Supabase, Render, backup/restore, segurança, rollback e stop conditions comprovados em modo somente leitura. Apenas permite solicitar autorização humana; não permite mutations.
 
 ### Gate B — execução autorizada
 
-Declarar `HOSTED_EXECUTION_AUTHORIZED=true` somente após autorização posterior, específica e inequívoca do proprietário, imediatamente antes das mutations hospedadas.
+`HOSTED_EXECUTION_AUTHORIZED=true` exige autorização posterior, específica e inequívoca do proprietário, imediatamente antes das mutations.
 
 ### Gate C — execução GO
 
-`EXECUTION_GO=true` exige Gate A + Gate B + revalidação imediata de SHA, CI, registries, Render, backup e zero P0/P1.
+`EXECUTION_GO=true` exige A+B e revalidação imediata de SHA, CI, registries, Render, backup e zero P0/P1.
 
-## 13. Estado atual
+## 14. Estado atual
 
 - `MIGRATIONS_PREFLIGHT=PASS_AFTER_CURRENT_PR_MERGE`;
 - `ROLES_PREFLIGHT=PASS`;

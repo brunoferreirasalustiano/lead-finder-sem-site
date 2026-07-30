@@ -41,14 +41,16 @@ A CI desta PR documental revalida que a árvore integrada e este registro perman
 
 ## Estado hospedado
 
-- migrations hospedadas aplicadas: `false`;
-- roles hospedadas criadas: `false`;
+- migrations hospedadas `0001`–`0018`: presentes no registry local;
+- migrations importadas `0019` e `0020`: presentes no registry do Supabase;
+- migrations hospedadas `0021`–`0026` aplicadas: `false`;
+- roles hospedadas restritas criadas: `false`;
 - deploy de homologação executado: `false`;
 - providers reais habilitados: `false`;
 - mensagens reais enviadas: `0`;
 - leads reais contatados: `0`.
 
-## Supabase somente leitura
+## Último inventário Supabase somente leitura
 
 Último inventário autenticado antes desta PR:
 
@@ -61,19 +63,28 @@ A CI desta PR documental revalida que a árvore integrada e este registro perman
 - `pgcrypto` instalado no schema `extensions`;
 - roles restritas ainda ausentes.
 
-## Gates realmente restantes antes de qualquer escrita hospedada
+Esse inventário é evidência histórica de preflight e não autoriza escrita futura por si só.
 
-1. baseline autenticado do Render com serviço, branch, SHA live, auto-deploy, health check, identidade PostgreSQL e kill switches comprovados;
-2. evidência de backup restaurável ou procedimento equivalente formalmente aprovado para o banco de homologação;
-3. execução com pós-validação e rollback conforme a autorização registrada na issue #167.
+## Gates obrigatórios imediatamente antes de qualquer escrita hospedada
 
-Não são bloqueios atuais:
+1. reautenticar no projeto Supabase exato e confirmar `ACTIVE_HEALTHY`;
+2. reconciliar novamente `public.schema_migrations` e `supabase_migrations.schema_migrations`;
+3. confirmar que `0019` e `0020` permanecem importadas, sem registro artificial no registry local;
+4. validar paridade de objetos, constraints, triggers, RLS e ACLs das migrations importadas;
+5. confirmar que `0021`–`0026` continuam ausentes antes da aplicação;
+6. revalidar o schema efetivo e a relocabilidade do `pgcrypto`;
+7. verificar, sem retornar PII, se existem revogações históricas incompatíveis;
+8. comprovar baseline autenticado do Render com serviço, branch, SHA live, auto-deploy, health check, identidade PostgreSQL e kill switches;
+9. comprovar backup restaurável ou procedimento equivalente formalmente aprovado para o banco de homologação;
+10. executar a sequência autorizada com pós-validação e rollback conforme a issue #167.
 
-- ordem das migrations `0021`–`0026`: confirmada;
-- pré-condição de `pgcrypto`: confirmada;
-- atomicidade do migration runner: validada;
-- criação e rollback da role resolver: validados;
-- revisão de segurança da PR #173: aprovada sem P0/P1 aberto.
+Validações de repositório já concluídas, mas que não substituem o preflight hospedado fresco:
+
+- ordem lógica das migrations `0021`–`0026`;
+- pré-condições de código para `pgcrypto`;
+- atomicidade do migration runner;
+- criação e rollback da role resolver;
+- revisão de segurança da PR #173 sem P0/P1 aberto.
 
 Enquanto os gates hospedados permanecerem pendentes:
 

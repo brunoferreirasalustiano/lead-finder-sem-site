@@ -42,7 +42,7 @@ export const safeLeadDto = (value: unknown) => {
     isClosed: item['isClosed'],
     crmStage: item['crmStage'],
     crmPriority: item['crmPriority'],
-    crmOwner: item['crmOwner'],
+    crmOwner: null,
     crmNextActionAt: item['crmNextActionAt'],
     crmVersion: item['crmVersion'],
     createdAt: item['createdAt'],

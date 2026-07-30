@@ -16,11 +16,16 @@ const rollbackSql = stripPsqlMeta(await readFile(
   new URL('../database/security/rollback_lead_finder_contact_resolver_runtime.sql', import.meta.url),
   'utf8',
 ));
+const runAtomically = async (source: string) => {
+  await owner.begin(async (transaction) => {
+    await transaction.unsafe(source);
+  });
+};
 
 try {
-  await owner.unsafe(rollbackSql).catch(() => undefined);
-  await owner.unsafe(createSql);
-  await owner.unsafe(createSql);
+  await runAtomically(rollbackSql).catch(() => undefined);
+  await runAtomically(createSql);
+  await runAtomically(createSql);
 
   const attributes = (await owner<{
     login: boolean;
@@ -116,8 +121,8 @@ try {
     await transaction.unsafe('CREATE TABLE public.resolver_role_escape(id integer)');
   }));
 
-  await owner.unsafe(rollbackSql);
-  await owner.unsafe(rollbackSql);
+  await runAtomically(rollbackSql);
+  await runAtomically(rollbackSql);
   const remaining = await owner<{ count: number }[]>`
     SELECT count(*)::int AS count FROM pg_roles WHERE rolname=${roleName}`;
   assert.equal(remaining[0]?.count, 0);
@@ -132,6 +137,6 @@ try {
     ddl: 'DENIED',
   }));
 } finally {
-  await owner.unsafe(rollbackSql).catch(() => undefined);
+  await runAtomically(rollbackSql).catch(() => undefined);
   await owner.end();
 }

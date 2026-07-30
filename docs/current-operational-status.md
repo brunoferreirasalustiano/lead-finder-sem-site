@@ -2,7 +2,7 @@
 
 **Última revisão:** 30 de julho de 2026  
 **Repositório oficial:** `brunoferreirasalustiano/lead-finder-sem-site`  
-**`main` verificada:** `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`  
+**Baseline de runtime verificada:** `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`  
 **Gate de produção controlada:** issue #167  
 **Estado técnico:** `READY_FOR_HOSTED_HOMOLOGATION`  
 **Estado comercial:** `REAL_MANUAL_PILOT_BLOCKED=true`  
@@ -14,7 +14,7 @@ Este documento registra o baseline operacional verificável. Quando houver diver
 
 As PRs #164, #165 e #166 foram integradas. O código atingiu `READY_FOR_HOSTED_HOMOLOGATION`, com CI, smoke, revisão independente e hardening pós-merge aprovados, sem P0 ou P1 aberto conhecido.
 
-A `main` atual contém:
+A baseline de runtime contém:
 
 - controles de privacidade persistente e projeções PII-safe;
 - runtime PostgreSQL de privilégio mínimo;
@@ -49,7 +49,8 @@ Estados atuais:
 
 ## Baseline Git e PRs
 
-- `main`: `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`, merge da PR #166;
+- baseline de runtime integrada na `main`: `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`, merge da PR #166;
+- a `main` pode avançar por sucessor exclusivamente documental sem alterar essa árvore de runtime;
 - PR #164: integrada no commit `728b8748f1f9d0bf47a527cf0d744fa42ec99030`;
 - PR #165: integrada no commit `d0018fcdbad01cec6369ef857ef7fd59d3b38aef`;
 - PR #166: integrada no commit `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`;
@@ -93,11 +94,13 @@ Regras obrigatórias:
 A sequência hospedada pendente deve ser tratada como uma unidade ordenada:
 
 1. `0021_operator_channel_test`;
-2. `0022_pii_safe_api_contracts`;
-3. `0023_pii_safe_persistence`;
+2. `0022_persisted_pii_audit_json`;
+3. `0023_reference_only_campaign_payloads`;
 4. `0024_crm_idempotency_safe_results`;
 5. `0025_narrow_contact_resolution`;
 6. `0026_narrow_contact_resolution_hardening`.
+
+Os identificadores acima são os basenames exatos registrados pelo migration runner.
 
 Funções dos gates finais:
 
@@ -168,7 +171,7 @@ O SHA live, a branch implantada, as variáveis efetivas, os grants usados pelo r
 
 Antes de qualquer escrita hospedada, comprovar:
 
-1. SHA exato da `main` aprovada: `53fa744dd0cfdfaa43e6690e94c2697df9b55af9` ou sucessor documental sem mudança de runtime;
+1. baseline de runtime aprovada: `53fa744dd0cfdfaa43e6690e94c2697df9b55af9`, ou sucessor exclusivamente documental sem mudança da árvore de runtime;
 2. CI e smoke verdes no SHA/árvore de código alvo;
 3. backup e procedimento de restore;
 4. registries de migration reconciliados;

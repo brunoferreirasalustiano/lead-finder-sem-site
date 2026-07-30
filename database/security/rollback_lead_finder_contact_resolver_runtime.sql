@@ -1,7 +1,5 @@
 \set ON_ERROR_STOP on
 
-BEGIN;
-
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_contact_resolver_runtime') THEN
@@ -16,5 +14,3 @@ BEGIN
     DROP ROLE lead_finder_contact_resolver_runtime;
   END IF;
 END $$;
-
-COMMIT;

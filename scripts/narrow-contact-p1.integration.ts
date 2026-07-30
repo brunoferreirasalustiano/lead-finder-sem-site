@@ -325,7 +325,12 @@ try {
         authorization: `Bearer ${token}`,
         'idempotency-key': randomUUID(),
       },
-      payload: emailInput,
+      payload: {
+        contactId: emailInput.contactId,
+        requestedChannel: emailInput.requestedChannel,
+        templateId: emailInput.templateId,
+        templateVersion: emailInput.templateVersion,
+      },
     });
     assert.equal(response.statusCode, 422);
     assert.equal(

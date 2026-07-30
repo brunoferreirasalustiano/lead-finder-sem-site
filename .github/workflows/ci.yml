@@ -193,6 +193,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
+      - name: Use PostgreSQL 17 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm run build
       - run: npm run db:migrate

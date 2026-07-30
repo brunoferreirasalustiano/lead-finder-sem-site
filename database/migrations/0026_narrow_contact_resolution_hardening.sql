@@ -80,11 +80,11 @@ BEGIN
   SELECT count(*)
   INTO mismatch_count
   FROM public.contact_channel_authorization_revocations revocation
-  JOIN public.contact_channel_authorizations authorization
-    ON authorization.id=revocation.authorization_id
-  WHERE authorization.contact_id IS DISTINCT FROM revocation.contact_id
-     OR authorization.lead_id IS DISTINCT FROM revocation.lead_id
-     OR authorization.purpose IS DISTINCT FROM revocation.purpose;
+  JOIN public.contact_channel_authorizations auth
+    ON auth.id=revocation.authorization_id
+  WHERE auth.contact_id IS DISTINCT FROM revocation.contact_id
+     OR auth.lead_id IS DISTINCT FROM revocation.lead_id
+     OR auth.purpose IS DISTINCT FROM revocation.purpose;
 
   IF mismatch_count > 0 THEN
     RAISE EXCEPTION

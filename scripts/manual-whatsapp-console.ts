@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { approvedTemplates } from '@lead-finder/messaging';
+import {
+  approvedTemplates,
+  DeterministicFakeMessagingProvider,
+  type MessageTemplate,
+} from '@lead-finder/messaging';
 import {
   CONTACT_RESOLUTION_PURPOSE,
   createDatabase,
@@ -58,6 +62,8 @@ type ApiConfig = Readonly<{
 }>;
 
 type ApiErrorBody = Readonly<{ code?: unknown }>;
+
+const localMessagingProvider = new DeterministicFakeMessagingProvider();
 
 export const escapeHtml = (value: string) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -152,6 +158,29 @@ export function validatePreparation(value: unknown): Preparation {
     || typeof item['replayed'] !== 'boolean'
   ) throw new Error('INVALID_PREPARATION_RESPONSE');
   return item as Preparation;
+}
+
+export function verifyLocalWhatsAppMessage(
+  preparation: Readonly<{
+    templateId: string;
+    templateVersion: string;
+    messageFingerprint: string;
+  }>,
+  leadName: string,
+  template: MessageTemplate = approvedTemplates.whatsappV1,
+): string {
+  if (
+    template.channel !== 'WHATSAPP'
+    || preparation.templateId !== template.id
+    || preparation.templateVersion !== template.version
+  ) {
+    throw new Error('MESSAGE_TEMPLATE_CHANGED');
+  }
+  const prepared = localMessagingProvider.prepare(template, { EMPRESA: leadName });
+  if (prepared.fingerprint !== preparation.messageFingerprint) {
+    throw new Error('MESSAGE_FINGERPRINT_CHANGED');
+  }
+  return prepared.body;
 }
 
 const page = (title: string, body: string) => `<!doctype html>
@@ -383,8 +412,8 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
           {
             contactId,
             requestedChannel: 'WHATSAPP',
-            templateId: 'pilot-whatsapp-first-contact',
-            templateVersion: 'v1',
+            templateId: approvedTemplates.whatsappV1.id,
+            templateVersion: approvedTemplates.whatsappV1.version,
           },
         );
         const preparation = validatePreparation(payload);
@@ -422,10 +451,7 @@ export function startManualWhatsAppConsole(environment: NodeJS.ProcessEnv = proc
         if (resolved.fingerprint !== preparation.contactFingerprint) {
           throw new Error('CONTACT_FINGERPRINT_CHANGED');
         }
-        const message = approvedTemplates.whatsappV1.body.replace(
-          '[EMPRESA]',
-          resolved.leadName,
-        );
+        const message = verifyLocalWhatsAppMessage(preparation, resolved.leadName);
         const link = createOperatorTestWhatsAppUrl(resolved.value, message);
         await apiRequest(
           api,

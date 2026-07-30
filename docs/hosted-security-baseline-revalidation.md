@@ -1,7 +1,9 @@
 # Revalidação do baseline de segurança hospedada
 
-**Data:** 30 de julho de 2026  
-**Gate operacional:** issue #167  
+**Data:** 30 de julho de 2026
+
+**Gate operacional:** issue #167
+
 **Escopo:** somente documentação e validação da árvore atual
 
 ## Baseline Git
@@ -28,12 +30,12 @@ A PR #173:
 
 ## Evidência vinculante da PR #173
 
-- CI #698: `success` no HEAD exato `4fc15817cc8a0b772fb0ae554f6873b6787fb9f5`;
-- Deployment smoke #363: `success`;
-- aplicação de migrations duas vezes: `success`;
-- compatibilidade dos dois registries: `success`;
-- PostgreSQL, role replay, mensageria manual e narrow resolver: `success`;
-- readiness, restart, PII, restore e multiarch: `success`;
+- GitHub CI #698: conclusão `success`; resultado de validação `PASS` no HEAD exato `4fc15817cc8a0b772fb0ae554f6873b6787fb9f5`;
+- Deployment smoke #363: resultado `PASS`;
+- aplicação de migrations duas vezes: resultado `PASS`;
+- compatibilidade dos dois registries: resultado `PASS`;
+- PostgreSQL, role replay, mensageria manual e narrow resolver: resultado `PASS`;
+- readiness, restart, PII, restore e multiarch: resultado `PASS`;
 - P1 do Codex sobre parsing dos wrappers: corrigido e resolvido;
 - threads P0/P1 abertas: `0`.
 

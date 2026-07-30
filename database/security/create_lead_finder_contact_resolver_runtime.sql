@@ -13,6 +13,10 @@ BEGIN
   END IF;
 END $$;
 
+ALTER ROLE lead_finder_contact_resolver_runtime SET search_path = pg_catalog, public;
+ALTER ROLE lead_finder_contact_resolver_runtime SET statement_timeout = '15s';
+ALTER ROLE lead_finder_contact_resolver_runtime SET idle_in_transaction_session_timeout = '15s';
+
 DO $$
 BEGIN
   EXECUTE format(

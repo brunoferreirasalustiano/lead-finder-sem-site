@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
 import { getMigrationSource } from './migration-registry-plan.js';
-import { buildMigrationRunPlan } from './migration-run-plan.js';
+import { buildMigrationRunPlan, parseMigrationOnlyVersion } from './migration-run-plan.js';
 import { assertImportedMigrationParity, loadMigrationRegistry } from './migration-registry.js';
 import { prepareMigrationSqlForRunner } from './migration-sql.js';
 
@@ -20,7 +20,7 @@ try {
   const directory = new URL('../database/migrations/', import.meta.url);
   const allFiles = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
   const allVersions = allFiles.map((file) => file.replace(/\.sql$/, ''));
-  const onlyVersion = process.env['MIGRATION_ONLY_VERSION']?.trim() || undefined;
+  const onlyVersion = parseMigrationOnlyVersion(process.env['MIGRATION_ONLY_VERSION']);
   const selectedVersions = buildMigrationRunPlan(
     allVersions,
     (version) => getMigrationSource(registry, version),

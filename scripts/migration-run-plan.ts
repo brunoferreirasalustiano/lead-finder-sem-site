@@ -1,5 +1,12 @@
 export type MigrationRegistrySource = 'LOCAL' | 'IMPORTED' | 'PENDING';
 
+export function parseMigrationOnlyVersion(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const normalized = raw.trim();
+  if (!normalized) throw new Error('MIGRATION_ONLY_VERSION_BLANK');
+  return normalized;
+}
+
 export function buildMigrationRunPlan(
   versions: readonly string[],
   sourceFor: (version: string) => MigrationRegistrySource,

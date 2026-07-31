@@ -21,7 +21,7 @@ export type OperatorEmailTestRuntime = Readonly<{
 export type OperatorEmailDelivery = (
   message: Readonly<{ subject: string; body: string }>,
 ) => Promise<Readonly<{
-  provider: 'GMAIL_SMTP';
+  provider: 'GMAIL_API';
   messageId: string;
   response: string;
 }>>;
@@ -292,7 +292,7 @@ export async function sendOperatorEmailTest(
     });
   } catch (error) {
     const failureFingerprint = digest({
-      provider: 'GMAIL_SMTP',
+      provider: 'GMAIL_API',
       errorType: error instanceof Error ? error.name : typeof error,
     });
     try {

@@ -39,4 +39,7 @@ services:
       - { key: OPERATOR_EMAIL_TEST_SENDER, sync: false }
       - { key: OPERATOR_EMAIL_TEST_SMTP_USER, sync: false }
       - { key: OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET, sync: false }
+      - { key: OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN, sync: false }
       - { key: OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, sync: false }

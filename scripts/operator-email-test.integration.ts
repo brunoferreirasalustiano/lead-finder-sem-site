@@ -33,9 +33,9 @@ const input = (idempotencyKey = randomUUID()) => ({
   idempotencyKey,
 });
 const receipt = {
-  provider: 'GMAIL_SMTP',
-  messageId: '<synthetic@example.test>',
-  response: '250 accepted',
+  provider: 'GMAIL_API',
+  messageId: 'synthetic-gmail-message-id',
+  response: 'HTTP 200',
 } as const;
 const expectCode = async (
   action: Promise<unknown>,
@@ -166,7 +166,7 @@ try {
   let failedDeliveries = 0;
   const failingDelivery: OperatorEmailDelivery = async () => {
     failedDeliveries += 1;
-    throw new Error('synthetic SMTP failure with operator@example.test');
+    throw new Error('synthetic Gmail API failure with operator@example.test');
   };
   const failureKey = randomUUID();
   await expectCode(

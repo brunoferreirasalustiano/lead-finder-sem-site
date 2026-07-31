@@ -70,7 +70,11 @@ describe('Gmail API operator email consumer', () => {
         'content-type': 'application/json',
       },
     });
-    const request = JSON.parse(String(sendCall?.[1]?.body)) as { raw: string };
+    const requestBody = sendCall?.[1]?.body;
+    expect(typeof requestBody).toBe('string');
+    const request = JSON.parse(
+      typeof requestBody === 'string' ? requestBody : '{}',
+    ) as { raw: string };
     const mimeMessage = Buffer.from(request.raw, 'base64url').toString('utf8');
     expect(mimeMessage).toContain('From: operator@example.test');
     expect(mimeMessage).toContain('To: operator@example.test');

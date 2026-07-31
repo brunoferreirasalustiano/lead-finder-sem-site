@@ -4,7 +4,7 @@ import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
-import { createGmailOperatorEmailConsumer } from '@lead-finder/email';
+import { createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
 import { hostname } from 'node:os';
 
 const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
@@ -61,12 +61,19 @@ registerOperatorTestRoutes(app, db, {
   recipientBindingKey: config.OPERATOR_TEST_RECIPIENT_BINDING_KEY,
 });
 const operatorEmailConsumer = config.OPERATOR_EMAIL_TEST_ENABLED
-  ? createGmailOperatorEmailConsumer({
-      sender: config.OPERATOR_EMAIL_TEST_SENDER!,
-      recipient: config.OPERATOR_EMAIL_TEST_RECIPIENT!,
-      smtpUser: config.OPERATOR_EMAIL_TEST_SMTP_USER!,
-      smtpAppPassword: config.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD!,
-    })
+  ? (() => {
+      try {
+        return createGmailApiOperatorEmailConsumer({
+          sender: config.OPERATOR_EMAIL_TEST_SENDER!,
+          recipient: config.OPERATOR_EMAIL_TEST_RECIPIENT!,
+          googleClientId: process.env['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID'] ?? '',
+          googleClientSecret: process.env['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET'] ?? '',
+          googleRefreshToken: process.env['OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN'] ?? '',
+        });
+      } catch {
+        return abortStartup('INVALID_CONFIGURATION');
+      }
+    })()
   : undefined;
 registerOperatorEmailTestRoute(
   app,

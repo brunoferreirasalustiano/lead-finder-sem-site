@@ -1,24 +1,67 @@
-import nodemailer from 'nodemailer';
 import { z } from 'zod';
 
 const normalizedEmail = z.string().trim().toLowerCase().email().max(320);
+const printableSecret = (name: string, maximum: number) => z
+  .string()
+  .min(16)
+  .max(maximum)
+  .regex(/^[\x21-\x7e]+$/, `${name} must contain printable non-space ASCII characters only`);
 const operatorEmailConfigurationSchema = z
   .object({
     sender: normalizedEmail,
     recipient: normalizedEmail,
-    smtpUser: normalizedEmail,
-    smtpAppPassword: z.string().trim().min(16).max(128).regex(/^[A-Za-z0-9]+$/),
+    googleClientId: z
+      .string()
+      .trim()
+      .min(16)
+      .max(512)
+      .regex(
+        /^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$/,
+        'Google OAuth client ID is invalid',
+      ),
+    googleClientSecret: printableSecret('Google OAuth client secret', 512),
+    googleRefreshToken: printableSecret('Google OAuth refresh token', 1_024),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.sender !== value.recipient || value.sender !== value.smtpUser) {
+    if (value.sender !== value.recipient) {
       context.addIssue({
         code: 'custom',
         path: ['recipient'],
-        message: 'operator email sender, recipient, and SMTP user must be identical',
+        message: 'operator email sender and recipient must be identical',
+      });
+    }
+    if (value.googleClientSecret === value.googleRefreshToken) {
+      context.addIssue({
+        code: 'custom',
+        path: ['googleRefreshToken'],
+        message: 'Google OAuth client secret and refresh token must differ',
       });
     }
   });
+
+const subjectSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .refine((value) => !/[\r\n]/.test(value), 'subject must not contain line breaks');
+const bodySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_000)
+  .refine((value) => !value.includes('\u0000'), 'body must not contain null bytes');
+const tokenResponseSchema = z.object({
+  access_token: z.string().min(1).max(4_096),
+  token_type: z.string().optional(),
+  expires_in: z.number().int().positive().optional(),
+  scope: z.string().optional(),
+});
+const gmailSendResponseSchema = z.object({
+  id: z.string().min(1).max(512),
+  threadId: z.string().min(1).max(512).optional(),
+});
 
 export type OperatorEmailMessage = Readonly<{
   subject: string;
@@ -26,45 +69,73 @@ export type OperatorEmailMessage = Readonly<{
 }>;
 
 export type OperatorEmailDeliveryReceipt = Readonly<{
-  provider: 'GMAIL_SMTP';
+  provider: 'GMAIL_API';
   messageId: string;
   response: string;
 }>;
 
-type MailResult = Readonly<{
-  accepted?: readonly unknown[];
-  rejected?: readonly unknown[];
-  messageId?: unknown;
-  response?: unknown;
-}>;
+export type OperatorEmailFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
-export type OperatorEmailTransport = Readonly<{
-  verify: () => Promise<unknown>;
-  sendMail: (input: Readonly<Record<string, unknown>>) => Promise<MailResult>;
-}>;
-
-type TransportFactory = (configuration: Readonly<Record<string, unknown>>) => OperatorEmailTransport;
-
-const defaultTransportFactory: TransportFactory = (configuration) =>
-  nodemailer.createTransport(configuration);
+const defaultFetch: OperatorEmailFetch = (input, init) => fetch(input, init);
 
 export class OperatorEmailDeliveryError extends Error {
   constructor(
     message: string,
-    readonly code: 'INVALID_CONFIGURATION' | 'DELIVERY_REJECTED',
+    readonly code:
+      | 'INVALID_CONFIGURATION'
+      | 'TOKEN_EXCHANGE_FAILED'
+      | 'DELIVERY_REJECTED',
   ) {
     super(message);
   }
 }
 
-export function createGmailOperatorEmailConsumer(
+const encodeHeader = (value: string) =>
+  `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+
+const wrapBase64 = (value: string) => value.match(/.{1,76}/g)?.join('\r\n') ?? '';
+
+const createRawMessage = (
+  configuration: Readonly<{ sender: string; recipient: string }>,
+  message: OperatorEmailMessage,
+) => {
+  const subject = subjectSchema.parse(message.subject);
+  const body = bodySchema.parse(message.body);
+  const encodedBody = wrapBase64(Buffer.from(body, 'utf8').toString('base64'));
+  const mimeMessage = [
+    `From: ${configuration.sender}`,
+    `To: ${configuration.recipient}`,
+    `Subject: ${encodeHeader(subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    'X-Lead-Finder-Purpose: OPERATOR_TEST',
+    '',
+    encodedBody,
+  ].join('\r\n');
+  return Buffer.from(mimeMessage, 'utf8').toString('base64url');
+};
+
+const parseJson = async (response: Response): Promise<unknown> => {
+  try {
+    return await response.json();
+  } catch {
+    return undefined;
+  }
+};
+
+export function createGmailApiOperatorEmailConsumer(
   input: {
     sender: string;
     recipient: string;
-    smtpUser: string;
-    smtpAppPassword: string;
+    googleClientId: string;
+    googleClientSecret: string;
+    googleRefreshToken: string;
   },
-  transportFactory: TransportFactory = defaultTransportFactory,
+  fetchImpl: OperatorEmailFetch = defaultFetch,
 ) {
   const parsed = operatorEmailConfigurationSchema.safeParse(input);
   if (!parsed.success) {
@@ -74,54 +145,76 @@ export function createGmailOperatorEmailConsumer(
     );
   }
   const configuration = parsed.data;
-  const transport = transportFactory({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: configuration.smtpUser,
-      pass: configuration.smtpAppPassword,
-    },
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 20_000,
-    logger: false,
-    debug: false,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-  });
 
   return {
     async sendInternalTest(message: OperatorEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
-      const subject = z.string().trim().min(1).max(200).parse(message.subject);
-      const body = z.string().trim().min(1).max(2_000).parse(message.body);
-      await transport.verify();
-      const result = await transport.sendMail({
-        from: configuration.sender,
-        to: configuration.recipient,
-        subject,
-        text: body,
-        headers: {
-          'X-Lead-Finder-Purpose': 'OPERATOR_TEST',
-        },
-        disableFileAccess: true,
-        disableUrlAccess: true,
+      const raw = createRawMessage(configuration, message);
+      const tokenBody = new URLSearchParams({
+        client_id: configuration.googleClientId,
+        client_secret: configuration.googleClientSecret,
+        refresh_token: configuration.googleRefreshToken,
+        grant_type: 'refresh_token',
       });
-      if (
-        result.accepted?.length !== 1
-        || (result.rejected?.length ?? 0) !== 0
-        || typeof result.messageId !== 'string'
-        || typeof result.response !== 'string'
-      ) {
+
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetchImpl('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body: tokenBody,
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch {
+        throw new OperatorEmailDeliveryError(
+          'Google OAuth token exchange failed',
+          'TOKEN_EXCHANGE_FAILED',
+        );
+      }
+      const token = tokenResponse.ok
+        ? tokenResponseSchema.safeParse(await parseJson(tokenResponse))
+        : undefined;
+      if (!token?.success) {
+        throw new OperatorEmailDeliveryError(
+          'Google OAuth token exchange failed',
+          'TOKEN_EXCHANGE_FAILED',
+        );
+      }
+
+      let deliveryResponse: Response;
+      try {
+        deliveryResponse = await fetchImpl(
+          'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token.data.access_token}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ raw }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+      } catch {
+        throw new OperatorEmailDeliveryError(
+          'Operator email delivery was rejected',
+          'DELIVERY_REJECTED',
+        );
+      }
+      const delivery = deliveryResponse.ok
+        ? gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse))
+        : undefined;
+      if (!delivery?.success) {
         throw new OperatorEmailDeliveryError(
           'Operator email delivery was rejected',
           'DELIVERY_REJECTED',
         );
       }
       return {
-        provider: 'GMAIL_SMTP',
-        messageId: result.messageId,
-        response: result.response,
+        provider: 'GMAIL_API',
+        messageId: delivery.data.id,
+        response: `HTTP ${deliveryResponse.status}`,
       };
     },
   } as const;

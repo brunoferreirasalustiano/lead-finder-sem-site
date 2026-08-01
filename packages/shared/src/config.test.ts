@@ -115,8 +115,9 @@ describe('environment configuration', () => {
       OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: 'false',
       OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
       OPERATOR_EMAIL_TEST_SENDER: 'operator@example.test',
-      OPERATOR_EMAIL_TEST_SMTP_USER: 'operator@example.test',
-      OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: 'abcdefghijklmnop',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID: '123456789-synthetic.apps.googleusercontent.com',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: 'synthetic-client-secret-0001',
+      OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN: 'synthetic-refresh-token-0001',
       OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: 'operator-email-test-fingerprint-key-0001',
     };
     expect(parseApiConfig(enabled)).toMatchObject({
@@ -127,15 +128,52 @@ describe('environment configuration', () => {
     expect(() => parseApiConfig({
       ...enabled,
       OPERATOR_EMAIL_TEST_RECIPIENT: 'lead@example.test',
-    })).toThrow('recipient, sender, and SMTP user must be identical');
+    })).toThrow('operator email test sender and recipient must be identical');
     expect(() => parseApiConfig({
       ...enabled,
-      OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: undefined,
-    })).toThrow('OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD');
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: undefined,
+    })).toThrow('OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET');
     expect(() => parseApiConfig({
       ...database,
       OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
     })).toThrow('OPERATOR_EMAIL_TEST_ENABLED must be true');
+  });
+
+  it('accepts Gmail API configuration without SMTP credentials', () => {
+    const enabled = {
+      ...database,
+      OPERATOR_EMAIL_TEST_ENABLED: 'true',
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_SENDER: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID: '123456789-synthetic.apps.googleusercontent.com',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: 'synthetic-client-secret-0001',
+      OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN: 'synthetic-refresh-token-0001',
+      OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: 'operator-email-test-fingerprint-key-0001',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID: '123456789-synthetic.apps.googleusercontent.com',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: 'synthetic-client-secret-0001',
+      OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN: 'synthetic-refresh-token-0001',
+    });
+  });
+
+  it.each([
+    ['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', 'synthetic-api-token-for-tests-only-0001'],
+    ['OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', 'synthetic-api-token-for-tests-only-0001'],
+    ['OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', 'synthetic-api-token-for-tests-only-0001'],
+  ])('rejects reuse of API_AUTH_TOKEN in %s', (name, value) => {
+    const enabled = {
+      ...database,
+      OPERATOR_EMAIL_TEST_ENABLED: 'true',
+      OPERATOR_EMAIL_TEST_RECIPIENT: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_SENDER: 'operator@example.test',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID: '123456789-synthetic.apps.googleusercontent.com',
+      OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: 'synthetic-client-secret-0001',
+      OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN: 'synthetic-refresh-token-0001',
+      OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: 'operator-email-test-fingerprint-key-0001',
+      [name]: value,
+    };
+    expect(() => parseApiConfig(enabled)).toThrow(name);
   });
 
   it.each([

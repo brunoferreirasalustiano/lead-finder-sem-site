@@ -63,6 +63,7 @@ type EligibleContact = {
   legacy_contact_fingerprint: string;
   contact_source: string;
   lead_name: string;
+  contact_value: string;
 };
 async function exactEligibleContact(
   tx: Pick<Database, 'execute'>,
@@ -79,7 +80,7 @@ async function exactEligibleContact(
     sql`select pg_advisory_xact_lock(hashtextextended(${`manual-messaging-purpose:${leadId}:${CONTACT_RESOLUTION_PURPOSE}`},0))`,
   );
   const rows = await tx.execute(
-    sql<EligibleContact[]>`select c.id contact_id,${requestedChannel}::text channel,
+    sql<EligibleContact[]>`select c.id contact_id,c.normalized_value contact_value,${requestedChannel}::text channel,
       c.contact_resolution_fingerprint contact_fingerprint,
       pg_catalog.encode(
         extensions.digest(
@@ -325,6 +326,47 @@ export async function prepareManualMessage(
       replayed: false,
     };
   });
+}
+
+export async function sendPreparedManualEmail(
+  db: Database,
+  preparationId: string,
+  auth: AuthorizationContext,
+  input: {
+    sender: string;
+    fingerprintKey: string;
+    sendEnabled: boolean;
+    killSwitchEnabled: boolean;
+    deliver: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+  },
+) {
+  if (!input.sendEnabled || input.killSwitchEnabled)
+    throw new ManualMessagingError('Manual email delivery is disabled', 'EMAIL_CONSUMER_UNAVAILABLE');
+  const fingerprint = (value: string) => createHash('sha256').update(`${input.fingerprintKey}:${value}`).digest('hex');
+  const reservation = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`manual-email:${preparationId}`},0))`);
+    const prep = (await tx.execute(sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${preparationId}::uuid for update`))[0];
+    if (!prep) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (prep.channel !== 'EMAIL') throw new ManualMessagingError('Only email preparations can be sent', 'INVALID_STATE');
+    const opened = (await tx.execute(sql<{ id: string }[]>`select id from pilot_manual_message_events where preparation_id=${preparationId}::uuid and event_type='OPENED' limit 1`))[0];
+    if (!opened) throw new ManualMessagingError('Preparation must be opened before delivery', 'INVALID_STATE');
+    const prior = (await tx.execute(sql<{ id: string }[]>`select id from pilot_manual_email_send_attempts where preparation_id=${preparationId}::uuid`))[0];
+    if (prior) throw new ManualMessagingError('Email delivery already reserved', 'IDEMPOTENCY_CONFLICT');
+    const eligible = await exactEligibleContact(tx, String(prep.pilot_run_id), String(prep.lead_id), String(prep.contact_id), 'EMAIL');
+    const validated = validatePreparedSnapshot(eligible, 'EMAIL', prep.result_snapshot, String(prep.result_fingerprint));
+    if (!validated.prepared.subject) throw new ManualMessagingError('Prepared email subject is missing', 'INVALID_STATE');
+    const attempt = (await tx.execute(sql<{ id: string }[]>`insert into pilot_manual_email_send_attempts(preparation_id,pilot_run_id,lead_id,contact_id,operator_principal_id,sender_fingerprint,recipient_fingerprint,message_fingerprint,provider) values(${preparationId}::uuid,${prep.pilot_run_id}::uuid,${prep.lead_id}::uuid,${prep.contact_id}::uuid,${auth.principalId},${fingerprint(input.sender)},${fingerprint(eligible.contact_value)},${validated.prepared.fingerprint},'GMAIL_API') returning id`))[0]!;
+    return { attemptId: attempt.id, subject: validated.prepared.subject, body: validated.prepared.body, recipient: eligible.contact_value };
+  });
+  try {
+    const receipt = await input.deliver({ subject: reservation.subject, body: reservation.body, recipient: reservation.recipient });
+    await db.execute(sql`insert into pilot_manual_email_send_events(attempt_id,event_type,provider_message_fingerprint) values(${reservation.attemptId}::uuid,'DELIVERED',${fingerprint(receipt.messageId)})`);
+    return { state: 'DELIVERED' as const, provider: receipt.provider, messageIdFingerprint: fingerprint(receipt.messageId), replayed: false };
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : 'DELIVERY_REJECTED';
+    await db.execute(sql`insert into pilot_manual_email_send_events(attempt_id,event_type,error_code) values(${reservation.attemptId}::uuid,'FAILED',${code})`);
+    throw new ManualMessagingError('Manual email delivery failed', 'EMAIL_CONSUMER_UNAVAILABLE');
+  }
 }
 export async function resolveNarrowContact(
   db: Database,

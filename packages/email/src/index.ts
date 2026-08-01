@@ -73,6 +73,7 @@ export type OperatorEmailDeliveryReceipt = Readonly<{
   messageId: string;
   response: string;
 }>;
+export type ManualEmailMessage = Readonly<{ subject: string; body: string; recipient: string }>;
 
 export type OperatorEmailFetch = (
   input: string | URL | Request,
@@ -99,20 +100,21 @@ const encodeHeader = (value: string) =>
 const wrapBase64 = (value: string) => value.match(/.{1,76}/g)?.join('\r\n') ?? '';
 
 const createRawMessage = (
-  configuration: Readonly<{ sender: string; recipient: string }>,
-  message: OperatorEmailMessage,
+  configuration: Readonly<{ sender: string; recipient?: string }>,
+  message: OperatorEmailMessage | ManualEmailMessage,
+  purpose: 'OPERATOR_TEST' | 'MANUAL_PILOT',
 ) => {
   const subject = subjectSchema.parse(message.subject);
   const body = bodySchema.parse(message.body);
   const encodedBody = wrapBase64(Buffer.from(body, 'utf8').toString('base64'));
   const mimeMessage = [
     `From: ${configuration.sender}`,
-    `To: ${configuration.recipient}`,
+    `To: ${'recipient' in message ? message.recipient : configuration.recipient!}`,
     `Subject: ${encodeHeader(subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
-    'X-Lead-Finder-Purpose: OPERATOR_TEST',
+    `X-Lead-Finder-Purpose: ${purpose}`,
     '',
     encodedBody,
   ].join('\r\n');
@@ -148,7 +150,7 @@ export function createGmailApiOperatorEmailConsumer(
 
   return {
     async sendInternalTest(message: OperatorEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
-      const raw = createRawMessage(configuration, message);
+      const raw = createRawMessage(configuration, message, 'OPERATOR_TEST');
       const tokenBody = new URLSearchParams({
         client_id: configuration.googleClientId,
         client_secret: configuration.googleClientSecret,
@@ -216,6 +218,43 @@ export function createGmailApiOperatorEmailConsumer(
         messageId: delivery.data.id,
         response: `HTTP ${deliveryResponse.status}`,
       };
+    },
+  } as const;
+}
+
+export function createGmailApiManualEmailConsumer(
+  input: {
+    sender: string;
+    googleClientId: string;
+    googleClientSecret: string;
+    googleRefreshToken: string;
+  },
+  fetchImpl: OperatorEmailFetch = defaultFetch,
+) {
+  const parsed = z.object({
+    sender: normalizedEmail,
+    googleClientId: z.string().trim().min(16).max(512),
+    googleClientSecret: printableSecret('Google OAuth client secret', 512),
+    googleRefreshToken: printableSecret('Google OAuth refresh token', 1_024),
+  }).strict().safeParse(input);
+  if (!parsed.success) throw new OperatorEmailDeliveryError('Manual email configuration is invalid', 'INVALID_CONFIGURATION');
+  const configuration = parsed.data;
+  return {
+    async sendManual(message: ManualEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
+      const recipient = normalizedEmail.parse(message.recipient);
+      const raw = createRawMessage(configuration, { ...message, recipient }, 'MANUAL_PILOT');
+      const tokenBody = new URLSearchParams({ client_id: configuration.googleClientId, client_secret: configuration.googleClientSecret, refresh_token: configuration.googleRefreshToken, grant_type: 'refresh_token' });
+      let tokenResponse: Response;
+      try { tokenResponse = await fetchImpl('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: tokenBody, signal: AbortSignal.timeout(10_000) }); }
+      catch { throw new OperatorEmailDeliveryError('Google OAuth token exchange failed', 'TOKEN_EXCHANGE_FAILED'); }
+      const token = tokenResponse.ok ? tokenResponseSchema.safeParse(await parseJson(tokenResponse)) : undefined;
+      if (!token?.success) throw new OperatorEmailDeliveryError('Google OAuth token exchange failed', 'TOKEN_EXCHANGE_FAILED');
+      let deliveryResponse: Response;
+      try { deliveryResponse = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { authorization: `Bearer ${token.data.access_token}`, 'content-type': 'application/json' }, body: JSON.stringify({ raw }), signal: AbortSignal.timeout(15_000) }); }
+      catch { throw new OperatorEmailDeliveryError('Manual email delivery was rejected', 'DELIVERY_REJECTED'); }
+      const delivery = deliveryResponse.ok ? gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse)) : undefined;
+      if (!delivery?.success) throw new OperatorEmailDeliveryError('Manual email delivery was rejected', 'DELIVERY_REJECTED');
+      return { provider: 'GMAIL_API', messageId: delivery.data.id, response: `HTTP ${deliveryResponse.status}` };
     },
   } as const;
 }

@@ -4,7 +4,7 @@ import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
-import { createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
+import { createGmailApiManualEmailConsumer, createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
 import { hostname } from 'node:os';
 
 const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
@@ -34,6 +34,9 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
   realProviderConfigured: config.REAL_PROVIDER_CONFIGURED,
+  manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
+  manualEmailKillSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
+  ...(config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY ? { manualEmailSender: config.MANUAL_EMAIL_SENDER, manualEmailFingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY } : {}),
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
   authentication: { token: config.API_AUTH_TOKEN, principalPermissions: config.API_AUTH_PERMISSIONS },
@@ -52,6 +55,12 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     }),
   } : {}),
   corsAllowedOrigins: config.CORS_ALLOWED_ORIGINS,
+  ...(config.MANUAL_EMAIL_SEND_ENABLED ? (() => {
+    try {
+      const consumer = createGmailApiManualEmailConsumer({ sender: config.MANUAL_EMAIL_SENDER!, googleClientId: config.MANUAL_EMAIL_GOOGLE_CLIENT_ID!, googleClientSecret: config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET!, googleRefreshToken: config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN! });
+      return { deliverManualEmail: (message: { subject: string; body: string; recipient: string }) => consumer.sendManual(message) };
+    } catch { return abortStartup('INVALID_CONFIGURATION'); }
+  })() : {}),
 });
 registerOperatorTestRoutes(app, db, {
   enabled: config.OPERATOR_TEST_ENABLED,

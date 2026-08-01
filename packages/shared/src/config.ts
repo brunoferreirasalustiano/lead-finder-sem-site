@@ -20,6 +20,7 @@ export const apiAuthPermissions = [
   'manual-messaging:prepare',
   'manual-messaging:open',
   'manual-messaging:confirm',
+  'manual-messaging:send',
   'manual-messaging:opt-out',
   'operator-test:prepare',
   'operator-test:open',
@@ -142,6 +143,13 @@ const apiSchema = commonSchema.extend({
   OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: optionalEnvironmentString(
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY must contain printable non-space ASCII characters only'),
   ),
+  MANUAL_EMAIL_SEND_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  MANUAL_EMAIL_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  MANUAL_EMAIL_SENDER: optionalEnvironmentString(z.string().trim().toLowerCase().email().max(320)),
+  MANUAL_EMAIL_GOOGLE_CLIENT_ID: optionalEnvironmentString(z.string().trim().min(1).max(512)),
+  MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: optionalEnvironmentString(z.string().min(16).max(1024).regex(/^[\x21-\x7e]+$/)),
+  MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN: optionalEnvironmentString(z.string().min(16).max(2048).regex(/^[\x21-\x7e]+$/)),
+  MANUAL_EMAIL_FINGERPRINT_KEY: optionalEnvironmentString(z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/)),
   API_AUTH_TOKEN: z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'API_AUTH_TOKEN must contain printable non-space ASCII characters only').refine((value) => value !== 'CHANGE_ME', 'API_AUTH_TOKEN must not use the placeholder value'),
   API_AUTH_PERMISSIONS: apiAuthPermissionsFromEnvironment,
   API_PORT: integerFromEnvironment('API_PORT', 1, 65_535, 3000),
@@ -190,6 +198,26 @@ const apiSchema = commonSchema.extend({
       message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from API_AUTH_TOKEN',
     });
   }
+  const manualEmailSecretsConfigured = configuration.MANUAL_EMAIL_SENDER !== undefined
+    || configuration.MANUAL_EMAIL_GOOGLE_CLIENT_ID !== undefined
+    || configuration.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET !== undefined
+    || configuration.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN !== undefined
+    || configuration.MANUAL_EMAIL_FINGERPRINT_KEY !== undefined;
+  if (!configuration.MANUAL_EMAIL_SEND_ENABLED && manualEmailSecretsConfigured)
+    context.addIssue({ code: 'custom', path: ['MANUAL_EMAIL_SEND_ENABLED'], message: 'MANUAL_EMAIL_SEND_ENABLED must be true when manual email secrets are configured' });
+  if (configuration.MANUAL_EMAIL_SEND_ENABLED) {
+    const required = [
+      ['MANUAL_EMAIL_SENDER', configuration.MANUAL_EMAIL_SENDER],
+      ['MANUAL_EMAIL_GOOGLE_CLIENT_ID', configuration.MANUAL_EMAIL_GOOGLE_CLIENT_ID],
+      ['MANUAL_EMAIL_GOOGLE_CLIENT_SECRET', configuration.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET],
+      ['MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN', configuration.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN],
+      ['MANUAL_EMAIL_FINGERPRINT_KEY', configuration.MANUAL_EMAIL_FINGERPRINT_KEY],
+    ] as const;
+    for (const [name, value] of required) if (!value)
+      context.addIssue({ code: 'custom', path: [name], message: `${name} is required when MANUAL_EMAIL_SEND_ENABLED=true` });
+  }
+  if (configuration.MANUAL_EMAIL_FINGERPRINT_KEY === configuration.API_AUTH_TOKEN)
+    context.addIssue({ code: 'custom', path: ['MANUAL_EMAIL_FINGERPRINT_KEY'], message: 'MANUAL_EMAIL_FINGERPRINT_KEY must differ from API_AUTH_TOKEN' });
   if (
     configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY
     && configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY === configuration.OPERATOR_TEST_FINGERPRINT_KEY

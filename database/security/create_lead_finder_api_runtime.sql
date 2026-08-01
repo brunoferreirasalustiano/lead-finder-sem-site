@@ -47,8 +47,11 @@ GRANT SELECT ON TABLE
   public.operator_channel_test_preparations,
   public.operator_channel_test_events,
   public.operator_email_test_attempts,
-  public.operator_email_test_events
+  public.operator_email_test_events,
+  public.pilot_manual_email_send_attempts,
+  public.pilot_manual_email_send_events
 TO lead_finder_api_runtime;
+GRANT INSERT ON TABLE public.pilot_manual_email_send_attempts, public.pilot_manual_email_send_events TO lead_finder_api_runtime;
 
 GRANT EXECUTE ON FUNCTION
   public.create_operator_channel_test_preparation(char, char, char, char, char, char),
@@ -108,5 +111,22 @@ CREATE POLICY lead_finder_api_runtime_operator_email_events_select
   ON public.operator_email_test_events
   FOR SELECT TO lead_finder_api_runtime
   USING (true);
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_manual_email_attempts_select
+  ON public.pilot_manual_email_send_attempts;
+CREATE POLICY lead_finder_api_runtime_manual_email_attempts_select
+  ON public.pilot_manual_email_send_attempts FOR SELECT TO lead_finder_api_runtime USING (true);
+DROP POLICY IF EXISTS lead_finder_api_runtime_manual_email_attempts_insert
+  ON public.pilot_manual_email_send_attempts;
+CREATE POLICY lead_finder_api_runtime_manual_email_attempts_insert
+  ON public.pilot_manual_email_send_attempts FOR INSERT TO lead_finder_api_runtime WITH CHECK (true);
+DROP POLICY IF EXISTS lead_finder_api_runtime_manual_email_events_select
+  ON public.pilot_manual_email_send_events;
+CREATE POLICY lead_finder_api_runtime_manual_email_events_select
+  ON public.pilot_manual_email_send_events FOR SELECT TO lead_finder_api_runtime USING (true);
+DROP POLICY IF EXISTS lead_finder_api_runtime_manual_email_events_insert
+  ON public.pilot_manual_email_send_events;
+CREATE POLICY lead_finder_api_runtime_manual_email_events_insert
+  ON public.pilot_manual_email_send_events FOR INSERT TO lead_finder_api_runtime WITH CHECK (true);
 
 COMMIT;

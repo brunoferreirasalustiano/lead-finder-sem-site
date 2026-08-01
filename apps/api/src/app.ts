@@ -60,6 +60,7 @@ import {
   recordPilotResult,
   getPilotSnapshot,
   prepareManualMessage,
+  sendPreparedManualEmail,
   recordManualOpen,
   confirmManualResult,
   recordManualResponse,
@@ -193,6 +194,11 @@ export function buildApp(db: Database, options: {
   collectionEgressEnabled?: boolean;
   shadowModeEnabled?: boolean;
   realProviderConfigured?: boolean;
+  manualEmailSendEnabled?: boolean;
+  manualEmailKillSwitchEnabled?: boolean;
+  manualEmailSender?: string;
+  manualEmailFingerprintKey?: string;
+  deliverManualEmail?: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
@@ -211,6 +217,7 @@ export function buildApp(db: Database, options: {
   const shadowModeEnabled = options.shadowModeEnabled ?? false;
   const realProviderConfigured = options.realProviderConfigured ?? false;
   const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
+  const manualEmailSendEnabled = options.manualEmailSendEnabled ?? false;
   const contractQueries: HttpContractQueries = {
     listLeads,
     getLead,
@@ -758,6 +765,7 @@ export function buildApp(db: Database, options: {
   app.post('/manual-message-preparations/:id/open',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);if(!id.success||!key.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid open request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await recordManualOpen(db,id.data,{idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_opened',preparationId:id.data,state:result.state,principalId:request.principal!.id,replayed:result.replayed},'manual_message_opened');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/confirm',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=confirmManualMessageSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid confirmation request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await confirmManualResult(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_confirmed',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_confirmed');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/response',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=recordManualResponseSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid response request',code:'INVALID_REQUEST'});if(body.data.result==='OPT_OUT'&&!request.principal?.permissions.has('manual-messaging:opt-out'))return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await recordManualResponse(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_response_recorded',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_response_recorded');return reply.status(creationStatus(result.replayed)).send(result);});});
+  app.post('/manual-message-preparations/:id/send',async(request,reply)=>{const id=parseId(request.params);if(!id.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid send request',code:'INVALID_REQUEST'});if(!manualEmailSendEnabled||!options.deliverManualEmail||!options.manualEmailSender||!options.manualEmailFingerprintKey)return reply.status(503).send({error:'Service unavailable',code:'MANUAL_EMAIL_DISABLED'});return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled,killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender!,fingerprintKey:options.manualEmailFingerprintKey!,deliver:options.deliverManualEmail!});request.log.info({event:'manual_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id},'manual_email_delivery_recorded');return reply.status(201).send({state:result.state,provider:result.provider,messageIdFingerprint:result.messageIdFingerprint});});});
   app.post('/collect', async (request, reply) => {
     if (!collectionEgressEnabled) {
       request.log.info({

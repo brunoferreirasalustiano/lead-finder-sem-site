@@ -41,3 +41,10 @@ services:
       - { key: OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET, sync: false }
       - { key: OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN, sync: false }
       - { key: OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, sync: false }
+      - { key: MANUAL_EMAIL_SEND_ENABLED, value: 'false' }
+      - { key: MANUAL_EMAIL_KILL_SWITCH_ENABLED, value: 'true' }
+      - { key: MANUAL_EMAIL_SENDER, sync: false }
+      - { key: MANUAL_EMAIL_GOOGLE_CLIENT_ID, sync: false }
+      - { key: MANUAL_EMAIL_GOOGLE_CLIENT_SECRET, sync: false }
+      - { key: MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN, sync: false }
+      - { key: MANUAL_EMAIL_FINGERPRINT_KEY, sync: false }

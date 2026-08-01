@@ -240,6 +240,7 @@ describe('API authentication boundary', () => {
       { method: 'POST', path: '/manual-message-preparations/:id/open', permission: 'manual-messaging:open' },
       { method: 'POST', path: '/manual-message-preparations/:id/confirm', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/response', permission: 'manual-messaging:confirm' },
+      { method: 'POST', path: '/manual-message-preparations/:id/send', permission: 'manual-messaging:send' },
     ]);
     expect(routePolicies).toContainEqual({
       method: 'POST',

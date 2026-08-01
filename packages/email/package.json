@@ -9,10 +9,6 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "nodemailer": "9.0.3",
     "zod": "^3.25.67"
-  },
-  "devDependencies": {
-    "@types/nodemailer": "8.0.1"
   }
 }

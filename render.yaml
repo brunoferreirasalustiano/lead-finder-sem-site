@@ -37,8 +37,6 @@ services:
       - { key: OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED, value: 'true' }
       - { key: OPERATOR_EMAIL_TEST_RECIPIENT, sync: false }
       - { key: OPERATOR_EMAIL_TEST_SENDER, sync: false }
-      - { key: OPERATOR_EMAIL_TEST_SMTP_USER, sync: false }
-      - { key: OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD, sync: false }
       - { key: OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID, sync: false }
       - { key: OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET, sync: false }
       - { key: OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN, sync: false }

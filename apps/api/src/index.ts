@@ -66,9 +66,9 @@ const operatorEmailConsumer = config.OPERATOR_EMAIL_TEST_ENABLED
         return createGmailApiOperatorEmailConsumer({
           sender: config.OPERATOR_EMAIL_TEST_SENDER!,
           recipient: config.OPERATOR_EMAIL_TEST_RECIPIENT!,
-          googleClientId: process.env['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID'] ?? '',
-          googleClientSecret: process.env['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET'] ?? '',
-          googleRefreshToken: process.env['OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN'] ?? '',
+          googleClientId: config.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID!,
+          googleClientSecret: config.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET!,
+          googleRefreshToken: config.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN!,
         });
       } catch {
         return abortStartup('INVALID_CONFIGURATION');

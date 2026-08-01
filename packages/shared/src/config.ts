@@ -130,11 +130,14 @@ const apiSchema = commonSchema.extend({
   OPERATOR_EMAIL_TEST_SENDER: optionalEnvironmentString(
     z.string().trim().toLowerCase().email().max(320),
   ),
-  OPERATOR_EMAIL_TEST_SMTP_USER: optionalEnvironmentString(
-    z.string().trim().toLowerCase().email().max(320),
+  OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID: optionalEnvironmentString(
+    z.string().trim().min(1).max(512),
   ),
-  OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD: optionalEnvironmentString(
-    z.string().min(16).max(128).regex(/^[A-Za-z0-9]+$/, 'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD must contain letters and digits only'),
+  OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET: optionalEnvironmentString(
+    z.string().min(16).max(1024).regex(/^[\x21-\x7e]+$/, 'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET must contain printable non-space ASCII characters only'),
+  ),
+  OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN: optionalEnvironmentString(
+    z.string().min(16).max(2048).regex(/^[\x21-\x7e]+$/, 'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN must contain printable non-space ASCII characters only'),
   ),
   OPERATOR_EMAIL_TEST_FINGERPRINT_KEY: optionalEnvironmentString(
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY must contain printable non-space ASCII characters only'),
@@ -199,8 +202,9 @@ const apiSchema = commonSchema.extend({
   }
   const operatorEmailSecretsConfigured = configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== undefined
     || configuration.OPERATOR_EMAIL_TEST_SENDER !== undefined
-    || configuration.OPERATOR_EMAIL_TEST_SMTP_USER !== undefined
-    || configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET !== undefined
+    || configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN !== undefined
     || configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY !== undefined;
   if (!configuration.OPERATOR_EMAIL_TEST_ENABLED && operatorEmailSecretsConfigured) {
     context.addIssue({
@@ -213,8 +217,9 @@ const apiSchema = commonSchema.extend({
     const required = [
       ['OPERATOR_EMAIL_TEST_RECIPIENT', configuration.OPERATOR_EMAIL_TEST_RECIPIENT],
       ['OPERATOR_EMAIL_TEST_SENDER', configuration.OPERATOR_EMAIL_TEST_SENDER],
-      ['OPERATOR_EMAIL_TEST_SMTP_USER', configuration.OPERATOR_EMAIL_TEST_SMTP_USER],
-      ['OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD', configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD],
+      ['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID],
+      ['OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET],
+      ['OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN],
       ['OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY],
     ] as const;
     for (const [name, value] of required) {
@@ -229,16 +234,12 @@ const apiSchema = commonSchema.extend({
     if (
       configuration.OPERATOR_EMAIL_TEST_RECIPIENT
       && configuration.OPERATOR_EMAIL_TEST_SENDER
-      && configuration.OPERATOR_EMAIL_TEST_SMTP_USER
-      && (
-        configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== configuration.OPERATOR_EMAIL_TEST_SENDER
-        || configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== configuration.OPERATOR_EMAIL_TEST_SMTP_USER
-      )
+      && configuration.OPERATOR_EMAIL_TEST_RECIPIENT !== configuration.OPERATOR_EMAIL_TEST_SENDER
     ) {
       context.addIssue({
         code: 'custom',
         path: ['OPERATOR_EMAIL_TEST_RECIPIENT'],
-        message: 'operator email test recipient, sender, and SMTP user must be identical',
+        message: 'operator email test sender and recipient must be identical',
       });
     }
   }
@@ -252,16 +253,26 @@ const apiSchema = commonSchema.extend({
       message: 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY must differ from API_AUTH_TOKEN',
     });
   }
-  if (
-    configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD
-    && configuration.OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD === configuration.API_AUTH_TOKEN
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD'],
-      message: 'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD must differ from API_AUTH_TOKEN',
-    });
-  }
+  const requireDifferentSecrets = (
+    leftName: string,
+    leftValue: string | undefined,
+    rightName: string,
+    rightValue: string | undefined,
+  ) => {
+    if (leftValue !== undefined && leftValue === rightValue) {
+      context.addIssue({
+        code: 'custom',
+        path: [leftName],
+        message: `${leftName} must differ from ${rightName}`,
+      });
+    }
+  };
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET, 'API_AUTH_TOKEN', configuration.API_AUTH_TOKEN);
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN, 'API_AUTH_TOKEN', configuration.API_AUTH_TOKEN);
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, 'API_AUTH_TOKEN', configuration.API_AUTH_TOKEN);
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET, 'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN);
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, 'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET);
+  requireDifferentSecrets('OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, 'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN);
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
     const unsafe = !configuration.DRY_RUN || configuration.REAL_SEND_ENABLED
       || configuration.REAL_PROVIDERS_ENABLED || configuration.COLLECTION_EGRESS_ENABLED

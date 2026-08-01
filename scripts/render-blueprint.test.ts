@@ -38,8 +38,9 @@ describe('Render Plan B blueprint', () => {
     'CORS_ALLOWED_ORIGINS',
     'OPERATOR_EMAIL_TEST_RECIPIENT',
     'OPERATOR_EMAIL_TEST_SENDER',
-    'OPERATOR_EMAIL_TEST_SMTP_USER',
-    'OPERATOR_EMAIL_TEST_SMTP_APP_PASSWORD',
+    'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID',
+    'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET',
+    'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN',
     'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY',
   ])('requires %s to be supplied outside the repository', (key) => {
     expect(blueprint).toContain(`{ key: ${key}, sync: false }`);

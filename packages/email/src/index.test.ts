@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createGmailApiOperatorEmailConsumer,
+  createGmailApiManualEmailConsumer,
   OperatorEmailDeliveryError,
   type OperatorEmailFetch,
 } from './index.js';
@@ -125,6 +126,29 @@ describe('Gmail API operator email consumer', () => {
       subject: 'Internal test\r\nBcc: lead@example.test',
       body: 'No lead is involved.',
     })).rejects.toBeInstanceOf(Error);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('Gmail API manual email consumer', () => {
+  it('binds the recipient per approved preparation and marks the MIME purpose', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'synthetic-manual-message-id' }));
+    const consumer = createGmailApiManualEmailConsumer({ sender: configuration.sender, googleClientId: configuration.googleClientId, googleClientSecret: configuration.googleClientSecret, googleRefreshToken: configuration.googleRefreshToken }, fetchMock);
+    await consumer.sendManual({ subject: 'Ideia para Empresa', body: 'Mensagem individual.', recipient: 'lead@example.test' });
+    const body = fetchMock.mock.calls[1]?.[1]?.body;
+    const request = JSON.parse(typeof body === 'string' ? body : '{}') as { raw: string };
+    const mimeMessage = Buffer.from(request.raw, 'base64url').toString('utf8');
+    expect(mimeMessage).toContain('From: operator@example.test');
+    expect(mimeMessage).toContain('To: lead@example.test');
+    expect(mimeMessage).toContain('X-Lead-Finder-Purpose: MANUAL_PILOT');
+  });
+
+  it('rejects invalid recipients before network access', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>();
+    const consumer = createGmailApiManualEmailConsumer({ sender: configuration.sender, googleClientId: configuration.googleClientId, googleClientSecret: configuration.googleClientSecret, googleRefreshToken: configuration.googleRefreshToken }, fetchMock);
+    await expect(consumer.sendManual({ subject: 'Teste', body: 'Teste', recipient: 'not-an-email' })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

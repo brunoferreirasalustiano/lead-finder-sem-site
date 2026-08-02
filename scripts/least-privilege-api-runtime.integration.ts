@@ -152,12 +152,10 @@ try {
         OR has_table_privilege(${roleName}, table_record.oid, 'TRIGGER')
       )
     ORDER BY table_record.relname`;
-  assert.equal(tablePrivileges.length, 5);
+  assert.equal(tablePrivileges.length, 3);
   assert.deepEqual(tablePrivileges.map((row) => row.name), [
     'operator_channel_test_events',
     'operator_channel_test_preparations',
-    'operator_email_test_attempts',
-    'operator_email_test_events',
     'schema_migrations',
   ]);
   for (const privilege of tablePrivileges) {
@@ -193,8 +191,6 @@ try {
       AND roles = ARRAY[${roleName}]::name[]
     ORDER BY policyname`;
   assert.deepEqual(policies.map(({ policyname }) => policyname), [
-    'lead_finder_api_runtime_operator_email_attempts_select',
-    'lead_finder_api_runtime_operator_email_events_select',
     'lead_finder_api_runtime_operator_events_select',
     'lead_finder_api_runtime_operator_preparations_select',
     'lead_finder_api_runtime_schema_migrations_select',

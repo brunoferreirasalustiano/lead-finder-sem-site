@@ -69,6 +69,8 @@ try {
       batch_invocations,
       processor_leadership_audit,
       processor_leadership,
+      pilot_manual_email_send_events,
+      pilot_manual_email_send_attempts,
       pilot_manual_message_events,
       pilot_manual_message_preparations,
       contact_email_business_evidence,

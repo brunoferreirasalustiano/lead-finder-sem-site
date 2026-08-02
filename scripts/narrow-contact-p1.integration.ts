@@ -47,6 +47,10 @@ const migration0025 = await readFile(
   new URL('0025_narrow_contact_resolution.sql', migrationsUrl),
   'utf8',
 );
+const migration0033 = await readFile(
+  new URL('0033_manual_message_lifecycle.sql', migrationsUrl),
+  'utf8',
+);
 
 const databaseName = `lf_narrow_p1_${randomUUID().replaceAll('-', '')}`.slice(0, 63);
 const scenarioUrl = new URL(sourceUrl);
@@ -187,6 +191,7 @@ try {
   )`;
 
   await raw.unsafe(migration0025);
+  await raw.unsafe(migration0033);
   database = createDatabase(scenarioUrl.toString(), { max: 4 });
   const legacyReplay = await prepareManualMessage(
     database.db,

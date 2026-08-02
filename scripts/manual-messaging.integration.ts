@@ -377,6 +377,49 @@ try {
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${randomUUID()}/open`, payload: {}, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 404);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/open`, payload: { actor: 'forged' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/open`, payload: {}, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 201);
+  const httpLink = await app.inject({
+    method: 'GET',
+    url: `/manual-message-preparations/${httpId}/whatsapp-link`,
+    headers,
+  });
+  assert.equal(httpLink.statusCode, 302);
+  assert.match(String(httpLink.headers.location), /^https:\/\/wa\.me\/12025550110\?text=/);
+  assert.equal(httpLink.headers['cache-control'], 'no-store');
+  assert.equal(httpLink.headers.pragma, 'no-cache');
+  assert.equal(httpLink.headers['referrer-policy'], 'no-referrer');
+  assert.ok(!httpLink.body.includes('synthetic-phone'));
+  pass('35 WhatsApp link uses canonical destination, no-store headers, and no PII body');
+
+  const cancelPrepared = await app.inject({
+    method: 'POST',
+    url,
+    payload,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+  });
+  assert.equal(cancelPrepared.statusCode, 201);
+  const cancelId = cancelPrepared.json().preparationId as string;
+  const cancelApp = buildApp(db, {
+    authentication: {
+      token,
+      principalId: 'http-operator',
+      principalPermissions: ['manual-messaging:open', 'manual-messaging:cancel'],
+    },
+  });
+  const cancelled = await cancelApp.inject({
+    method: 'POST',
+    url: `/manual-message-preparations/${cancelId}/cancel`,
+    payload: { observation: 'synthetic cancellation' },
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+  });
+  assert.equal(cancelled.statusCode, 201);
+  const cancelledLink = await cancelApp.inject({
+    method: 'GET',
+    url: `/manual-message-preparations/${cancelId}/whatsapp-link`,
+    headers,
+  });
+  assert.equal(cancelledLink.statusCode, 422);
+  await cancelApp.close();
+  pass('36 cancelled preparation cannot open or generate a WhatsApp link');
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'UNKNOWN' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'NOT_SENT', actor: 'forged' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'OPT_OUT' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);

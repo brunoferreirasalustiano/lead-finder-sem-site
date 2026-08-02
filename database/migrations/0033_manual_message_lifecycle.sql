@@ -6,9 +6,17 @@ ALTER TABLE public.pilot_manual_message_preparations
 -- Legacy preparations are intentionally backfilled conservatively. A record
 -- older than the 24-hour window is immediately expired rather than remaining
 -- usable without an explicit new preparation.
+-- The append-only trigger is suspended only inside this migration transaction
+-- because this is the controlled schema backfill itself; it is restored before
+-- the transaction commits and remains active for all application writes.
+DROP TRIGGER IF EXISTS pilot_manual_message_preparations_append_only
+  ON public.pilot_manual_message_preparations;
 UPDATE public.pilot_manual_message_preparations
 SET expires_at = prepared_at + interval '24 hours'
 WHERE expires_at IS NULL;
+CREATE TRIGGER pilot_manual_message_preparations_append_only
+  BEFORE UPDATE OR DELETE ON public.pilot_manual_message_preparations
+  FOR EACH ROW EXECUTE FUNCTION public.reject_manual_messaging_history_mutation();
 
 ALTER TABLE public.pilot_manual_message_preparations
   ALTER COLUMN expires_at SET NOT NULL;

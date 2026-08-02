@@ -19,6 +19,7 @@ export const apiAuthPermissions = [
   'pilot:complete',
   'manual-messaging:prepare',
   'manual-messaging:open',
+  'manual-messaging:cancel',
   'manual-messaging:confirm',
   'manual-messaging:send',
   'manual-messaging:opt-out',

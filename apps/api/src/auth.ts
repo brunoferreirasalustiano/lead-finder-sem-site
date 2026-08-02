@@ -93,6 +93,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('POST', '/pilots/:id/leads/:leadId/manual-messages/prepare', 'manual-messaging:prepare'),
   policy('POST', '/manual-message-preparations/:id/open', 'manual-messaging:open'),
   policy('GET', '/manual-message-preparations/:id/whatsapp-link', 'manual-messaging:open'),
+  policy('POST', '/manual-message-preparations/:id/cancel', 'manual-messaging:cancel'),
   policy('POST', '/manual-message-preparations/:id/confirm', 'manual-messaging:confirm'),
   policy('POST', '/manual-message-preparations/:id/response', 'manual-messaging:confirm'),
   policy('POST', '/manual-message-preparations/:id/send', 'manual-messaging:send'),

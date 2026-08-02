@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   findForbiddenPiiResponseKeys,
@@ -44,12 +45,20 @@ const expectNoPii = (value: unknown) => {
 };
 
 describe('safe PII HTTP contracts', () => {
+  it('documents the manual lifecycle migration invariants', () => {
+    const migration = readFileSync(new URL('../../../database/migrations/0033_manual_message_lifecycle.sql', import.meta.url), 'utf8');
+    expect(migration).toContain("SET expires_at = prepared_at + interval '24 hours'");
+    expect(migration).toContain('ALTER COLUMN expires_at SET NOT NULL');
+    expect(migration).toContain('expires_at <= clock_timestamp()');
+    expect(migration).toContain("NEW.event_type='CANCELLED'");
+  });
   it('allowlists manual preparation metadata and drops raw contact or message fields', () => {
     const value = safeManualPreparationDto({
       preparationId: 'preparation-id', state: 'PREPARED', channel: 'WHATSAPP',
       templateId: 'template-id', templateVersion: 'v1',
       contactFingerprint: 'a'.repeat(64), messageFingerprint: 'b'.repeat(64),
       preparedAt: '2026-07-29T00:00:00.000Z', replayed: false,
+      expiresAt: '2026-07-30T00:00:00.000Z',
       phone: '+12025550100', email: 'private@example.test',
       message: 'synthetic marker', link: 'https://wa.me/12025550100',
     });
@@ -57,7 +66,7 @@ describe('safe PII HTTP contracts', () => {
       preparationId: 'preparation-id', state: 'PREPARED', channel: 'WHATSAPP',
       templateId: 'template-id', templateVersion: 'v1',
       contactFingerprint: 'a'.repeat(64), messageFingerprint: 'b'.repeat(64),
-      preparedAt: '2026-07-29T00:00:00.000Z', replayed: false,
+      preparedAt: '2026-07-29T00:00:00.000Z', expiresAt: '2026-07-30T00:00:00.000Z', replayed: false,
     });
     expectNoPii(value);
   });

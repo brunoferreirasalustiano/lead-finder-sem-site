@@ -20,6 +20,10 @@ const migration0026 = await readFile(
   new URL('0026_narrow_contact_resolution_hardening.sql', migrationsUrl),
   'utf8',
 );
+const migration0033 = await readFile(
+  new URL('0033_manual_message_lifecycle.sql', migrationsUrl),
+  'utf8',
+);
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const administrator = postgres(sourceUrl, { max: 1 });
 const actor = createAuthorizationContext({
@@ -127,6 +131,10 @@ try {
 
   await success.sql.unsafe(migration0026);
   await success.sql.unsafe(migration0026);
+  // The legacy scenario exercises the current manual-messaging service after
+  // applying the narrow-contact migrations, so install the lifecycle schema
+  // before preparing a message.
+  await success.sql.unsafe(migration0033);
   const after = (await success.sql<{ schema: string }[]>`
     select namespace.nspname schema
     from pg_extension extension

@@ -654,6 +654,7 @@ try {
     assert.deepEqual(Object.keys(body).sort(), [
       'channel',
       'contactFingerprint',
+      'expiresAt',
       'messageFingerprint',
       'preparationId',
       'preparedAt',

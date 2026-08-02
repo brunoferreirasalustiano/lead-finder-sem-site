@@ -10,6 +10,7 @@ import type { AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export const CONTACT_RESOLUTION_PURPOSE = 'B2B_PROSPECTION' as const;
 const E164_PHONE_PATTERN = String.raw`^\+[1-9][0-9]{7,14}$`;
+const MANUAL_PREPARATION_TTL_SQL = sql`interval '24 hours'`;
 export type ContactResolutionAction =
   | 'MANUAL_MESSAGE_PREPARE'
   | 'MANUAL_MESSAGE_REPLAY'
@@ -244,12 +245,14 @@ export async function prepareManualMessage(
       sql`select pg_advisory_xact_lock(hashtextextended(${`${pilotRunId}:${input.idempotencyKey}`},0))`,
     );
     const prior = await tx.execute(
-      sql<{ id: string; contact_id: string; channel: MessagingChannel; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; operator_principal_id: string }[]>`select id,contact_id,channel,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
+      sql<{ id: string; contact_id: string; channel: MessagingChannel; payload_fingerprint: string; result_fingerprint: string; result_snapshot: unknown; prepared_at: Date; expires_at: Date; expired: boolean; operator_principal_id: string }[]>`select id,contact_id,channel,payload_fingerprint,result_fingerprint,result_snapshot,prepared_at,expires_at,(expires_at <= clock_timestamp()) expired,operator_principal_id from pilot_manual_message_preparations where pilot_run_id=${pilotRunId}::uuid and idempotency_key=${input.idempotencyKey}`,
     );
     if (prior[0] && (prior[0].operator_principal_id !== auth.principalId || prior[0].payload_fingerprint !== fingerprint))
       throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     if (prior[0]) {
       const persisted = prior[0];
+      if (persisted.expired)
+        throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
       const persistedChannel = persisted.channel as MessagingChannel;
       const row = await exactEligibleContact(
         tx,
@@ -279,6 +282,7 @@ export async function prepareManualMessage(
         contactFingerprint: validated.contactFingerprint,
         messageFingerprint: validated.prepared.fingerprint,
         preparedAt: persisted.prepared_at,
+        expiresAt: persisted.expires_at,
         replayed: true,
       };
     }
@@ -312,7 +316,7 @@ export async function prepareManualMessage(
     };
     const saved = (
       await tx.execute(
-        sql<{ id: string; prepared_at: Date }[]>`insert into pilot_manual_message_preparations(pilot_run_id,lead_id,contact_id,channel,template_id,template_version,operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot) values(${pilotRunId}::uuid,${leadId}::uuid,${selected.contact_id}::uuid,${input.requestedChannel},${template.id},${template.version},${auth.principalId},${fingerprint},${input.idempotencyKey},${digest(snapshot)},${JSON.stringify(snapshot)}::jsonb) returning id,prepared_at`,
+        sql<{ id: string; prepared_at: Date; expires_at: Date }>`insert into pilot_manual_message_preparations(pilot_run_id,lead_id,contact_id,channel,template_id,template_version,operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot,expires_at) values(${pilotRunId}::uuid,${leadId}::uuid,${selected.contact_id}::uuid,${input.requestedChannel},${template.id},${template.version},${auth.principalId},${fingerprint},${input.idempotencyKey},${digest(snapshot)},${JSON.stringify(snapshot)}::jsonb,now()+${MANUAL_PREPARATION_TTL_SQL}) returning id,prepared_at,expires_at`,
       )
     )[0]!;
     return {
@@ -324,6 +328,7 @@ export async function prepareManualMessage(
       contactFingerprint: selected.contact_fingerprint,
       messageFingerprint: prepared.fingerprint,
       preparedAt: saved.prepared_at,
+      expiresAt: saved.expires_at,
       replayed: false,
     };
   });
@@ -348,8 +353,10 @@ export async function getPreparedWhatsAppLink(
       operator_principal_id: string;
       result_fingerprint: string;
       result_snapshot: unknown;
+      expires_at: Date;
+      expired: boolean;
     }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot
-      ,operator_principal_id
+      ,operator_principal_id,expires_at,(expires_at <= clock_timestamp()) expired
       from pilot_manual_message_preparations
       where id=${preparationId}::uuid`))[0];
     if (!prep) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
@@ -358,6 +365,8 @@ export async function getPreparedWhatsAppLink(
     if (prep.channel !== 'WHATSAPP') {
       throw new ManualMessagingError('Preparation is not a WhatsApp message', 'INVALID_STATE');
     }
+    if (prep.expired)
+      throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
     const events = await tx.execute(sql<{ event_type: string }[]>`select event_type
       from pilot_manual_message_events
       where preparation_id=${preparationId}::uuid`);
@@ -365,6 +374,8 @@ export async function getPreparedWhatsAppLink(
       throw new ManualMessagingError('Preparation must be opened before redirect', 'INVALID_STATE');
     if (events.some((event) => event.event_type === 'CONTACT_CONFIRMED' || event.event_type === 'RESPONSE_RECORDED'))
       throw new ManualMessagingError('Preparation is already concluded', 'INVALID_STATE');
+    if (events.some((event) => event.event_type === 'CANCELLED'))
+      throw new ManualMessagingError('Preparation is cancelled', 'INVALID_STATE');
 
     const eligible = await exactEligibleContact(
       tx,
@@ -402,9 +413,10 @@ export async function sendPreparedManualEmail(
   const fingerprint = (value: string) => createHash('sha256').update(`${input.fingerprintKey}:${value}`).digest('hex');
   const reservation = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`manual-email:${preparationId}`},0))`);
-    const prep = (await tx.execute(sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${preparationId}::uuid for update`))[0];
+    const prep = (await tx.execute(sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown; expires_at: Date; expired: boolean }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot,expires_at,(expires_at <= clock_timestamp()) expired from pilot_manual_message_preparations where id=${preparationId}::uuid for update`))[0];
     if (!prep) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
     if (prep.channel !== 'EMAIL') throw new ManualMessagingError('Only email preparations can be sent', 'INVALID_STATE');
+    if (prep.expired) throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
     const opened = (await tx.execute(sql<{ id: string }[]>`select id from pilot_manual_message_events where preparation_id=${preparationId}::uuid and event_type='OPENED' limit 1`))[0];
     if (!opened) throw new ManualMessagingError('Preparation must be opened before delivery', 'INVALID_STATE');
     const prior = (await tx.execute(sql<{ id: string }[]>`select id from pilot_manual_email_send_attempts where preparation_id=${preparationId}::uuid`))[0];
@@ -508,10 +520,16 @@ export const recordManualResponse = (
   },
   auth: AuthorizationContext,
 ) => event(db, id, 'RESPONSE_RECORDED', input.result, input.idempotencyKey, input.observation, auth);
+export const cancelManualPreparation = (
+  db: Database,
+  id: string,
+  input: { idempotencyKey: string; observation?: string | undefined },
+  auth: AuthorizationContext,
+) => event(db, id, 'CANCELLED', undefined, input.idempotencyKey, input.observation, auth);
 async function event(
   db: Database,
   id: string,
-  eventType: 'OPENED' | 'CONTACT_CONFIRMED' | 'RESPONSE_RECORDED',
+  eventType: 'OPENED' | 'CONTACT_CONFIRMED' | 'RESPONSE_RECORDED' | 'CANCELLED',
   result: ManualMessagingResult | undefined,
   key: string,
   observation: string | undefined,
@@ -537,23 +555,27 @@ async function event(
     ) throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     const p = (
       await tx.execute(
-      sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; operator_principal_id: string; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,operator_principal_id,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
+        sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown; operator_principal_id: string; expires_at: Date; expired: boolean }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot,operator_principal_id,expires_at,(expires_at <= clock_timestamp()) expired from pilot_manual_message_preparations where id=${id}::uuid for update`,
       )
     )[0] as unknown as
-      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; operator_principal_id: string; result_fingerprint: string; result_snapshot: unknown }
+      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown; operator_principal_id: string; expires_at: Date; expired: boolean }
       | undefined;
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
-    if (p.operator_principal_id !== auth.principalId)
+    if (eventType === 'CANCELLED' && p.operator_principal_id !== auth.principalId)
       throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
-    const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
-    if (eventType === 'OPENED')
-      validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, String(p.result_fingerprint));
+    if (eventType !== 'CANCELLED') {
+      if (p.expired) throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
+      const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
+      if (eventType === 'OPENED')
+        validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, String(p.result_fingerprint));
+    }
     const existing = await tx.execute(
       sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,
     );
     const confirmed = existing.find((item) => item.event_type === 'CONTACT_CONFIRMED');
     const responded = existing.some((item) => item.event_type === 'RESPONSE_RECORDED');
-    if (eventType === 'OPENED' && (confirmed || responded))
+    const cancelled = existing.some((item) => item.event_type === 'CANCELLED');
+    if (eventType === 'OPENED' && (confirmed || responded || cancelled))
       throw new ManualMessagingError('Invalid OPENED transition', 'INVALID_STATE');
     const sameType = existing.find((item) => item.event_type === eventType);
     if (sameType) {
@@ -564,10 +586,12 @@ async function event(
     const opened = existing.some((item) => item.event_type === 'OPENED');
     if (eventType === 'OPENED' && (opened || confirmed || responded))
       throw new ManualMessagingError('Invalid OPENED transition', 'INVALID_STATE');
-    if (eventType === 'CONTACT_CONFIRMED' && (!opened || confirmed || responded))
+    if (eventType === 'CONTACT_CONFIRMED' && (!opened || confirmed || responded || cancelled))
       throw new ManualMessagingError('Invalid CONTACT_CONFIRMED transition', 'INVALID_STATE');
-    if (eventType === 'RESPONSE_RECORDED' && (confirmed?.result !== 'SENT_CONFIRMED' || responded))
+    if (eventType === 'RESPONSE_RECORDED' && (confirmed?.result !== 'SENT_CONFIRMED' || responded || cancelled))
       throw new ManualMessagingError('Invalid RESPONSE_RECORDED transition', 'INVALID_STATE');
+    if (eventType === 'CANCELLED' && (cancelled || confirmed || responded))
+      throw new ManualMessagingError('Invalid CANCELLED transition', 'INVALID_STATE');
     if (eventType === 'RESPONSE_RECORDED' && result === 'OPT_OUT')
       await tx.execute(
         sql`insert into campaign_opt_outs(lead_id,channel,reason,source) values(${p.lead_id}::uuid,${p.channel},'MANUAL_OPT_OUT','PILOT_MANUAL_MESSAGING') on conflict do nothing`,

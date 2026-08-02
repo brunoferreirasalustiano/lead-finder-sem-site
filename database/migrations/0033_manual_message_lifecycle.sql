@@ -32,7 +32,10 @@ CREATE INDEX IF NOT EXISTS pilot_manual_message_preparations_expiry_idx
 
 ALTER TABLE public.pilot_manual_message_events
   DROP CONSTRAINT IF EXISTS pilot_manual_message_events_event_type_check,
-  DROP CONSTRAINT IF EXISTS pilot_manual_message_events_result_check;
+  DROP CONSTRAINT IF EXISTS pilot_manual_message_events_result_check,
+  -- Migration 0019 declared the event check inline, so PostgreSQL generated
+  -- this legacy name instead of separate event/result constraints.
+  DROP CONSTRAINT IF EXISTS pilot_manual_message_events_check;
 
 ALTER TABLE public.pilot_manual_message_events
   ADD CONSTRAINT pilot_manual_message_events_event_type_check

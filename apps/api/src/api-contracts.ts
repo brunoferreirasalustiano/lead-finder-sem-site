@@ -247,6 +247,7 @@ export const safeManualPreparationDto = (value: unknown) => {
     contactFingerprint: item['contactFingerprint'],
     messageFingerprint: item['messageFingerprint'],
     preparedAt: item['preparedAt'],
+    expiresAt: item['expiresAt'],
     replayed: item['replayed'],
   };
 };

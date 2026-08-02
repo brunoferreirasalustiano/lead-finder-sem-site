@@ -238,6 +238,7 @@ describe('API authentication boundary', () => {
     ]);
     expect(routePolicies.filter(({ path }) => path.startsWith('/manual-message-preparations'))).toEqual([
       { method: 'POST', path: '/manual-message-preparations/:id/open', permission: 'manual-messaging:open' },
+      { method: 'POST', path: '/manual-message-preparations/:id/cancel', permission: 'manual-messaging:cancel' },
       { method: 'POST', path: '/manual-message-preparations/:id/confirm', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/response', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/send', permission: 'manual-messaging:send' },

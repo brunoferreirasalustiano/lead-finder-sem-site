@@ -14,6 +14,7 @@ services:
     healthCheckPath: /health/ready
     envVars:
       - { key: DEPLOYMENT_PROFILE, value: supabase-render }
+      - { key: DEPLOYMENT_ENVIRONMENT, value: homologation }
       - { key: NODE_ENV, value: production }
       - { key: DRY_RUN, value: 'true' }
       - { key: SHADOW_MODE_ENABLED, value: 'true' }

@@ -19,7 +19,7 @@ export type OperationalPrincipal = Readonly<{
   id: string;
   type: 'OPERATOR';
   permissions: ReadonlySet<Permission>;
-  authenticationSource: 'BEARER_TOKEN';
+  authenticationSource: 'BEARER_TOKEN' | 'HML_SMOKE_BEARER_TOKEN';
 }>;
 
 declare module 'fastify' {
@@ -113,21 +113,46 @@ export type AuthenticationOptions = Readonly<{
   token?: string;
   principalId?: string;
   principalPermissions?: readonly Permission[];
+  temporary?: Readonly<{
+    tokenHash: string;
+    expiresAt: Date;
+    principalId: string;
+    principalPermissions: readonly Permission[];
+    environment: 'homologation';
+  }>;
   authenticate?: (request: FastifyRequest) => OperationalPrincipal | undefined | Promise<OperationalPrincipal | undefined>;
 }>;
 
+const tokenDigest = (token: string) => createHash('sha256').update(token, 'utf8').digest();
+const matchesDigest = (provided: Buffer, expectedHex: string) => {
+  if (!/^[0-9a-f]{64}$/i.test(expectedHex)) return false;
+  const expected = Buffer.from(expectedHex, 'hex');
+  return expected.length === provided.length && timingSafeEqual(provided, expected);
+};
+
 const authenticateBearer = (authorization: string | undefined, options: AuthenticationOptions) => {
   const match = authorization?.match(/^Bearer ([\x21-\x7e]+)$/i);
-  if (!match || !options.token) return undefined;
-  const provided = createHash('sha256').update(match[1]!, 'utf8').digest();
-  const expected = createHash('sha256').update(options.token, 'utf8').digest();
-  if (!timingSafeEqual(provided, expected)) return undefined;
-  return {
-    id: options.principalId ?? 'single-operator',
-    type: 'OPERATOR' as const,
-    permissions: new Set(options.principalPermissions ?? []),
-    authenticationSource: 'BEARER_TOKEN' as const,
-  };
+  if (!match) return undefined;
+  const provided = tokenDigest(match[1]!);
+  if (options.token && timingSafeEqual(provided, tokenDigest(options.token))) {
+    return {
+      id: options.principalId ?? 'single-operator',
+      type: 'OPERATOR' as const,
+      permissions: new Set(options.principalPermissions ?? []),
+      authenticationSource: 'BEARER_TOKEN' as const,
+    };
+  }
+  const temporary = options.temporary;
+  if (temporary && temporary.environment === 'homologation'
+    && temporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, temporary.tokenHash)) {
+    return {
+      id: temporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(temporary.principalPermissions),
+      authenticationSource: 'HML_SMOKE_BEARER_TOKEN' as const,
+    };
+  }
+  return undefined;
 };
 
 const unauthenticated = (reply: FastifyReply) =>
@@ -162,6 +187,19 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     throw new Error('Bearer token authentication requires explicit principal permissions');
   }
   const registeredRoutes = new Set<string>();
+  const failedTemporaryAuthentication = new Map<string, { count: number; resetAt: number }>();
+  const temporaryRateLimit = (request: FastifyRequest) => {
+    if (!options.temporary || options.temporary.expiresAt.getTime() <= Date.now()) return false;
+    const key = request.ip || 'unknown';
+    const now = Date.now();
+    const current = failedTemporaryAuthentication.get(key);
+    if (!current || current.resetAt <= now) {
+      failedTemporaryAuthentication.set(key, { count: 1, resetAt: now + 60_000 });
+      return false;
+    }
+    current.count += 1;
+    return current.count > 5;
+  };
   app.addHook('onRoute', (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     for (const method of methods) if (method !== 'HEAD') registeredRoutes.add(`${method} ${route.url}`);
@@ -184,7 +222,13 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
       request.log.warn({ event: 'authentication_failed', requestId: request.id, code: 'UNAUTHENTICATED' }, 'authentication_failed');
       return unauthenticated(reply);
     }
-    if (!principal) return unauthenticated(reply);
+    if (!principal) {
+      if (temporaryRateLimit(request)) return reply.status(429).send({ error: 'Authentication temporarily unavailable', code: 'AUTH_RATE_LIMITED' });
+      return unauthenticated(reply);
+    }
+    if (principal.authenticationSource === 'HML_SMOKE_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_smoke_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_smoke_authentication_accepted');
+    }
 
     const requiredPermission = policiesByRoute.get(routeKey);
     request.principal = principal;

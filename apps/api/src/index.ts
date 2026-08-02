@@ -1,5 +1,5 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
-import { assertApiKillSwitchReleased, parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
@@ -39,7 +39,19 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   ...(config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY ? { manualEmailSender: config.MANUAL_EMAIL_SENDER, manualEmailFingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY } : {}),
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
-  authentication: { token: config.API_AUTH_TOKEN, principalPermissions: config.API_AUTH_PERMISSIONS },
+  authentication: {
+    token: config.API_AUTH_TOKEN,
+    principalPermissions: config.API_AUTH_PERMISSIONS,
+    ...(config.HML_SMOKE_AUTH_ENABLED ? {
+      temporary: {
+        tokenHash: config.HML_SMOKE_AUTH_TOKEN_HASH!,
+        expiresAt: config.HML_SMOKE_AUTH_EXPIRES_AT!,
+        principalId: config.HML_SMOKE_AUTH_PRINCIPAL_ID!,
+        principalPermissions: hmlSmokeAuthPermissions,
+        environment: 'homologation',
+      },
+    } : {}),
+  },
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
   cronAuthAudience: config.CRON_AUTH_AUDIENCE,
   ...(config.API_BATCH_PROCESSING_ENABLED ? {

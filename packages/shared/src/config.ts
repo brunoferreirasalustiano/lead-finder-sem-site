@@ -31,6 +31,16 @@ export const apiAuthPermissions = [
 ] as const;
 export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
 
+// This fixed allow-list is intentionally narrower than API_AUTH_PERMISSIONS. It is
+// used only by the separately configured, HML-only smoke principal and cannot be
+// expanded through an environment variable.
+export const hmlSmokeAuthPermissions = [
+  'manual-messaging:prepare',
+  'manual-messaging:open',
+  'manual-messaging:cancel',
+  'manual-messaging:confirm',
+] as const satisfies readonly ApiAuthPermission[];
+
 const apiAuthPermissionSet = new Set<string>(apiAuthPermissions);
 const apiAuthPermissionsFromEnvironment = z.string().superRefine((value, context) => {
   const entries = value.split(',');
@@ -65,6 +75,7 @@ const optionalEnvironmentString = <T extends z.ZodTypeAny>(schema: T) => z.prepr
 
 const commonSchema = z.object({
   DEPLOYMENT_PROFILE: z.enum(['oracle-vps', 'supabase-render']).default('oracle-vps'),
+  DEPLOYMENT_ENVIRONMENT: z.enum(['development', 'homologation', 'production']).default('development'),
   DATABASE_URL: z.string().url().startsWith('postgresql://'),
   DAILY_LEAD_LIMIT: integerFromEnvironment('DAILY_LEAD_LIMIT', 1, 60, 60),
   DATABASE_SSL_MODE: z.enum(['disable', 'require', 'verify-full']).default('disable'),
@@ -146,6 +157,16 @@ const apiSchema = commonSchema.extend({
   ),
   MANUAL_EMAIL_SEND_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   MANUAL_EMAIL_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  HML_SMOKE_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  HML_SMOKE_AUTH_TOKEN_HASH: optionalEnvironmentString(
+    z.string().regex(/^[0-9a-f]{64}$/i, 'HML_SMOKE_AUTH_TOKEN_HASH must be a SHA-256 hex digest').transform((value) => value.toLowerCase()),
+  ),
+  HML_SMOKE_AUTH_EXPIRES_AT: optionalEnvironmentString(
+    z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+  ),
+  HML_SMOKE_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^hml-smoke-[a-z0-9-]{1,80}$/, 'HML_SMOKE_AUTH_PRINCIPAL_ID must use the hml-smoke- prefix'),
+  ),
   MANUAL_EMAIL_SENDER: optionalEnvironmentString(z.string().trim().toLowerCase().email().max(320)),
   MANUAL_EMAIL_GOOGLE_CLIENT_ID: optionalEnvironmentString(z.string().trim().min(1).max(512)),
   MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: optionalEnvironmentString(z.string().min(16).max(1024).regex(/^[\x21-\x7e]+$/)),
@@ -158,6 +179,37 @@ const apiSchema = commonSchema.extend({
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  const smokeFieldsConfigured = configuration.HML_SMOKE_AUTH_TOKEN_HASH !== undefined
+    || configuration.HML_SMOKE_AUTH_EXPIRES_AT !== undefined
+    || configuration.HML_SMOKE_AUTH_PRINCIPAL_ID !== undefined;
+  if (!configuration.HML_SMOKE_AUTH_ENABLED) {
+    if (smokeFieldsConfigured) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HML_SMOKE_AUTH_ENABLED'],
+        message: 'HML smoke authentication fields require HML_SMOKE_AUTH_ENABLED=true',
+      });
+    }
+  } else {
+    if (configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+      context.addIssue({
+        code: 'custom',
+        path: ['DEPLOYMENT_ENVIRONMENT'],
+        message: 'HML smoke authentication is permitted only when DEPLOYMENT_ENVIRONMENT=homologation',
+      });
+    }
+    if (!configuration.HML_SMOKE_AUTH_TOKEN_HASH) {
+      context.addIssue({ code: 'custom', path: ['HML_SMOKE_AUTH_TOKEN_HASH'], message: 'HML_SMOKE_AUTH_TOKEN_HASH is required when HML_SMOKE_AUTH_ENABLED=true' });
+    }
+    if (!configuration.HML_SMOKE_AUTH_EXPIRES_AT) {
+      context.addIssue({ code: 'custom', path: ['HML_SMOKE_AUTH_EXPIRES_AT'], message: 'HML_SMOKE_AUTH_EXPIRES_AT is required when HML_SMOKE_AUTH_ENABLED=true' });
+    } else if (configuration.HML_SMOKE_AUTH_EXPIRES_AT.getTime() <= Date.now()) {
+      context.addIssue({ code: 'custom', path: ['HML_SMOKE_AUTH_EXPIRES_AT'], message: 'HML_SMOKE_AUTH_EXPIRES_AT must be in the future' });
+    }
+    if (!configuration.HML_SMOKE_AUTH_PRINCIPAL_ID) {
+      context.addIssue({ code: 'custom', path: ['HML_SMOKE_AUTH_PRINCIPAL_ID'], message: 'HML_SMOKE_AUTH_PRINCIPAL_ID is required when HML_SMOKE_AUTH_ENABLED=true' });
+    }
+  }
   const operatorTestSecretsConfigured = configuration.OPERATOR_TEST_WHATSAPP_E164 !== undefined
     || configuration.OPERATOR_TEST_FINGERPRINT_KEY !== undefined
     || configuration.OPERATOR_TEST_RECIPIENT_BINDING_KEY !== undefined;

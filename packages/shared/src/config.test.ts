@@ -107,6 +107,29 @@ describe('environment configuration', () => {
     }).API_AUTH_PERMISSIONS).toContain('pilot:complete');
   });
 
+  it('fails closed for partial, expired, or non-homologation HML smoke authentication', () => {
+    const enabled = {
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_SMOKE_AUTH_ENABLED: 'true',
+      HML_SMOKE_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_SMOKE_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_SMOKE_AUTH_PRINCIPAL_ID: 'hml-smoke-test',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_SMOKE_AUTH_ENABLED: true,
+      HML_SMOKE_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_SMOKE_AUTH_PRINCIPAL_ID: 'hml-smoke-test',
+    });
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: 'production' })).toThrow('DEPLOYMENT_ENVIRONMENT');
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: undefined })).toThrow('DEPLOYMENT_ENVIRONMENT');
+    expect(() => parseApiConfig({ ...enabled, HML_SMOKE_AUTH_EXPIRES_AT: new Date(Date.now() - 1_000).toISOString() })).toThrow('must be in the future');
+    expect(() => parseApiConfig({ ...enabled, HML_SMOKE_AUTH_TOKEN_HASH: 'not-a-hash' })).toThrow('HML_SMOKE_AUTH_TOKEN_HASH');
+    expect(() => parseApiConfig({ ...database, HML_SMOKE_AUTH_TOKEN_HASH: 'a'.repeat(64) })).toThrow('HML_SMOKE_AUTH_ENABLED');
+    expect(() => parseApiConfig({ ...enabled, HML_SMOKE_AUTH_PRINCIPAL_ID: 'operator' })).toThrow('HML_SMOKE_AUTH_PRINCIPAL_ID');
+  });
+
   it('keeps the real operator email test bound to one internal mailbox', () => {
     const enabled = {
       ...database,

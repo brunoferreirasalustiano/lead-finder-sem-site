@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import type { Database } from '@lead-finder/database';
@@ -114,6 +115,112 @@ describe('API authentication boundary', () => {
     expect(malformed.statusCode).toBe(400);
     expect(malformed.body).not.toMatch(/wa\.me|text=|phone|message/i);
     await malformedApp.close();
+  });
+
+  it('accepts a valid HML smoke token only with its fixed synthetic principal and minimum permissions', async () => {
+    const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
+    const app = Fastify({ logger: false });
+    installAuthorization(app, {
+      token,
+      principalPermissions: ['campaigns:read'],
+      temporary: {
+        tokenHash: createHash('sha256').update(smokeToken, 'utf8').digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        principalId: 'hml-smoke-test',
+        principalPermissions: ['manual-messaging:open', 'manual-messaging:cancel'],
+        environment: 'homologation',
+      },
+    });
+    app.get('/manual-message-preparations/:id/whatsapp-link', (request) => ({
+      principalId: request.principal?.id,
+      permissions: [...(request.principal?.permissions ?? [])].sort(),
+      source: request.principal?.authenticationSource,
+    }));
+    await app.ready();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link',
+      headers: { authorization: `Bearer ${smokeToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      principalId: 'hml-smoke-test',
+      permissions: ['manual-messaging:cancel', 'manual-messaging:open'],
+      source: 'HML_SMOKE_BEARER_TOKEN',
+    });
+    await app.close();
+  });
+
+  it('rejects invalid, expired, disabled, and revoked HML smoke tokens', async () => {
+    const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
+    const hash = createHash('sha256').update(smokeToken, 'utf8').digest('hex');
+    const makeApp = (temporary?: NonNullable<Parameters<typeof installAuthorization>[1]>['temporary']) => {
+      const app = Fastify({ logger: false });
+      installAuthorization(app, temporary
+        ? { token, principalPermissions: [], temporary }
+        : { token, principalPermissions: [] });
+      app.get('/manual-message-preparations/:id/whatsapp-link', () => ({ ok: true }));
+      return app;
+    };
+    const invalid = makeApp({ tokenHash: hash, expiresAt: new Date(Date.now() + 60_000), principalId: 'hml-smoke-test', principalPermissions: ['manual-messaging:open'], environment: 'homologation' });
+    expect((await invalid.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: 'Bearer wrong-token' } })).statusCode).toBe(401);
+    await invalid.close();
+    const expired = makeApp({ tokenHash: hash, expiresAt: new Date(Date.now() - 1_000), principalId: 'hml-smoke-test', principalPermissions: ['manual-messaging:open'], environment: 'homologation' });
+    expect((await expired.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: `Bearer ${smokeToken}` } })).statusCode).toBe(401);
+    await expired.close();
+    const revoked = makeApp(undefined);
+    expect((await revoked.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: `Bearer ${smokeToken}` } })).statusCode).toBe(401);
+    await revoked.close();
+  });
+
+  it('rate-limits repeated invalid credentials only while HML smoke authentication is active', async () => {
+    const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
+    const app = Fastify({ logger: false });
+    installAuthorization(app, {
+      token,
+      principalPermissions: [],
+      temporary: {
+        tokenHash: createHash('sha256').update(smokeToken, 'utf8').digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        principalId: 'hml-smoke-test',
+        principalPermissions: ['manual-messaging:open'],
+        environment: 'homologation',
+      },
+    });
+    app.get('/manual-message-preparations/:id/whatsapp-link', () => ({ ok: true }));
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      expect((await app.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: 'Bearer invalid-smoke-token' } })).statusCode).toBe(401);
+    }
+    expect((await app.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: 'Bearer invalid-smoke-token' } })).statusCode).toBe(429);
+    await app.close();
+  });
+
+  it('denies SENT_CONFIRMED to the HML smoke principal even when confirm permission is present', async () => {
+    const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
+    let databaseAccesses = 0;
+    const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
+    const app = buildApp(db, {
+      authentication: {
+        token,
+        principalPermissions: [],
+        temporary: {
+          tokenHash: createHash('sha256').update(smokeToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-smoke-test',
+          principalPermissions: ['manual-messaging:confirm'],
+          environment: 'homologation',
+        },
+      },
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/confirm',
+      headers: { authorization: `Bearer ${smokeToken}`, 'idempotency-key': 'smoke-confirm-0001' },
+      payload: { result: 'SENT_CONFIRMED' },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(databaseAccesses).toBe(0);
+    await app.close();
   });
 
   it('requires the dedicated cancellation permission before database access', async () => {

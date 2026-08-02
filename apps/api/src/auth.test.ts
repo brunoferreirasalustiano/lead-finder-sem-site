@@ -97,6 +97,25 @@ describe('API authentication boundary', () => {
     await app.close();
   });
 
+  it('protects the manual WhatsApp redirect before request validation or database access', async () => {
+    const preparationId = '123e4567-e89b-42d3-a456-426614174000';
+    const anonymousApp = buildApp({} as Database, { authentication: { token, principalPermissions: ['manual-messaging:open'] } });
+    expect((await anonymousApp.inject({ method: 'GET', url: `/manual-message-preparations/${preparationId}/whatsapp-link` })).statusCode).toBe(401);
+    await anonymousApp.close();
+
+    const forbiddenApp = buildApp({} as Database, { authentication: { token, principalPermissions: [] } });
+    expect((await forbiddenApp.inject({ method: 'GET', url: `/manual-message-preparations/${preparationId}/whatsapp-link`, headers: authorization })).statusCode).toBe(403);
+    await forbiddenApp.close();
+
+    const malformedApp = buildApp({} as Database, { authentication: { token, principalPermissions: ['manual-messaging:open'] } });
+    const malformed = await malformedApp.inject({
+      method: 'GET', url: '/manual-message-preparations/not-a-uuid/whatsapp-link', headers: authorization,
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.body).not.toMatch(/wa\.me|text=|phone|message/i);
+    await malformedApp.close();
+  });
+
   it.each([
     ['GET', '/pilots', undefined],
     ['POST', '/pilots', {}],
@@ -238,6 +257,7 @@ describe('API authentication boundary', () => {
     ]);
     expect(routePolicies.filter(({ path }) => path.startsWith('/manual-message-preparations'))).toEqual([
       { method: 'POST', path: '/manual-message-preparations/:id/open', permission: 'manual-messaging:open' },
+      { method: 'GET', path: '/manual-message-preparations/:id/whatsapp-link', permission: 'manual-messaging:open' },
       { method: 'POST', path: '/manual-message-preparations/:id/confirm', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/response', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/send', permission: 'manual-messaging:send' },

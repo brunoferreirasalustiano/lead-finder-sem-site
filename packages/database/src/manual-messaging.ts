@@ -5,6 +5,7 @@ import {
   DeterministicFakeMessagingProvider,
   type MessagingChannel,
 } from '@lead-finder/messaging';
+import { createWhatsAppManualUrl } from '@lead-finder/whatsapp';
 import type { AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export const CONTACT_RESOLUTION_PURPOSE = 'B2B_PROSPECTION' as const;
@@ -328,6 +329,62 @@ export async function prepareManualMessage(
   });
 }
 
+/**
+ * Builds a browser hand-off for an already prepared WhatsApp message.
+ * The URL is intentionally kept out of JSON DTOs because it contains the
+ * recipient and message; callers should issue a redirect after authorization.
+ */
+export async function getPreparedWhatsAppLink(
+  db: Database,
+  preparationId: string,
+  auth: AuthorizationContext,
+) {
+  return db.transaction(async (tx) => {
+    const prep = (await tx.execute(sql<{
+      pilot_run_id: string;
+      lead_id: string;
+      contact_id: string;
+      channel: MessagingChannel;
+      operator_principal_id: string;
+      result_fingerprint: string;
+      result_snapshot: unknown;
+    }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot
+      ,operator_principal_id
+      from pilot_manual_message_preparations
+      where id=${preparationId}::uuid`))[0];
+    if (!prep) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (prep.operator_principal_id !== auth.principalId)
+      throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (prep.channel !== 'WHATSAPP') {
+      throw new ManualMessagingError('Preparation is not a WhatsApp message', 'INVALID_STATE');
+    }
+    const events = await tx.execute(sql<{ event_type: string }[]>`select event_type
+      from pilot_manual_message_events
+      where preparation_id=${preparationId}::uuid`);
+    if (!events.some((event) => event.event_type === 'OPENED'))
+      throw new ManualMessagingError('Preparation must be opened before redirect', 'INVALID_STATE');
+    if (events.some((event) => event.event_type === 'CONTACT_CONFIRMED' || event.event_type === 'RESPONSE_RECORDED'))
+      throw new ManualMessagingError('Preparation is already concluded', 'INVALID_STATE');
+
+    const eligible = await exactEligibleContact(
+      tx,
+      String(prep.pilot_run_id),
+      String(prep.lead_id),
+      String(prep.contact_id),
+      'WHATSAPP',
+    );
+    const validated = validatePreparedSnapshot(
+      eligible,
+      'WHATSAPP',
+      prep.result_snapshot,
+      String(prep.result_fingerprint),
+    );
+    return {
+      link: createWhatsAppManualUrl(eligible.contact_value, validated.prepared.body),
+    };
+  });
+}
+
 export async function sendPreparedManualEmail(
   db: Database,
   preparationId: string,
@@ -480,12 +537,14 @@ async function event(
     ) throw new ManualMessagingError('Idempotency conflict', 'IDEMPOTENCY_CONFLICT');
     const p = (
       await tx.execute(
-        sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
+      sql<{ pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; operator_principal_id: string; result_fingerprint: string; result_snapshot: unknown }[]>`select pilot_run_id,lead_id,contact_id,channel,operator_principal_id,result_fingerprint,result_snapshot from pilot_manual_message_preparations where id=${id}::uuid for update`,
       )
     )[0] as unknown as
-      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown }
+      | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; operator_principal_id: string; result_fingerprint: string; result_snapshot: unknown }
       | undefined;
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (p.operator_principal_id !== auth.principalId)
+      throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
     const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
     if (eventType === 'OPENED')
       validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, String(p.result_fingerprint));

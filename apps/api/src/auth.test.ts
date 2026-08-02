@@ -97,6 +97,21 @@ describe('API authentication boundary', () => {
     await app.close();
   });
 
+  it('requires the dedicated cancellation permission before database access', async () => {
+    let databaseAccesses = 0;
+    const db = new Proxy({} as Database, { get: () => { databaseAccesses += 1; throw new Error('database accessed'); } });
+    const app = buildApp(db, { authentication: { token, principalPermissions: ['manual-messaging:open'] } });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/cancel',
+      headers: { ...authorization, 'idempotency-key': 'cancel-permission-test-0001' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(403);
+    expect(databaseAccesses).toBe(0);
+    await app.close();
+  });
+
   it.each([
     ['GET', '/pilots', undefined],
     ['POST', '/pilots', {}],

@@ -383,7 +383,7 @@ try {
     headers,
   });
   assert.equal(httpLink.statusCode, 302);
-  assert.match(String(httpLink.headers.location), /^https:\/\/wa\.me\/12025550110\?text=/);
+  assert.match(String(httpLink.headers.location), /^https:\/\/wa\.me\/12025550101\?text=/);
   assert.equal(httpLink.headers['cache-control'], 'no-store');
   assert.equal(httpLink.headers.pragma, 'no-cache');
   assert.equal(httpLink.headers['referrer-policy'], 'no-referrer');

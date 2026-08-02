@@ -420,6 +420,34 @@ try {
   assert.equal(cancelledLink.statusCode, 422);
   await cancelApp.close();
   pass('36 cancelled preparation cannot open or generate a WhatsApp link');
+
+  const expiryPrepared = await app.inject({
+    method: 'POST',
+    url,
+    payload,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+  });
+  assert.equal(expiryPrepared.statusCode, 201);
+  const expiryId = expiryPrepared.json().preparationId as string;
+  await raw.begin(async (tx) => {
+    await tx.unsafe('ALTER TABLE public.pilot_manual_message_preparations DISABLE TRIGGER pilot_manual_message_preparations_append_only');
+    await tx`update pilot_manual_message_preparations set expires_at=clock_timestamp() where id=${expiryId}::uuid`;
+    await tx.unsafe('ALTER TABLE public.pilot_manual_message_preparations ENABLE TRIGGER pilot_manual_message_preparations_append_only');
+  });
+  const expiredOpen = await app.inject({
+    method: 'POST',
+    url: `/manual-message-preparations/${expiryId}/open`,
+    payload: {},
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+  });
+  assert.equal(expiredOpen.statusCode, 422);
+  const expiredLink = await app.inject({
+    method: 'GET',
+    url: `/manual-message-preparations/${expiryId}/whatsapp-link`,
+    headers,
+  });
+  assert.equal(expiredLink.statusCode, 422);
+  pass('37 server-clock expiry boundary blocks opening and link generation');
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'UNKNOWN' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'NOT_SENT', actor: 'forged' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `/manual-message-preparations/${httpId}/confirm`, payload: { result: 'OPT_OUT' }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 400);

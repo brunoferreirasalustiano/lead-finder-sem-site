@@ -5,6 +5,7 @@ import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { createGmailApiManualEmailConsumer, createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
+import { createWhatsAppCloudApiClient } from '@lead-finder/whatsapp';
 import { hostname } from 'node:os';
 
 const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
@@ -37,6 +38,20 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
   manualEmailKillSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
   ...(config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY ? { manualEmailSender: config.MANUAL_EMAIL_SENDER, manualEmailFingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY } : {}),
+  whatsappCloudRuntime: {
+    enabled: config.WHATSAPP_CLOUD_API_ENABLED,
+    realSendEnabled: config.REAL_SEND_ENABLED,
+    deploymentEnvironment: config.DEPLOYMENT_ENVIRONMENT,
+    maxSends: config.WHATSAPP_CLOUD_MAX_SENDS,
+    ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_PHONE_NUMBER_ID
+      ? { phoneNumberId: config.WHATSAPP_CLOUD_PHONE_NUMBER_ID } : {}),
+    ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_WABA_ID
+      ? { wabaId: config.WHATSAPP_CLOUD_WABA_ID } : {}),
+    ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_ACCESS_TOKEN
+      ? { accessToken: config.WHATSAPP_CLOUD_ACCESS_TOKEN } : {}),
+    ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_TEST_RECIPIENT
+      ? { testRecipient: config.WHATSAPP_CLOUD_TEST_RECIPIENT } : {}),
+  },
   operationalBacklogDegradedCount: config.OPERATIONAL_BACKLOG_DEGRADED_COUNT,
   operationalOldestPendingDegradedMs: config.OPERATIONAL_OLDEST_PENDING_DEGRADED_MS,
   authentication: {
@@ -81,6 +96,18 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
       const consumer = createGmailApiManualEmailConsumer({ sender: config.MANUAL_EMAIL_SENDER!, googleClientId: config.MANUAL_EMAIL_GOOGLE_CLIENT_ID!, googleClientSecret: config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET!, googleRefreshToken: config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN! });
       return { deliverManualEmail: (message: { subject: string; body: string; recipient: string }) => consumer.sendManual(message) };
     } catch { return abortStartup('INVALID_CONFIGURATION'); }
+  })() : {}),
+  ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED ? (() => {
+    try {
+      const consumer = createWhatsAppCloudApiClient({
+        phoneNumberId: config.WHATSAPP_CLOUD_PHONE_NUMBER_ID!,
+        accessToken: config.WHATSAPP_CLOUD_ACCESS_TOKEN!,
+        apiVersion: config.WHATSAPP_CLOUD_API_VERSION,
+      });
+      return { deliverWhatsAppCloud: (message: { phoneNumberId: string; recipient: string; body: string }) => consumer.sendText({ recipient: message.recipient, body: message.body }) };
+    } catch {
+      return abortStartup('INVALID_CONFIGURATION');
+    }
   })() : {}),
 });
 registerOperatorTestRoutes(app, db, {

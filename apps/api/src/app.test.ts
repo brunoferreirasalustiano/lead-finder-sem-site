@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { InjectOptions } from 'light-my-request';
 import type { Database } from '@lead-finder/database';
@@ -614,6 +615,90 @@ describe('PII-minimized HTTP contracts', () => {
       expect(response.body.toLowerCase()).not.toContain(forbidden);
     }
     for (const canary of contractCanaries) expect(response.body).not.toContain(canary);
+    await app.close();
+  });
+});
+
+describe('WhatsApp Cloud HML delivery route', () => {
+  const preparationId = '123e4567-e89b-42d3-a456-426614174000';
+  const operatorToken = 'synthetic-hml-cloud-operator-token-for-tests-000000000000';
+  const runtime = {
+    enabled: true,
+    realSendEnabled: true,
+    deploymentEnvironment: 'homologation' as const,
+    phoneNumberId: '123456789012345',
+    wabaId: '987654321098765',
+    accessToken: 'synthetic-cloud-access-token-012345678901234567890123',
+    testRecipient: '+5519971519337',
+    maxSends: 1,
+  };
+
+  it('fails closed while Cloud API is disabled and does not touch the database', async () => {
+    const app = buildApp({} as Database, {
+      authentication: { token: testToken, principalPermissions: permissions },
+      whatsappCloudRuntime: { ...runtime, enabled: false },
+      deliverWhatsAppCloud: vi.fn(),
+    });
+    const response = await authenticatedInject(app, {
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { 'idempotency-key': 'synthetic-cloud-disabled-1' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: 'Service unavailable', code: 'WHATSAPP_CLOUD_DISABLED' });
+    await app.close();
+  });
+
+  it('requires the HML operator principal and returns only sanitized provider metadata', async () => {
+    const sendPrepared = vi.fn().mockResolvedValue({
+      attemptId: '70dfeb9d-30f0-4d5a-8762-3dbb4ed506af',
+      state: 'ACCEPTED',
+      provider: 'WHATSAPP_CLOUD_API',
+      providerMessageFingerprint: 'a'.repeat(64),
+      reservedAt: new Date('2026-08-02T12:00:00.000Z'),
+      replayed: false,
+    });
+    const app = buildApp({} as Database, {
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
+      whatsappCloudRuntime: runtime,
+      deliverWhatsAppCloud: vi.fn(),
+      sendPreparedWhatsAppCloud: sendPrepared,
+    });
+    const denied = await authenticatedInject(app, {
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { 'idempotency-key': 'synthetic-cloud-main-1' },
+      payload: {},
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const accepted = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-operator-1' },
+      payload: {},
+    });
+    expect(accepted.statusCode).toBe(201);
+    expect(accepted.json()).toEqual({
+      state: 'ACCEPTED', provider: 'WHATSAPP_CLOUD_API', replayed: false,
+      attemptId: '70dfeb9d-30f0-4d5a-8762-3dbb4ed506af', providerMessageFingerprint: 'a'.repeat(64),
+    });
+    expect(accepted.body).not.toContain(runtime.accessToken);
+    expect(accepted.body).not.toContain(runtime.testRecipient);
+    expect(sendPrepared).toHaveBeenCalledWith(
+      expect.anything(), preparationId, expect.objectContaining({ principalId: 'hml-internal-whatsapp-operator' }), runtime, expect.anything(), 'synthetic-cloud-operator-1',
+    );
     await app.close();
   });
 });

@@ -161,7 +161,7 @@ describe('API authentication boundary', () => {
         tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
         expiresAt: new Date(Date.now() + 60_000),
         principalId: 'hml-internal-whatsapp-operator',
-        principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open', 'manual-messaging:cancel', 'manual-messaging:confirm'],
+        principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open', 'manual-messaging:cancel', 'manual-messaging:confirm', 'manual-messaging:cloud-send'],
         environment: 'homologation',
       },
     });
@@ -179,7 +179,7 @@ describe('API authentication boundary', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       principalId: 'hml-internal-whatsapp-operator',
-      permissions: ['manual-messaging:cancel', 'manual-messaging:confirm', 'manual-messaging:open', 'manual-messaging:prepare'],
+      permissions: ['manual-messaging:cancel', 'manual-messaging:cloud-send', 'manual-messaging:confirm', 'manual-messaging:open', 'manual-messaging:prepare'],
       source: 'HML_OPERATOR_BEARER_TOKEN',
     });
     await app.close();
@@ -478,6 +478,7 @@ describe('API authentication boundary', () => {
       { method: 'POST', path: '/manual-message-preparations/:id/confirm', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/response', permission: 'manual-messaging:confirm' },
       { method: 'POST', path: '/manual-message-preparations/:id/send', permission: 'manual-messaging:send' },
+      { method: 'POST', path: '/manual-message-preparations/:id/whatsapp-cloud-send', permission: 'manual-messaging:cloud-send' },
     ]);
     expect(routePolicies).toContainEqual({
       method: 'POST',

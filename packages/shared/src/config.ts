@@ -22,6 +22,7 @@ export const apiAuthPermissions = [
   'manual-messaging:cancel',
   'manual-messaging:confirm',
   'manual-messaging:send',
+  'manual-messaging:cloud-send',
   'manual-messaging:opt-out',
   'operator-test:prepare',
   'operator-test:open',
@@ -49,6 +50,7 @@ export const hmlOperatorAuthPermissions = [
   'manual-messaging:open',
   'manual-messaging:cancel',
   'manual-messaging:confirm',
+  'manual-messaging:cloud-send',
 ] as const satisfies readonly ApiAuthPermission[];
 
 const apiAuthPermissionSet = new Set<string>(apiAuthPermissions);
@@ -187,6 +189,21 @@ const apiSchema = commonSchema.extend({
   HML_OPERATOR_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
     z.string().trim().regex(/^hml-[a-z0-9-]{1,80}$/, 'HML_OPERATOR_AUTH_PRINCIPAL_ID must use an hml- prefix'),
   ),
+  WHATSAPP_CLOUD_API_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  WHATSAPP_CLOUD_PHONE_NUMBER_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^\d{5,30}$/, 'WHATSAPP_CLOUD_PHONE_NUMBER_ID must be a numeric Meta phone number id'),
+  ),
+  WHATSAPP_CLOUD_WABA_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^\d{5,30}$/, 'WHATSAPP_CLOUD_WABA_ID must be a numeric Meta WABA id'),
+  ),
+  WHATSAPP_CLOUD_ACCESS_TOKEN: optionalEnvironmentString(
+    z.string().min(32).max(4096).regex(/^[\x21-\x7e]+$/, 'WHATSAPP_CLOUD_ACCESS_TOKEN must contain printable non-space ASCII characters only'),
+  ),
+  WHATSAPP_CLOUD_TEST_RECIPIENT: optionalEnvironmentString(
+    z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'WHATSAPP_CLOUD_TEST_RECIPIENT must use E.164 format'),
+  ),
+  WHATSAPP_CLOUD_API_VERSION: z.string().trim().regex(/^v\d+\.\d+$/, 'WHATSAPP_CLOUD_API_VERSION must use vN.N format').default('v23.0'),
+  WHATSAPP_CLOUD_MAX_SENDS: integerFromEnvironment('WHATSAPP_CLOUD_MAX_SENDS', 1, 1, 1),
   MANUAL_EMAIL_SENDER: optionalEnvironmentString(z.string().trim().toLowerCase().email().max(320)),
   MANUAL_EMAIL_GOOGLE_CLIENT_ID: optionalEnvironmentString(z.string().trim().min(1).max(512)),
   MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: optionalEnvironmentString(z.string().min(16).max(1024).regex(/^[\x21-\x7e]+$/)),
@@ -318,6 +335,46 @@ const apiSchema = commonSchema.extend({
       code: 'custom',
       path: ['OPERATOR_TEST_RECIPIENT_BINDING_KEY'],
       message: 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must differ from API_AUTH_TOKEN',
+    });
+  }
+  const whatsappCloudFieldsConfigured = configuration.WHATSAPP_CLOUD_PHONE_NUMBER_ID !== undefined
+    || configuration.WHATSAPP_CLOUD_WABA_ID !== undefined
+    || configuration.WHATSAPP_CLOUD_ACCESS_TOKEN !== undefined
+    || configuration.WHATSAPP_CLOUD_TEST_RECIPIENT !== undefined;
+  if (configuration.WHATSAPP_CLOUD_API_ENABLED) {
+    if (configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+      context.addIssue({
+        code: 'custom',
+        path: ['DEPLOYMENT_ENVIRONMENT'],
+        message: 'WhatsApp Cloud API is permitted only when DEPLOYMENT_ENVIRONMENT=homologation',
+      });
+    }
+    const required = [
+      ['WHATSAPP_CLOUD_PHONE_NUMBER_ID', configuration.WHATSAPP_CLOUD_PHONE_NUMBER_ID],
+      ['WHATSAPP_CLOUD_WABA_ID', configuration.WHATSAPP_CLOUD_WABA_ID],
+      ['WHATSAPP_CLOUD_ACCESS_TOKEN', configuration.WHATSAPP_CLOUD_ACCESS_TOKEN],
+      ['WHATSAPP_CLOUD_TEST_RECIPIENT', configuration.WHATSAPP_CLOUD_TEST_RECIPIENT],
+    ] as const;
+    for (const [name, value] of required) if (!value)
+      context.addIssue({ code: 'custom', path: [name], message: `${name} is required when WHATSAPP_CLOUD_API_ENABLED=true` });
+  } else if (whatsappCloudFieldsConfigured) {
+    const required = [
+      ['WHATSAPP_CLOUD_PHONE_NUMBER_ID', configuration.WHATSAPP_CLOUD_PHONE_NUMBER_ID],
+      ['WHATSAPP_CLOUD_WABA_ID', configuration.WHATSAPP_CLOUD_WABA_ID],
+      ['WHATSAPP_CLOUD_ACCESS_TOKEN', configuration.WHATSAPP_CLOUD_ACCESS_TOKEN],
+      ['WHATSAPP_CLOUD_TEST_RECIPIENT', configuration.WHATSAPP_CLOUD_TEST_RECIPIENT],
+    ] as const;
+    for (const [name, value] of required) if (!value)
+      context.addIssue({ code: 'custom', path: [name], message: `${name} must be configured together when WHATSAPP_CLOUD_API_ENABLED=false` });
+  }
+  if (
+    configuration.WHATSAPP_CLOUD_ACCESS_TOKEN
+    && configuration.WHATSAPP_CLOUD_ACCESS_TOKEN === configuration.API_AUTH_TOKEN
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['WHATSAPP_CLOUD_ACCESS_TOKEN'],
+      message: 'WHATSAPP_CLOUD_ACCESS_TOKEN must differ from API_AUTH_TOKEN',
     });
   }
   const manualEmailSecretsConfigured = configuration.MANUAL_EMAIL_SENDER !== undefined

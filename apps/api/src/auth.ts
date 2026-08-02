@@ -19,7 +19,7 @@ export type OperationalPrincipal = Readonly<{
   id: string;
   type: 'OPERATOR';
   permissions: ReadonlySet<Permission>;
-  authenticationSource: 'BEARER_TOKEN' | 'HML_SMOKE_BEARER_TOKEN';
+  authenticationSource: 'BEARER_TOKEN' | 'HML_SMOKE_BEARER_TOKEN' | 'HML_OPERATOR_BEARER_TOKEN';
 }>;
 
 declare module 'fastify' {
@@ -109,17 +109,20 @@ export const routePolicies: readonly RoutePolicy[] = [
 const policiesByRoute = new Map(routePolicies.map((item) => [`${item.method} ${item.path}`, item.permission]));
 if (policiesByRoute.size !== routePolicies.length) throw new Error('Duplicate API route authorization policy');
 
+type TemporaryAuthentication = Readonly<{
+  tokenHash: string;
+  expiresAt: Date;
+  principalId: string;
+  principalPermissions: readonly Permission[];
+  environment: 'homologation';
+}>;
+
 export type AuthenticationOptions = Readonly<{
   token?: string;
   principalId?: string;
   principalPermissions?: readonly Permission[];
-  temporary?: Readonly<{
-    tokenHash: string;
-    expiresAt: Date;
-    principalId: string;
-    principalPermissions: readonly Permission[];
-    environment: 'homologation';
-  }>;
+  temporary?: TemporaryAuthentication;
+  operatorTemporary?: TemporaryAuthentication;
   authenticate?: (request: FastifyRequest) => OperationalPrincipal | undefined | Promise<OperationalPrincipal | undefined>;
 }>;
 
@@ -150,6 +153,16 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
       type: 'OPERATOR' as const,
       permissions: new Set(temporary.principalPermissions),
       authenticationSource: 'HML_SMOKE_BEARER_TOKEN' as const,
+    };
+  }
+  const operatorTemporary = options.operatorTemporary;
+  if (operatorTemporary && operatorTemporary.environment === 'homologation'
+    && operatorTemporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, operatorTemporary.tokenHash)) {
+    return {
+      id: operatorTemporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(operatorTemporary.principalPermissions),
+      authenticationSource: 'HML_OPERATOR_BEARER_TOKEN' as const,
     };
   }
   return undefined;
@@ -189,9 +202,11 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
   const registeredRoutes = new Set<string>();
   const failedTemporaryAuthentication = new Map<string, { count: number; resetAt: number }>();
   const temporaryRateLimit = (request: FastifyRequest) => {
-    if (!options.temporary || options.temporary.expiresAt.getTime() <= Date.now()) return false;
-    const key = request.ip || 'unknown';
     const now = Date.now();
+    const activeTemporary = [options.temporary, options.operatorTemporary]
+      .find((candidate) => candidate && candidate.expiresAt.getTime() > now);
+    if (!activeTemporary || activeTemporary.expiresAt.getTime() <= Date.now()) return false;
+    const key = request.ip || 'unknown';
     const current = failedTemporaryAuthentication.get(key);
     if (!current || current.resetAt <= now) {
       failedTemporaryAuthentication.set(key, { count: 1, resetAt: now + 60_000 });
@@ -228,6 +243,9 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     }
     if (principal.authenticationSource === 'HML_SMOKE_BEARER_TOKEN') {
       request.log.info({ event: 'hml_smoke_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_smoke_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_OPERATOR_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_operator_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_operator_authentication_accepted');
     }
 
     const requiredPermission = policiesByRoute.get(routeKey);

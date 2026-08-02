@@ -41,6 +41,16 @@ export const hmlSmokeAuthPermissions = [
   'manual-messaging:confirm',
 ] as const satisfies readonly ApiAuthPermission[];
 
+// Separate fixed allow-list for the human HML operator. It is intentionally
+// not configurable through an environment variable and grants no campaign,
+// collection, administrative, secret-reading, or automatic-delivery access.
+export const hmlOperatorAuthPermissions = [
+  'manual-messaging:prepare',
+  'manual-messaging:open',
+  'manual-messaging:cancel',
+  'manual-messaging:confirm',
+] as const satisfies readonly ApiAuthPermission[];
+
 const apiAuthPermissionSet = new Set<string>(apiAuthPermissions);
 const apiAuthPermissionsFromEnvironment = z.string().superRefine((value, context) => {
   const entries = value.split(',');
@@ -167,6 +177,16 @@ const apiSchema = commonSchema.extend({
   HML_SMOKE_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
     z.string().trim().regex(/^hml-smoke-[a-z0-9-]{1,80}$/, 'HML_SMOKE_AUTH_PRINCIPAL_ID must use the hml-smoke- prefix'),
   ),
+  HML_OPERATOR_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  HML_OPERATOR_AUTH_TOKEN_HASH: optionalEnvironmentString(
+    z.string().regex(/^[0-9a-f]{64}$/i, 'HML_OPERATOR_AUTH_TOKEN_HASH must be a SHA-256 hex digest').transform((value) => value.toLowerCase()),
+  ),
+  HML_OPERATOR_AUTH_EXPIRES_AT: optionalEnvironmentString(
+    z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+  ),
+  HML_OPERATOR_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^hml-[a-z0-9-]{1,80}$/, 'HML_OPERATOR_AUTH_PRINCIPAL_ID must use an hml- prefix'),
+  ),
   MANUAL_EMAIL_SENDER: optionalEnvironmentString(z.string().trim().toLowerCase().email().max(320)),
   MANUAL_EMAIL_GOOGLE_CLIENT_ID: optionalEnvironmentString(z.string().trim().min(1).max(512)),
   MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: optionalEnvironmentString(z.string().min(16).max(1024).regex(/^[\x21-\x7e]+$/)),
@@ -208,6 +228,55 @@ const apiSchema = commonSchema.extend({
     }
     if (!configuration.HML_SMOKE_AUTH_PRINCIPAL_ID) {
       context.addIssue({ code: 'custom', path: ['HML_SMOKE_AUTH_PRINCIPAL_ID'], message: 'HML_SMOKE_AUTH_PRINCIPAL_ID is required when HML_SMOKE_AUTH_ENABLED=true' });
+    }
+  }
+  const operatorAuthFieldsConfigured = configuration.HML_OPERATOR_AUTH_TOKEN_HASH !== undefined
+    || configuration.HML_OPERATOR_AUTH_EXPIRES_AT !== undefined
+    || configuration.HML_OPERATOR_AUTH_PRINCIPAL_ID !== undefined;
+  if (!configuration.HML_OPERATOR_AUTH_ENABLED) {
+    if (operatorAuthFieldsConfigured) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HML_OPERATOR_AUTH_ENABLED'],
+        message: 'HML operator authentication fields require HML_OPERATOR_AUTH_ENABLED=true',
+      });
+    }
+  } else {
+    if (configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+      context.addIssue({
+        code: 'custom',
+        path: ['DEPLOYMENT_ENVIRONMENT'],
+        message: 'HML operator authentication is permitted only when DEPLOYMENT_ENVIRONMENT=homologation',
+      });
+    }
+    if (!configuration.HML_OPERATOR_AUTH_TOKEN_HASH) {
+      context.addIssue({ code: 'custom', path: ['HML_OPERATOR_AUTH_TOKEN_HASH'], message: 'HML_OPERATOR_AUTH_TOKEN_HASH is required when HML_OPERATOR_AUTH_ENABLED=true' });
+    }
+    if (!configuration.HML_OPERATOR_AUTH_EXPIRES_AT) {
+      context.addIssue({ code: 'custom', path: ['HML_OPERATOR_AUTH_EXPIRES_AT'], message: 'HML_OPERATOR_AUTH_EXPIRES_AT is required when HML_OPERATOR_AUTH_ENABLED=true' });
+    } else if (configuration.HML_OPERATOR_AUTH_EXPIRES_AT.getTime() <= Date.now()) {
+      context.addIssue({ code: 'custom', path: ['HML_OPERATOR_AUTH_EXPIRES_AT'], message: 'HML_OPERATOR_AUTH_EXPIRES_AT must be in the future' });
+    }
+    if (!configuration.HML_OPERATOR_AUTH_PRINCIPAL_ID) {
+      context.addIssue({ code: 'custom', path: ['HML_OPERATOR_AUTH_PRINCIPAL_ID'], message: 'HML_OPERATOR_AUTH_PRINCIPAL_ID is required when HML_OPERATOR_AUTH_ENABLED=true' });
+    }
+    if (configuration.HML_OPERATOR_AUTH_TOKEN_HASH
+      && configuration.HML_SMOKE_AUTH_TOKEN_HASH
+      && configuration.HML_OPERATOR_AUTH_TOKEN_HASH === configuration.HML_SMOKE_AUTH_TOKEN_HASH) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HML_OPERATOR_AUTH_TOKEN_HASH'],
+        message: 'HML_OPERATOR_AUTH_TOKEN_HASH must differ from HML_SMOKE_AUTH_TOKEN_HASH',
+      });
+    }
+    if (configuration.HML_OPERATOR_AUTH_PRINCIPAL_ID
+      && configuration.HML_SMOKE_AUTH_PRINCIPAL_ID
+      && configuration.HML_OPERATOR_AUTH_PRINCIPAL_ID === configuration.HML_SMOKE_AUTH_PRINCIPAL_ID) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HML_OPERATOR_AUTH_PRINCIPAL_ID'],
+        message: 'HML_OPERATOR_AUTH_PRINCIPAL_ID must differ from HML_SMOKE_AUTH_PRINCIPAL_ID',
+      });
     }
   }
   const operatorTestSecretsConfigured = configuration.OPERATOR_TEST_WHATSAPP_E164 !== undefined

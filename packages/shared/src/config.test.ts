@@ -130,6 +130,43 @@ describe('environment configuration', () => {
     expect(() => parseApiConfig({ ...enabled, HML_SMOKE_AUTH_PRINCIPAL_ID: 'operator' })).toThrow('HML_SMOKE_AUTH_PRINCIPAL_ID');
   });
 
+  it('fails closed for partial, expired, or non-homologation HML operator authentication', () => {
+    const enabled = {
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_OPERATOR_AUTH_ENABLED: 'true',
+      HML_OPERATOR_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_OPERATOR_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_OPERATOR_AUTH_PRINCIPAL_ID: 'hml-internal-whatsapp-operator',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_OPERATOR_AUTH_ENABLED: true,
+      HML_OPERATOR_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_OPERATOR_AUTH_PRINCIPAL_ID: 'hml-internal-whatsapp-operator',
+    });
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: 'production' })).toThrow('DEPLOYMENT_ENVIRONMENT');
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: undefined })).toThrow('DEPLOYMENT_ENVIRONMENT');
+    expect(() => parseApiConfig({ ...enabled, HML_OPERATOR_AUTH_EXPIRES_AT: new Date(Date.now() - 1_000).toISOString() })).toThrow('must be in the future');
+    expect(() => parseApiConfig({ ...enabled, HML_OPERATOR_AUTH_TOKEN_HASH: 'not-a-hash' })).toThrow('HML_OPERATOR_AUTH_TOKEN_HASH');
+    expect(() => parseApiConfig({ ...database, HML_OPERATOR_AUTH_TOKEN_HASH: 'b'.repeat(64) })).toThrow('HML_OPERATOR_AUTH_ENABLED');
+    expect(() => parseApiConfig({ ...enabled, HML_OPERATOR_AUTH_PRINCIPAL_ID: 'operator' })).toThrow('HML_OPERATOR_AUTH_PRINCIPAL_ID');
+    expect(() => parseApiConfig({
+      ...enabled,
+      HML_SMOKE_AUTH_ENABLED: 'true',
+      HML_SMOKE_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_SMOKE_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_SMOKE_AUTH_PRINCIPAL_ID: 'hml-smoke-test',
+    })).toThrow('must differ');
+    expect(() => parseApiConfig({
+      ...enabled,
+      HML_SMOKE_AUTH_ENABLED: 'true',
+      HML_SMOKE_AUTH_TOKEN_HASH: 'c'.repeat(64),
+      HML_SMOKE_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_SMOKE_AUTH_PRINCIPAL_ID: 'hml-internal-whatsapp-operator',
+    })).toThrow('must differ');
+  });
+
   it('keeps the real operator email test bound to one internal mailbox', () => {
     const enabled = {
       ...database,

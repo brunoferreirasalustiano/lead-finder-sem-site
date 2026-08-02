@@ -151,6 +151,62 @@ describe('API authentication boundary', () => {
     await app.close();
   });
 
+  it('accepts a valid HML operator token as a distinct principal with fixed permissions', async () => {
+    const operatorToken = 'hml-operator-token-for-tests-only-00000000000000000000000000000000';
+    const app = Fastify({ logger: false });
+    installAuthorization(app, {
+      token,
+      principalPermissions: [],
+      operatorTemporary: {
+        tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        principalId: 'hml-internal-whatsapp-operator',
+        principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open', 'manual-messaging:cancel', 'manual-messaging:confirm'],
+        environment: 'homologation',
+      },
+    });
+    app.get('/manual-message-preparations/:id/whatsapp-link', (request) => ({
+      principalId: request.principal?.id,
+      permissions: [...(request.principal?.permissions ?? [])].sort(),
+      source: request.principal?.authenticationSource,
+    }));
+    await app.ready();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      principalId: 'hml-internal-whatsapp-operator',
+      permissions: ['manual-messaging:cancel', 'manual-messaging:confirm', 'manual-messaging:open', 'manual-messaging:prepare'],
+      source: 'HML_OPERATOR_BEARER_TOKEN',
+    });
+    await app.close();
+  });
+
+  it('rejects invalid, expired, and revoked HML operator tokens', async () => {
+    const operatorToken = 'hml-operator-token-for-tests-only-00000000000000000000000000000000';
+    const hash = createHash('sha256').update(operatorToken, 'utf8').digest('hex');
+    const makeApp = (operatorTemporary?: NonNullable<Parameters<typeof installAuthorization>[1]>['operatorTemporary']) => {
+      const app = Fastify({ logger: false });
+      installAuthorization(app, operatorTemporary
+        ? { token, principalPermissions: [], operatorTemporary }
+        : { token, principalPermissions: [] });
+      app.get('/manual-message-preparations/:id/whatsapp-link', () => ({ ok: true }));
+      return app;
+    };
+    const valid = makeApp({ tokenHash: hash, expiresAt: new Date(Date.now() + 60_000), principalId: 'hml-internal-whatsapp-operator', principalPermissions: ['manual-messaging:confirm'], environment: 'homologation' });
+    expect((await valid.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: 'Bearer wrong-token' } })).statusCode).toBe(401);
+    await valid.close();
+    const expired = makeApp({ tokenHash: hash, expiresAt: new Date(Date.now() - 1_000), principalId: 'hml-internal-whatsapp-operator', principalPermissions: ['manual-messaging:confirm'], environment: 'homologation' });
+    expect((await expired.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: `Bearer ${operatorToken}` } })).statusCode).toBe(401);
+    await expired.close();
+    const revoked = makeApp(undefined);
+    expect((await revoked.inject({ method: 'GET', url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/whatsapp-link', headers: { authorization: `Bearer ${operatorToken}` } })).statusCode).toBe(401);
+    await revoked.close();
+  });
+
   it('rejects invalid, expired, disabled, and revoked HML smoke tokens', async () => {
     const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
     const hash = createHash('sha256').update(smokeToken, 'utf8').digest('hex');
@@ -220,6 +276,44 @@ describe('API authentication boundary', () => {
     });
     expect(response.statusCode).toBe(403);
     expect(databaseAccesses).toBe(0);
+    await app.close();
+  });
+
+  it('allows SENT_CONFIRMED only for the separate HML operator principal after OPENED', async () => {
+    const operatorToken = 'hml-operator-token-for-tests-only-00000000000000000000000000000000';
+    let executions = 0;
+    const tx = {
+      execute: () => {
+        executions += 1;
+        if (executions === 3) return [{ pilot_run_id: '20dfeb9d-30f0-4d5a-8762-3dbb4ed506aa', lead_id: leadId, contact_id: '123e4567-e89b-42d3-a456-426614174000', channel: 'WHATSAPP', result_fingerprint: 'a'.repeat(64), result_snapshot: {}, operator_principal_id: 'hml-internal-whatsapp-operator', expires_at: new Date(Date.now() + 60_000), expired: false }];
+        if (executions === 6) return [{ contact_id: '123e4567-e89b-42d3-a456-426614174000', channel: 'WHATSAPP', contact_fingerprint: 'b'.repeat(64), legacy_contact_fingerprint: 'c'.repeat(64), contact_source: 'HML_OPERATOR_CONTROLLED', lead_name: 'HML synthetic operator', contact_value: '+15555550123' }];
+        if (executions === 7) return [{ id: '123e4567-e89b-42d3-a456-426614174000', event_type: 'OPENED', result: null, created_at: new Date(), operator_principal_id: 'hml-internal-whatsapp-operator', payload_fingerprint: 'd'.repeat(64) }];
+        if (executions === 8) return [{ id: '123e4567-e89b-42d3-a456-426614174001', created_at: new Date() }];
+        return [];
+      },
+    };
+    const db = { transaction: async <T>(fn: (value: typeof tx) => Promise<T>) => fn(tx) } as unknown as Database;
+    const app = buildApp(db, {
+      authentication: {
+        token,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:confirm'],
+          environment: 'homologation',
+        },
+      },
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/confirm',
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'operator-confirm-0001' },
+      payload: { result: 'SENT_CONFIRMED' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ state: 'CONTACT_CONFIRMED', result: 'SENT_CONFIRMED', replayed: false });
     await app.close();
   });
 

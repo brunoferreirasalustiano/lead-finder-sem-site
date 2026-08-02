@@ -1,5 +1,5 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
-import { assertApiKillSwitchReleased, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
@@ -49,6 +49,15 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
         principalId: config.HML_SMOKE_AUTH_PRINCIPAL_ID!,
         principalPermissions: hmlSmokeAuthPermissions,
         environment: 'homologation',
+      },
+    } : {}),
+    ...(config.HML_OPERATOR_AUTH_ENABLED ? {
+      operatorTemporary: {
+        tokenHash: config.HML_OPERATOR_AUTH_TOKEN_HASH!,
+        expiresAt: config.HML_OPERATOR_AUTH_EXPIRES_AT!,
+        principalId: config.HML_OPERATOR_AUTH_PRINCIPAL_ID!,
+        principalPermissions: hmlOperatorAuthPermissions,
+        environment: 'homologation' as const,
       },
     } : {}),
   },

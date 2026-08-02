@@ -167,6 +167,41 @@ describe('environment configuration', () => {
     })).toThrow('must differ');
   });
 
+  it('keeps WhatsApp Cloud API disabled by default and HML-only when enabled', () => {
+    expect(parseApiConfig(database)).toMatchObject({
+      WHATSAPP_CLOUD_API_ENABLED: false,
+      WHATSAPP_CLOUD_MAX_SENDS: 1,
+      WHATSAPP_CLOUD_API_VERSION: 'v23.0',
+    });
+    const enabled = {
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      WHATSAPP_CLOUD_API_ENABLED: 'true',
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: '123456789012345',
+      WHATSAPP_CLOUD_WABA_ID: '987654321098765',
+      WHATSAPP_CLOUD_ACCESS_TOKEN: 'synthetic-cloud-access-token-012345678901234567890123',
+      WHATSAPP_CLOUD_TEST_RECIPIENT: '+5519971519337',
+      WHATSAPP_CLOUD_MAX_SENDS: '1',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      WHATSAPP_CLOUD_API_ENABLED: true,
+      WHATSAPP_CLOUD_MAX_SENDS: 1,
+      WHATSAPP_CLOUD_TEST_RECIPIENT: '+5519971519337',
+    });
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: 'production' }))
+      .toThrow('WhatsApp Cloud API is permitted only');
+    expect(() => parseApiConfig({ ...enabled, WHATSAPP_CLOUD_ACCESS_TOKEN: undefined }))
+      .toThrow('WHATSAPP_CLOUD_ACCESS_TOKEN');
+    expect(() => parseApiConfig({ ...enabled, WHATSAPP_CLOUD_MAX_SENDS: '2' }))
+      .toThrow('WHATSAPP_CLOUD_MAX_SENDS');
+    expect(() => parseApiConfig({ ...database, WHATSAPP_CLOUD_PHONE_NUMBER_ID: '123456789012345' }))
+      .toThrow('must be configured together');
+    expect(() => parseApiConfig({
+      ...enabled,
+      WHATSAPP_CLOUD_ACCESS_TOKEN: database.API_AUTH_TOKEN,
+    })).toThrow('must differ from API_AUTH_TOKEN');
+  });
+
   it('keeps the real operator email test bound to one internal mailbox', () => {
     const enabled = {
       ...database,

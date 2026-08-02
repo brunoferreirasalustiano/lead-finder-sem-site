@@ -1,12 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
   approvedTemplates,
   DeterministicFakeMessagingProvider,
   type MessagingChannel,
 } from '@lead-finder/messaging';
-import { createWhatsAppManualUrl } from '@lead-finder/whatsapp';
-import type { AuthorizationContext } from '@lead-finder/shared';
+import { createWhatsAppManualUrl, normalizePhoneE164 } from '@lead-finder/whatsapp';
+import { isTrustedAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export const CONTACT_RESOLUTION_PURPOSE = 'B2B_PROSPECTION' as const;
 const E164_PHONE_PATTERN = String.raw`^\+[1-9][0-9]{7,14}$`;
@@ -32,7 +32,11 @@ export class ManualMessagingError extends Error {
       | 'INVALID_STATE'
       | 'INELIGIBLE'
       | 'IDEMPOTENCY_CONFLICT'
-      | 'EMAIL_CONSUMER_UNAVAILABLE',
+      | 'EMAIL_CONSUMER_UNAVAILABLE'
+      | 'WHATSAPP_CLOUD_UNAVAILABLE'
+      | 'WHATSAPP_CLOUD_FORBIDDEN'
+      | 'WHATSAPP_CLOUD_INVALID_CONFIGURATION'
+      | 'WHATSAPP_CLOUD_AMBIGUOUS',
   ) {
     super(message);
   }
@@ -437,6 +441,238 @@ export async function sendPreparedManualEmail(
     throw new ManualMessagingError('Manual email delivery failed', 'EMAIL_CONSUMER_UNAVAILABLE');
   }
 }
+
+export type WhatsAppCloudRuntime = Readonly<{
+  enabled: boolean;
+  realSendEnabled: boolean;
+  deploymentEnvironment: 'development' | 'homologation' | 'production';
+  phoneNumberId?: string;
+  wabaId?: string;
+  accessToken?: string;
+  testRecipient?: string;
+  maxSends: number;
+}>;
+
+export type WhatsAppCloudDelivery = Readonly<{
+  provider: 'WHATSAPP_CLOUD_API';
+  messageId: string;
+}>;
+
+export type WhatsAppCloudDeliver = (
+  input: Readonly<{ phoneNumberId: string; recipient: string; body: string }>,
+) => Promise<WhatsAppCloudDelivery>;
+
+type CloudReservation = {
+  id: string;
+  reserved_at: Date;
+  replayed: boolean;
+  event_type: 'ACCEPTED' | 'FAILED' | 'AMBIGUOUS' | null;
+  provider_message_fingerprint: string | null;
+  error_code: string | null;
+  occurred_at: Date | null;
+};
+
+const cloudFingerprint = (key: string, domain: string, value: string) =>
+  createHmac('sha256', key).update(`${domain}\u0000${value}`).digest('hex');
+
+const safeCloudErrorCode = (error: unknown) => {
+  const value = error instanceof Error && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(value)
+    ? value
+    : 'DELIVERY_FAILED';
+};
+
+const requireCloudOperator = (auth: AuthorizationContext) => {
+  if (
+    !isTrustedAuthorizationContext(auth)
+    || auth.authenticationMethod !== 'HML_OPERATOR_BEARER_TOKEN'
+    || !auth.permissions.has('manual-messaging:cloud-send')
+  ) {
+    throw new ManualMessagingError('WhatsApp Cloud send permission denied', 'WHATSAPP_CLOUD_FORBIDDEN');
+  }
+};
+
+const resolveCloudRuntime = (runtime: WhatsAppCloudRuntime) => {
+  if (!runtime.enabled || !runtime.realSendEnabled)
+    throw new ManualMessagingError('WhatsApp Cloud API is disabled', 'WHATSAPP_CLOUD_UNAVAILABLE');
+  if (runtime.deploymentEnvironment !== 'homologation' || runtime.maxSends !== 1)
+    throw new ManualMessagingError('WhatsApp Cloud configuration is invalid', 'WHATSAPP_CLOUD_INVALID_CONFIGURATION');
+  if (!runtime.phoneNumberId || !runtime.wabaId || !runtime.accessToken || !runtime.testRecipient)
+    throw new ManualMessagingError('WhatsApp Cloud configuration is incomplete', 'WHATSAPP_CLOUD_INVALID_CONFIGURATION');
+  const recipient = normalizePhoneE164(runtime.testRecipient);
+  if (!recipient.ok)
+    throw new ManualMessagingError('WhatsApp Cloud test recipient is invalid', 'WHATSAPP_CLOUD_INVALID_CONFIGURATION');
+  return {
+    enabled: true as const,
+    realSendEnabled: true as const,
+    deploymentEnvironment: 'homologation' as const,
+    phoneNumberId: runtime.phoneNumberId,
+    wabaId: runtime.wabaId,
+    accessToken: runtime.accessToken,
+    testRecipient: runtime.testRecipient,
+    maxSends: 1 as const,
+    recipient,
+    fingerprintKey: runtime.accessToken,
+  } as const;
+};
+
+/**
+ * Sends at most one HML test message for the configured control recipient.
+ * Provider acceptance is persisted separately from SENT_CONFIRMED and never
+ * creates a manual-message confirmation event.
+ */
+export async function sendPreparedWhatsAppCloudMessage(
+  db: Database,
+  preparationId: string,
+  auth: AuthorizationContext,
+  runtime: WhatsAppCloudRuntime,
+  deliver: WhatsAppCloudDeliver,
+  idempotencyKey: string,
+) {
+  requireCloudOperator(auth);
+  const resolved = resolveCloudRuntime(runtime);
+  const reservation = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`whatsapp-cloud-preparation:${preparationId}`},0))`);
+    const prep = (await tx.execute(sql<{
+      pilot_run_id: string;
+      lead_id: string;
+      contact_id: string;
+      channel: MessagingChannel;
+      operator_principal_id: string;
+      result_fingerprint: string;
+      result_snapshot: unknown;
+      expires_at: Date;
+      expired: boolean;
+    }[]>`select pilot_run_id,lead_id,contact_id,channel,operator_principal_id,result_fingerprint,result_snapshot,expires_at,(expires_at <= clock_timestamp()) expired
+      from public.pilot_manual_message_preparations
+      where id=${preparationId}::uuid for update`))[0];
+    if (!prep) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (prep.operator_principal_id !== auth.principalId)
+      throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (prep.channel !== 'WHATSAPP')
+      throw new ManualMessagingError('Only WhatsApp preparations can be sent through Cloud API', 'INVALID_STATE');
+    if (prep.expired)
+      throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
+    const events = await tx.execute(sql<{ event_type: string; result: string | null }[]>`select event_type,result
+      from public.pilot_manual_message_events where preparation_id=${preparationId}::uuid`);
+    if (!events.some((event) => event.event_type === 'OPENED'))
+      throw new ManualMessagingError('Preparation must be opened before Cloud API delivery', 'INVALID_STATE');
+    if (events.some((event) => event.event_type === 'CONTACT_CONFIRMED' || event.event_type === 'RESPONSE_RECORDED' || event.event_type === 'CANCELLED'))
+      throw new ManualMessagingError('Preparation is already concluded', 'INVALID_STATE');
+
+    const eligible = await exactEligibleContact(
+      tx,
+      String(prep.pilot_run_id),
+      String(prep.lead_id),
+      String(prep.contact_id),
+      'WHATSAPP',
+    );
+    const validated = validatePreparedSnapshot(
+      eligible,
+      'WHATSAPP',
+      prep.result_snapshot,
+      String(prep.result_fingerprint),
+    );
+    const eligibleRecipient = normalizePhoneE164(eligible.contact_value);
+    if (!eligibleRecipient.ok || eligibleRecipient.digits !== resolved.recipient.digits)
+      throw new ManualMessagingError('Preparation is outside the controlled Cloud API recipient scope', 'INELIGIBLE');
+
+    const phoneNumberIdFingerprint = cloudFingerprint(resolved.fingerprintKey, 'WHATSAPP_CLOUD:PHONE_NUMBER_ID', resolved.phoneNumberId);
+    const recipientFingerprint = cloudFingerprint(resolved.fingerprintKey, 'WHATSAPP_CLOUD:RECIPIENT', resolved.recipient.e164);
+    const messageFingerprint = validated.prepared.fingerprint;
+    const payloadFingerprint = digest({
+      provider: 'WHATSAPP_CLOUD_API',
+      scope: 'HML_TEST',
+      pilotRunId: prep.pilot_run_id,
+      leadId: prep.lead_id,
+      contactId: prep.contact_id,
+      phoneNumberIdFingerprint,
+      recipientFingerprint,
+      messageFingerprint,
+    });
+    const idempotencyFingerprint = cloudFingerprint(resolved.fingerprintKey, 'WHATSAPP_CLOUD:IDEMPOTENCY', idempotencyKey);
+    const rows = (await tx.execute(sql<CloudReservation[]>`select id,reserved_at,replayed,event_type,provider_message_fingerprint,error_code,occurred_at
+      from public.create_manual_whatsapp_cloud_send_attempt(
+        ${preparationId}::uuid,
+        ${prep.pilot_run_id}::uuid,
+        ${prep.lead_id}::uuid,
+        ${prep.contact_id}::uuid,
+        ${'HML_TEST'},
+        ${auth.principalId},
+        ${phoneNumberIdFingerprint}::char(64),
+        ${recipientFingerprint}::char(64),
+        ${messageFingerprint}::char(64),
+        ${payloadFingerprint}::char(64),
+        ${idempotencyFingerprint}::char(64)
+      )`)) as unknown as CloudReservation[];
+    const saved = rows[0];
+    if (!saved) throw new ManualMessagingError('Cloud API reservation failed', 'WHATSAPP_CLOUD_AMBIGUOUS');
+    if (saved.replayed) {
+      if (!saved.event_type)
+        throw new ManualMessagingError('Cloud API reservation has no terminal provider event', 'WHATSAPP_CLOUD_AMBIGUOUS');
+      return { ...saved, body: validated.prepared.body, recipient: resolved.recipient.e164, phoneNumberId: resolved.phoneNumberId, replayed: true } as const;
+    }
+    return { ...saved, body: validated.prepared.body, recipient: resolved.recipient.e164, phoneNumberId: resolved.phoneNumberId, replayed: false } as const;
+  });
+
+  if (reservation.replayed) {
+    return {
+      attemptId: reservation.id,
+      state: reservation.event_type!,
+      provider: 'WHATSAPP_CLOUD_API' as const,
+      providerMessageFingerprint: reservation.provider_message_fingerprint,
+      reservedAt: reservation.reserved_at,
+      occurredAt: reservation.occurred_at,
+      replayed: true,
+    };
+  }
+
+  let receipt: WhatsAppCloudDelivery;
+  try {
+    receipt = await deliver({
+      phoneNumberId: reservation.phoneNumberId,
+      recipient: reservation.recipient,
+      body: reservation.body,
+    });
+  } catch (error) {
+    const errorCode = safeCloudErrorCode(error);
+    const eventType = errorCode === 'NETWORK_ERROR' ? 'AMBIGUOUS' : 'FAILED';
+    try {
+      await db.execute(sql`select * from public.append_manual_whatsapp_cloud_send_event(
+        ${reservation.id}::uuid,
+        ${eventType},
+        null::char(64),
+        ${errorCode}
+      )`);
+    } catch {
+      throw new ManualMessagingError('Cloud API delivery state is ambiguous', 'WHATSAPP_CLOUD_AMBIGUOUS');
+    }
+    throw new ManualMessagingError('WhatsApp Cloud delivery failed', eventType === 'AMBIGUOUS' ? 'WHATSAPP_CLOUD_AMBIGUOUS' : 'WHATSAPP_CLOUD_UNAVAILABLE');
+  }
+
+  const providerMessageFingerprint = cloudFingerprint(resolved.fingerprintKey, 'WHATSAPP_CLOUD:MESSAGE_ID', receipt.messageId);
+  try {
+    await db.execute(sql`select * from public.append_manual_whatsapp_cloud_send_event(
+      ${reservation.id}::uuid,
+      'ACCEPTED',
+      ${providerMessageFingerprint}::char(64),
+      null
+    )`);
+  } catch {
+    throw new ManualMessagingError('Cloud API acceptance state is ambiguous', 'WHATSAPP_CLOUD_AMBIGUOUS');
+  }
+  return {
+    attemptId: reservation.id,
+    state: 'ACCEPTED' as const,
+    provider: receipt.provider,
+    providerMessageFingerprint,
+    reservedAt: reservation.reserved_at,
+    replayed: false,
+  };
+}
+
 export async function resolveNarrowContact(
   db: Database,
   input: {

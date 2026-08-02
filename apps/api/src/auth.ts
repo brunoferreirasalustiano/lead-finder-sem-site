@@ -97,6 +97,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('POST', '/manual-message-preparations/:id/confirm', 'manual-messaging:confirm'),
   policy('POST', '/manual-message-preparations/:id/response', 'manual-messaging:confirm'),
   policy('POST', '/manual-message-preparations/:id/send', 'manual-messaging:send'),
+  policy('POST', '/manual-message-preparations/:id/whatsapp-cloud-send', 'manual-messaging:cloud-send'),
   policy('POST', '/operator-tests/whatsapp/preparations', 'operator-test:prepare'),
   policy('POST', '/operator-test-preparations/:id/open', 'operator-test:open'),
   policy('POST', '/operator-test-preparations/:id/confirm', 'operator-test:confirm'),

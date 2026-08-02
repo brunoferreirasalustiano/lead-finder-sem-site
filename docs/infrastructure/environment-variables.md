@@ -70,6 +70,16 @@ A aplicação usa PostgreSQL direto por `DATABASE_URL`. Qualquer uso futuro de `
 
 Nenhuma combinação parcial pode liberar envio. O runtime real futuro deve exigir todos os gates simultaneamente, além de elegibilidade, revisão humana, idempotência, limites e opt-out íntegro.
 
+## WhatsApp Cloud API HML sandbox
+
+A integração Cloud API é restrita a HML, ao principal de operador e a um único
+escopo de reserva. Mantenha `WHATSAPP_CLOUD_API_ENABLED=false` e
+`REAL_SEND_ENABLED=false` por padrão. Quando um sandbox HML for aprovado
+separadamente, configure no gerenciador de segredos o Phone Number ID, WABA ID,
+token, destinatário controlado, versão da API e `WHATSAPP_CLOUD_MAX_SENDS=1` em
+conjunto. Nunca versione esses valores nem os exponha em logs; configuração
+parcial e qualquer ambiente diferente de homologação são rejeitados.
+
 ## WhatsApp e IA — reservadas, ainda não ativas
 
 Estas variáveis estão previstas na arquitetura, mas não representam integração implementada:

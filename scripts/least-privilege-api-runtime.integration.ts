@@ -23,6 +23,10 @@ const createSql = await readFile(
   new URL('../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
 );
+const executeGrantMigration = await readFile(
+  new URL('../database/migrations/0034_runtime_security_definer_execute_grants.sql', import.meta.url),
+  'utf8',
+);
 const rollbackSql = await readFile(
   new URL('../database/security/rollback_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
@@ -79,6 +83,17 @@ try {
   await owner.unsafe(createSql);
   stage = 'SET_SYNTHETIC_PASSWORD';
   await owner.unsafe(`ALTER ROLE ${roleName} PASSWORD ${quoteLiteral(rolePassword)}`);
+
+  stage = 'REVOKE_FUNCTION_GRANTS_FOR_MIGRATION_REPLAY';
+  await owner.unsafe(`
+    REVOKE EXECUTE ON FUNCTION
+      public.create_operator_channel_test_preparation(char, char, char, char, char, char),
+      public.append_operator_channel_test_event(uuid, text, text, char, char, char),
+      public.create_operator_email_test_attempt(char, char, char, char, char, char),
+      public.append_operator_email_test_event(uuid, text, char, char, char)
+    FROM ${roleName}`);
+  stage = 'APPLY_0034_RUNTIME_EXECUTE_GRANTS';
+  await owner.unsafe(executeGrantMigration);
 
   stage = 'VERIFY_ATTRIBUTES';
   const attributes = (
@@ -182,6 +197,20 @@ try {
     'create_operator_channel_test_preparation(character,character,character,character,character,character)',
     'create_operator_email_test_attempt(character,character,character,character,character,character)',
   ]);
+  const publicExecutableFunctions = await owner<{ identity: string }[]>`
+    SELECT procedure_record.oid::regprocedure::text AS identity
+    FROM pg_proc procedure_record
+    JOIN pg_namespace namespace_record ON namespace_record.oid = procedure_record.pronamespace
+    WHERE namespace_record.nspname = 'public'
+      AND procedure_record.proname IN (
+        'append_operator_channel_test_event',
+        'append_operator_email_test_event',
+        'create_operator_channel_test_preparation',
+        'create_operator_email_test_attempt'
+      )
+      AND has_function_privilege('public', procedure_record.oid, 'EXECUTE')
+    ORDER BY identity`;
+  assert.deepEqual(publicExecutableFunctions, []);
 
   stage = 'VERIFY_RLS_POLICIES';
   const policies = await owner<{ policyname: string }[]>`
@@ -249,7 +278,39 @@ try {
   );
   assert.equal(response.state, 'RESPONSE_RECORDED');
 
+  stage = 'VERIFY_EMAIL_FUNCTION_FLOW';
+  const emailAttempt = (await restrictedRaw`
+    SELECT * FROM public.create_operator_email_test_attempt(
+      ${'a'.repeat(64)}::char(64), ${'b'.repeat(64)}::char(64), ${'c'.repeat(64)}::char(64),
+      ${'d'.repeat(64)}::char(64), ${'e'.repeat(64)}::char(64), ${'f'.repeat(64)}::char(64)
+    )`)[0];
+  assert.ok(emailAttempt?.id);
+  const emailEvent = (await restrictedRaw`
+    SELECT * FROM public.append_operator_email_test_event(
+      ${emailAttempt.id}::uuid, 'FAILED', ${'c'.repeat(64)}::char(64),
+      ${'d'.repeat(64)}::char(64), ${'e'.repeat(64)}::char(64)
+    )`)[0];
+  assert.ok(emailEvent?.id);
+  await assert.rejects(restrictedRaw`
+    SELECT * FROM public.create_operator_email_test_attempt(
+      ${'x'.repeat(64)}::char(64), ${'b'.repeat(64)}::char(64), ${'c'.repeat(64)}::char(64),
+      ${'d'.repeat(64)}::char(64), ${'e'.repeat(64)}::char(64), ${'f'.repeat(64)}::char(64)
+    )`);
+
   stage = 'VERIFY_DIRECT_WRITES_DENIED';
+  for (const table of [
+    'operator_email_test_attempts',
+    'operator_email_test_events',
+    'pilot_manual_email_send_attempts',
+    'pilot_manual_email_send_events',
+  ]) {
+    await assert.rejects(restrictedRaw.unsafe(`SELECT * FROM public.${table} LIMIT 1`));
+  }
+  await assert.rejects(restrictedRaw.unsafe(`
+    INSERT INTO public.pilot_manual_email_send_attempts(
+      contact_id, lead_id, channel, template_id, template_version,
+      operator_principal_id, payload_fingerprint, idempotency_key
+    ) VALUES (NULL, NULL, 'EMAIL', 'synthetic', 'v1', 'runtime-negative', repeat('a', 64), 'runtime-negative')`));
   await assert.rejects(restrictedRaw`
     INSERT INTO public.operator_channel_test_preparations(
       channel, purpose, recipient_fingerprint, template_id, template_version,

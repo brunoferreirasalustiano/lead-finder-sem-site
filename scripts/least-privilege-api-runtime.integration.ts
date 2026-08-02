@@ -210,7 +210,7 @@ try {
       )
       AND has_function_privilege('public', procedure_record.oid, 'EXECUTE')
     ORDER BY identity`;
-  assert.deepEqual(publicExecutableFunctions, []);
+  assert.equal(publicExecutableFunctions.length, 0);
 
   stage = 'VERIFY_RLS_POLICIES';
   const policies = await owner<{ policyname: string }[]>`

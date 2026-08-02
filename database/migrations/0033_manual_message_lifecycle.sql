@@ -8,15 +8,15 @@ ALTER TABLE public.pilot_manual_message_preparations
 -- usable without an explicit new preparation.
 -- The append-only trigger is suspended only inside this migration transaction
 -- because this is the controlled schema backfill itself; it is restored before
--- the transaction commits and remains active for all application writes.
-DROP TRIGGER IF EXISTS pilot_manual_message_preparations_append_only
-  ON public.pilot_manual_message_preparations;
+-- the transaction commits and remains active for all application writes. Keep
+-- the trigger object intact so its catalog identity remains stable.
+ALTER TABLE public.pilot_manual_message_preparations
+  DISABLE TRIGGER pilot_manual_message_preparations_append_only;
 UPDATE public.pilot_manual_message_preparations
 SET expires_at = prepared_at + interval '24 hours'
 WHERE expires_at IS NULL;
-CREATE TRIGGER pilot_manual_message_preparations_append_only
-  BEFORE UPDATE OR DELETE ON public.pilot_manual_message_preparations
-  FOR EACH ROW EXECUTE FUNCTION public.reject_manual_messaging_history_mutation();
+ALTER TABLE public.pilot_manual_message_preparations
+  ENABLE TRIGGER pilot_manual_message_preparations_append_only;
 
 ALTER TABLE public.pilot_manual_message_preparations
   ALTER COLUMN expires_at SET NOT NULL;

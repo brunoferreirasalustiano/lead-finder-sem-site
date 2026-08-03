@@ -8,6 +8,7 @@ if (!databaseUrl) throw new Error('DATABASE_URL is required');
 const raw = postgres(databaseUrl, { max: 8 });
 const scopeConstraint = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key';
 const fingerprint = (seed: string) => seed.repeat(64).slice(0, 64);
+let fixtureSequence = 0;
 
 type Fixture = Readonly<{
   pilotId: string;
@@ -17,6 +18,7 @@ type Fixture = Readonly<{
 }>;
 
 async function fixture(seed: string): Promise<Fixture> {
+  fixtureSequence += 1;
   const pilotId = randomUUID();
   const leadId = randomUUID();
   const contactId = randomUUID();
@@ -30,7 +32,7 @@ async function fixture(seed: string): Promise<Fixture> {
     await tx`insert into pilot_leads(pilot_run_id,lead_id,source,added_by)
       values(${pilotId}::uuid,${leadId}::uuid,'SYNTHETIC','integration-test')`;
     await tx`insert into lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp)
-      values(${contactId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone','+12025550101','HML_OPERATOR_CONTROLLED',1,now(),true,true)`;
+      values(${contactId}::uuid,${leadId}::uuid,'TELEFONE','synthetic-phone',${`+1202555${String(fixtureSequence).padStart(4, '0')}`},'HML_OPERATOR_CONTROLLED',1,now(),true,true)`;
     await tx`insert into pilot_manual_message_preparations(
       id,pilot_run_id,lead_id,contact_id,channel,template_id,template_version,
       operator_principal_id,payload_fingerprint,idempotency_key,result_fingerprint,result_snapshot,expires_at

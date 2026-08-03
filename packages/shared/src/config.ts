@@ -202,6 +202,7 @@ const apiSchema = commonSchema.extend({
   WHATSAPP_CLOUD_TEST_RECIPIENT: optionalEnvironmentString(
     z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'WHATSAPP_CLOUD_TEST_RECIPIENT must use E.164 format'),
   ),
+  WHATSAPP_CLOUD_TEST_SCOPE: z.enum(['HML_TEST', 'HML_TEST_002']).default('HML_TEST_002'),
   WHATSAPP_CLOUD_API_VERSION: z.string().trim().regex(/^v\d+\.\d+$/, 'WHATSAPP_CLOUD_API_VERSION must use vN.N format').default('v23.0'),
   WHATSAPP_CLOUD_MAX_SENDS: integerFromEnvironment('WHATSAPP_CLOUD_MAX_SENDS', 1, 1, 1),
   MANUAL_EMAIL_SENDER: optionalEnvironmentString(z.string().trim().toLowerCase().email().max(320)),

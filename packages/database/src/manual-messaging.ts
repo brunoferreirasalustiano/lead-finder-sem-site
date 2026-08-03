@@ -5,7 +5,7 @@ import {
   DeterministicFakeMessagingProvider,
   type MessagingChannel,
 } from '@lead-finder/messaging';
-import { createWhatsAppManualUrl, normalizePhoneE164 } from '@lead-finder/whatsapp';
+import { createWhatsAppManualUrl, normalizePhoneE164, WhatsAppCloudApiError, type WhatsAppCloudProviderMetadata } from '@lead-finder/whatsapp';
 import { isTrustedAuthorizationContext, type AuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
 export const CONTACT_RESOLUTION_PURPOSE = 'B2B_PROSPECTION' as const;
@@ -485,6 +485,7 @@ export type WhatsAppCloudRuntime = Readonly<{
   accessToken?: string;
   testRecipient?: string;
   maxSends: number;
+  sendScope?: 'HML_TEST' | 'HML_TEST_002';
 }>;
 
 export type WhatsAppCloudDelivery = Readonly<{
@@ -518,6 +519,24 @@ const safeCloudErrorCode = (error: unknown) => {
     : 'DELIVERY_FAILED';
 };
 
+const safeCloudProviderMetadata = (error: unknown): WhatsAppCloudProviderMetadata => {
+  if (!(error instanceof WhatsAppCloudApiError)) return {};
+  const metadata = error.providerMetadata;
+  const httpStatus = metadata.httpStatus;
+  const normalizedHttpStatus = typeof httpStatus === 'number' && Number.isInteger(httpStatus)
+    && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : undefined;
+  return {
+    ...(normalizedHttpStatus === undefined ? {} : { httpStatus: normalizedHttpStatus }),
+    ...(metadata.metaErrorType ? { metaErrorType: metadata.metaErrorType } : {}),
+    ...(metadata.metaErrorCode ? { metaErrorCode: metadata.metaErrorCode } : {}),
+    ...(metadata.metaErrorSubcode ? { metaErrorSubcode: metadata.metaErrorSubcode } : {}),
+    ...(metadata.metaErrorTitle ? { metaErrorTitle: metadata.metaErrorTitle } : {}),
+    ...(metadata.metaErrorMessage ? { metaErrorMessage: metadata.metaErrorMessage } : {}),
+    ...(metadata.metaErrorDetails ? { metaErrorDetails: metadata.metaErrorDetails } : {}),
+    ...(metadata.fbtraceId ? { fbtraceId: metadata.fbtraceId } : {}),
+  };
+};
+
 const requireCloudOperator = (auth: AuthorizationContext) => {
   if (
     !isTrustedAuthorizationContext(auth)
@@ -538,6 +557,7 @@ const resolveCloudRuntime = (runtime: WhatsAppCloudRuntime) => {
   const recipient = normalizePhoneE164(runtime.testRecipient);
   if (!recipient.ok)
     throw new ManualMessagingError('WhatsApp Cloud test recipient is invalid', 'WHATSAPP_CLOUD_INVALID_CONFIGURATION');
+  const sendScope = runtime.sendScope ?? 'HML_TEST_002';
   return {
     enabled: true as const,
     realSendEnabled: true as const,
@@ -547,6 +567,7 @@ const resolveCloudRuntime = (runtime: WhatsAppCloudRuntime) => {
     accessToken: runtime.accessToken,
     testRecipient: runtime.testRecipient,
     maxSends: 1 as const,
+    sendScope,
     recipient,
     fingerprintKey: runtime.accessToken,
   } as const;
@@ -633,7 +654,7 @@ export async function sendPreparedWhatsAppCloudMessage(
     const messageFingerprint = validated.prepared.fingerprint;
     const payloadFingerprint = digest({
       provider: 'WHATSAPP_CLOUD_API',
-      scope: 'HML_TEST',
+      scope: resolved.sendScope,
       pilotRunId: prep.pilot_run_id,
       leadId: prep.lead_id,
       contactId: prep.contact_id,
@@ -648,7 +669,7 @@ export async function sendPreparedWhatsAppCloudMessage(
         ${prep.pilot_run_id}::uuid,
         ${prep.lead_id}::uuid,
         ${prep.contact_id}::uuid,
-        ${'HML_TEST'},
+        ${resolved.sendScope},
         ${auth.principalId},
         ${phoneNumberIdFingerprint}::char(64),
         ${recipientFingerprint}::char(64),
@@ -688,12 +709,18 @@ export async function sendPreparedWhatsAppCloudMessage(
   } catch (error) {
     const errorCode = safeCloudErrorCode(error);
     const eventType = errorCode === 'NETWORK_ERROR' ? 'AMBIGUOUS' : 'FAILED';
+    const metadata = safeCloudProviderMetadata(error);
     try {
       await db.execute(sql`select * from public.append_manual_whatsapp_cloud_send_event(
         ${reservation.id}::uuid,
         ${eventType},
         null::char(64),
-        ${errorCode}
+        ${errorCode},
+        ${metadata.httpStatus ?? null}::smallint,
+        ${metadata.metaErrorType ?? null},
+        ${metadata.metaErrorCode ?? null},
+        ${metadata.metaErrorSubcode ?? null},
+        ${metadata.fbtraceId ?? null}
       )`);
     } catch {
       throw new ManualMessagingError('Cloud API delivery state is ambiguous', 'WHATSAPP_CLOUD_AMBIGUOUS');

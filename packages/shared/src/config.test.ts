@@ -171,6 +171,7 @@ describe('environment configuration', () => {
     expect(parseApiConfig(database)).toMatchObject({
       WHATSAPP_CLOUD_API_ENABLED: false,
       WHATSAPP_CLOUD_MAX_SENDS: 1,
+      WHATSAPP_CLOUD_TEST_SCOPE: 'HML_TEST_002',
       WHATSAPP_CLOUD_API_VERSION: 'v23.0',
     });
     const enabled = {
@@ -182,6 +183,7 @@ describe('environment configuration', () => {
       WHATSAPP_CLOUD_ACCESS_TOKEN: 'synthetic-cloud-access-token-012345678901234567890123',
       WHATSAPP_CLOUD_TEST_RECIPIENT: '+5519971519337',
       WHATSAPP_CLOUD_MAX_SENDS: '1',
+      WHATSAPP_CLOUD_TEST_SCOPE: 'HML_TEST_002',
     };
     expect(parseApiConfig(enabled)).toMatchObject({
       WHATSAPP_CLOUD_API_ENABLED: true,
@@ -194,6 +196,8 @@ describe('environment configuration', () => {
       .toThrow('WHATSAPP_CLOUD_ACCESS_TOKEN');
     expect(() => parseApiConfig({ ...enabled, WHATSAPP_CLOUD_MAX_SENDS: '2' }))
       .toThrow('WHATSAPP_CLOUD_MAX_SENDS');
+    expect(() => parseApiConfig({ ...enabled, WHATSAPP_CLOUD_TEST_SCOPE: 'HML_TEST_003' }))
+      .toThrow('WHATSAPP_CLOUD_TEST_SCOPE');
     expect(() => parseApiConfig({ ...database, WHATSAPP_CLOUD_PHONE_NUMBER_ID: '123456789012345' }))
       .toThrow('must be configured together');
     expect(() => parseApiConfig({

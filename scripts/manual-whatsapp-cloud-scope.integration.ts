@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -7,7 +7,7 @@ if (!databaseUrl) throw new Error('DATABASE_URL is required');
 
 const raw = postgres(databaseUrl, { max: 8 });
 const scopeConstraint = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key';
-const fingerprint = (seed: string) => seed.repeat(64).slice(0, 64);
+const fingerprint = (seed: string) => createHash('sha256').update(seed, 'utf8').digest('hex');
 let fixtureSequence = 0;
 
 type Fixture = Readonly<{

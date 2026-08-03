@@ -40,7 +40,7 @@ async function fixture(seed: string): Promise<Fixture> {
       ${preparationId}::uuid,${pilotId}::uuid,${leadId}::uuid,${contactId}::uuid,
       'WHATSAPP','operator-whatsapp-channel-test','v1','hml-internal-whatsapp-operator',
       ${fingerprint(seed + 'a')} ,${`cloud-prep-${seed}`},${fingerprint(seed + 'b')},
-      ${JSON.stringify({
+      ${raw.json({
         schemaVersion: 2, channel: 'WHATSAPP', templateId: 'operator-whatsapp-channel-test',
         templateVersion: 'v1', variables: {}, contactFingerprint: fingerprint(seed + 'c'),
         messageFingerprint: fingerprint(seed + 'd'),

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { InjectOptions } from 'light-my-request';
 import type { Database } from '@lead-finder/database';
-import { changeCrmStage } from '@lead-finder/database';
+import { changeCrmStage, ManualMessagingError } from '@lead-finder/database';
 import {
   buildApp,
   creationStatus,
@@ -699,6 +699,75 @@ describe('WhatsApp Cloud HML delivery route', () => {
     expect(sendPrepared).toHaveBeenCalledWith(
       expect.anything(), preparationId, expect.objectContaining({ principalId: 'hml-internal-whatsapp-operator' }), runtime, expect.anything(), 'synthetic-cloud-operator-1',
     );
+    await app.close();
+  });
+
+  it('returns a non-retryable 409 when the consumed scope domain error is raised', async () => {
+    const app = buildApp({} as Database, {
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
+      whatsappCloudRuntime: runtime,
+      deliverWhatsAppCloud: vi.fn(),
+      sendPreparedWhatsAppCloud: vi.fn().mockRejectedValue(new ManualMessagingError(
+        'WhatsApp Cloud test scope has already been consumed',
+        'WHATSAPP_TEST_SCOPE_CONSUMED',
+      )),
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-consumed-1' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: 'WhatsApp test scope already consumed',
+      code: 'WHATSAPP_TEST_SCOPE_CONSUMED',
+      retryAllowed: false,
+    });
+    expect(response.body).not.toMatch(/23505|constraint|table|stack|token|wa\.me/i);
+    await app.close();
+  });
+
+  it('keeps unrelated unique violations as sanitized 500 errors', async () => {
+    const unrelated = Object.assign(new Error('database detail'), {
+      code: '23505',
+      constraint: 'unrelated_unique_constraint',
+    });
+    const app = buildApp({} as Database, {
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
+      whatsappCloudRuntime: runtime,
+      deliverWhatsAppCloud: vi.fn(),
+      sendPreparedWhatsAppCloud: vi.fn().mockRejectedValue(unrelated),
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-unrelated-1' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+    expect(response.body).not.toMatch(/23505|unrelated_unique_constraint|database detail|stack|token|wa\.me/i);
     await app.close();
   });
 });

@@ -36,11 +36,38 @@ export class ManualMessagingError extends Error {
       | 'WHATSAPP_CLOUD_UNAVAILABLE'
       | 'WHATSAPP_CLOUD_FORBIDDEN'
       | 'WHATSAPP_CLOUD_INVALID_CONFIGURATION'
-      | 'WHATSAPP_CLOUD_AMBIGUOUS',
+      | 'WHATSAPP_CLOUD_AMBIGUOUS'
+      | 'WHATSAPP_TEST_SCOPE_CONSUMED',
   ) {
     super(message);
   }
 }
+
+export const WHATSAPP_CONSUMED_SCOPE_CONSTRAINT =
+  'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key' as const;
+
+type PostgresErrorLike = {
+  code?: unknown;
+  constraint?: unknown;
+  constraint_name?: unknown;
+  cause?: unknown;
+};
+
+/** Recognizes only the append-only send-scope uniqueness guard. */
+export const isConsumedWhatsappTestScopeConstraint = (error: unknown): boolean => {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as PostgresErrorLike;
+    const constraint = typeof candidate.constraint === 'string'
+      ? candidate.constraint
+      : typeof candidate.constraint_name === 'string' ? candidate.constraint_name : undefined;
+    if (candidate.code === '23505' && constraint === WHATSAPP_CONSUMED_SCOPE_CONSTRAINT) return true;
+    current = candidate.cause;
+  }
+  return false;
+};
 const canonical = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === 'object')
@@ -507,6 +534,12 @@ type CloudReservation = {
   occurred_at: Date | null;
 };
 
+type CloudReservationContext = CloudReservation & Readonly<{
+  body: string;
+  recipient: string;
+  phoneNumberId: string;
+}>;
+
 const cloudFingerprint = (key: string, domain: string, value: string) =>
   createHmac('sha256', key).update(`${domain}\u0000${value}`).digest('hex');
 
@@ -588,7 +621,9 @@ export async function sendPreparedWhatsAppCloudMessage(
 ) {
   requireCloudOperator(auth);
   const resolved = resolveCloudRuntime(runtime);
-  const reservation = await db.transaction(async (tx) => {
+  let reservation: CloudReservationContext;
+  try {
+    reservation = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`whatsapp-cloud-preparation:${preparationId}`},0))`);
     const prep = (await tx.execute(sql<{
       pilot_run_id: string;
@@ -684,8 +719,17 @@ export async function sendPreparedWhatsAppCloudMessage(
         throw new ManualMessagingError('Cloud API reservation has no terminal provider event', 'WHATSAPP_CLOUD_AMBIGUOUS');
       return { ...saved, body: validated.prepared.body, recipient: resolved.recipient.e164, phoneNumberId: resolved.phoneNumberId, replayed: true } as const;
     }
-    return { ...saved, body: validated.prepared.body, recipient: resolved.recipient.e164, phoneNumberId: resolved.phoneNumberId, replayed: false } as const;
-  });
+      return { ...saved, body: validated.prepared.body, recipient: resolved.recipient.e164, phoneNumberId: resolved.phoneNumberId, replayed: false } as const;
+    });
+  } catch (error) {
+    if (isConsumedWhatsappTestScopeConstraint(error)) {
+      throw new ManualMessagingError(
+        'WhatsApp Cloud test scope has already been consumed',
+        'WHATSAPP_TEST_SCOPE_CONSUMED',
+      );
+    }
+    throw error;
+  }
 
   if (reservation.replayed) {
     return {

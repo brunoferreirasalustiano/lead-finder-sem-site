@@ -366,6 +366,28 @@ describe('environment configuration', () => {
       API_BATCH_PROCESSING_ENABLED: 'true',
     }).API_BATCH_PROCESSING_ENABLED).toBe(true);
     expect(() => parseApiConfig({ ...planB, REAL_SEND_ENABLED: 'true' })).toThrow('supabase-render requires');
+    expect(parseApiConfig({
+      ...planB,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      REAL_SEND_ENABLED: 'true',
+      WHATSAPP_CLOUD_API_ENABLED: 'true',
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: '123456789012345',
+      WHATSAPP_CLOUD_WABA_ID: '123456789012345',
+      WHATSAPP_CLOUD_ACCESS_TOKEN: 'synthetic-cloud-access-token-0000000000000001',
+      WHATSAPP_CLOUD_TEST_RECIPIENT: '+15551234567',
+      WHATSAPP_CLOUD_MAX_SENDS: '1',
+    })).toMatchObject({ DEPLOYMENT_PROFILE: 'supabase-render', REAL_SEND_ENABLED: true });
+    expect(() => parseApiConfig({
+      ...planB,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      REAL_SEND_ENABLED: 'true',
+      WHATSAPP_CLOUD_API_ENABLED: 'true',
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: '123456789012345',
+      WHATSAPP_CLOUD_WABA_ID: '123456789012345',
+      WHATSAPP_CLOUD_ACCESS_TOKEN: 'synthetic-cloud-access-token-0000000000000001',
+      WHATSAPP_CLOUD_TEST_RECIPIENT: '+15551234567',
+      WHATSAPP_CLOUD_MAX_SENDS: '2',
+    })).toThrow('supabase-render requires');
     expect(() => parseApiConfig({ ...planB, DAILY_LEAD_LIMIT: '61' })).toThrow('DAILY_LEAD_LIMIT');
     expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('bounded API batch endpoint');
   });

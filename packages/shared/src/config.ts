@@ -481,10 +481,14 @@ const apiSchema = commonSchema.extend({
   requireDifferentSecrets('OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, 'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET', configuration.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET);
   requireDifferentSecrets('OPERATOR_EMAIL_TEST_FINGERPRINT_KEY', configuration.OPERATOR_EMAIL_TEST_FINGERPRINT_KEY, 'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN', configuration.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN);
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
-    const unsafe = !configuration.DRY_RUN || configuration.REAL_SEND_ENABLED
+    const hmlCloudSendOnly = configuration.WHATSAPP_CLOUD_API_ENABLED
+      && configuration.DEPLOYMENT_ENVIRONMENT === 'homologation'
+      && configuration.REAL_SEND_ENABLED
+      && configuration.WHATSAPP_CLOUD_MAX_SENDS === 1;
+    const unsafe = !configuration.DRY_RUN || (configuration.REAL_SEND_ENABLED && !hmlCloudSendOnly)
       || configuration.REAL_PROVIDERS_ENABLED || configuration.COLLECTION_EGRESS_ENABLED
       || !configuration.SHADOW_MODE_ENABLED;
-    if (unsafe) context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render requires dry-run, shadow mode, disabled providers, sends, and collection egress' });
+    if (unsafe) context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render requires dry-run, shadow mode, disabled providers, collection egress, and only a one-send HML Cloud exception' });
     if (!configuration.INTERNAL_CRON_SECRET) context.addIssue({ code: 'custom', path: ['INTERNAL_CRON_SECRET'], message: 'INTERNAL_CRON_SECRET is required for supabase-render' });
   }
 });

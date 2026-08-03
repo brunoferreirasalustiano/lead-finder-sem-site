@@ -74,5 +74,6 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(scopeConflictMigration).toContain("ERRCODE = '23505'");
     expect(scopeConflictMigration).toContain("CONSTRAINT = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key'");
     expect(scopeConflictMigration).toContain("RAISE EXCEPTION 'whatsapp cloud send idempotency conflict' USING ERRCODE = '23505'");
+    expect(scopeConflictMigration.match(/CONSTRAINT\s*=/g)).toHaveLength(1);
   });
 });

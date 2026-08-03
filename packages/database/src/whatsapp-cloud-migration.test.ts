@@ -69,7 +69,6 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(secondScopeMigration).toContain('HML_TEST is immutable evidence');
     expect(secondScopeMigration).toContain('HML_TEST_002');
   });
-
   it('labels only the consumed-scope conflict for strict domain mapping', () => {
     expect(scopeConflictMigration).toContain("ERRCODE = '23505'");
     expect(scopeConflictMigration).toContain("CONSTRAINT = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key'");

@@ -1,0 +1,111 @@
+name: One-shot npm audit remediation
+
+on:
+  push:
+    branches:
+      - fix/npm-audit-transitive-highs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-npm-audit-remediation
+  cancel-in-progress: false
+
+jobs:
+  remediate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout remediation branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/npm-audit-transitive-highs
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Regenerate lockfile with patched transitive versions
+        run: npm audit fix --package-lock-only
+
+      - name: Verify package manifest was not changed
+        shell: bash
+        run: |
+          if ! git diff --quiet -- package.json; then
+            echo 'package.json changed unexpectedly'
+            git diff -- package.json
+            exit 1
+          fi
+
+      - name: Verify patched package versions
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const expected = new Map([
+            ['node_modules/brace-expansion', '5.0.9'],
+            ['node_modules/fast-uri', '3.1.5'],
+            ['node_modules/fast-json-stringify/node_modules/ajv/node_modules/fast-uri', '3.1.5'],
+            ['node_modules/fast-json-stringify/node_modules/fast-uri', '4.1.2'],
+          ]);
+
+          for (const [path, version] of expected) {
+            const actual = lock.packages?.[path]?.version;
+            if (actual !== version) {
+              throw new Error(`${path}: expected ${version}, received ${String(actual)}`);
+            }
+          }
+          NODE
+
+      - name: Verify reproducible install
+        run: npm ci
+
+      - name: Verify dependency tree
+        run: npm ls brace-expansion fast-uri --all
+
+      - name: Verify security gate
+        run: npm audit --audit-level=high
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run build
+        run: npm run build
+
+      - name: Validate diff scope
+        shell: bash
+        run: |
+          git diff --check
+          unexpected=$(git status --short | grep -vE '^( M package-lock.json| D \.github/workflows/one-shot-fix-npm-audit\.yml)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo 'Unexpected files changed:'
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Remove one-shot workflow
+        run: git rm .github/workflows/one-shot-fix-npm-audit.yml
+
+      - name: Commit remediated lockfile
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json .github/workflows/one-shot-fix-npm-audit.yml
+          git commit -m 'fix: update vulnerable transitive npm dependencies'
+          git push origin HEAD:fix/npm-audit-transitive-highs

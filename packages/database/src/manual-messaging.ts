@@ -426,6 +426,7 @@ export async function getPreparedWhatsAppLink(
       'WHATSAPP',
       prep.result_snapshot,
       String(prep.result_fingerprint),
+      isHmlCloudOperator(auth),
     );
     return {
       link: createWhatsAppManualUrl(eligible.contact_value, validated.prepared.body),
@@ -851,7 +852,13 @@ async function event(
       if (p.expired) throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
       const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);
       if (eventType === 'OPENED')
-        validatePreparedSnapshot(eligible, p.channel, p.result_snapshot, String(p.result_fingerprint));
+        validatePreparedSnapshot(
+          eligible,
+          p.channel,
+          p.result_snapshot,
+          String(p.result_fingerprint),
+          isHmlCloudOperator(auth),
+        );
     }
     const existing = await tx.execute(
       sql<{ id: string; event_type: string; result: ManualMessagingResult | null; created_at: Date; operator_principal_id: string; payload_fingerprint: string }[]>`select id,event_type,result,created_at,operator_principal_id,payload_fingerprint from pilot_manual_message_events where preparation_id=${id}::uuid order by created_at,id`,

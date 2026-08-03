@@ -3,6 +3,7 @@ BEGIN;
 -- Preserve the append-only HML scope guard while exposing its domain identity
 -- to the application. Unknown 23505 errors remain distinguishable and are not
 -- converted into a retryable or user-facing conflict.
+-- This is forward-only metadata on the function; no historical attempt is changed.
 CREATE OR REPLACE FUNCTION public.create_manual_whatsapp_cloud_send_attempt(
   p_preparation_id uuid,
   p_pilot_run_id uuid,

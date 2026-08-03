@@ -147,8 +147,28 @@ async function exactEligibleContact(
   if (!row) throw new ManualMessagingError('Requested contact is ineligible', 'INELIGIBLE');
   return row;
 }
-const templateFor = (channel: MessagingChannel, id: string, version: string) => {
-  const template = channel === 'WHATSAPP' ? approvedTemplates.whatsappV1 : approvedTemplates.emailV1;
+const isHmlCloudOperator = (auth: AuthorizationContext) =>
+  isTrustedAuthorizationContext(auth)
+  && auth.authenticationMethod === 'HML_OPERATOR_BEARER_TOKEN'
+  && auth.permissions.has('manual-messaging:cloud-send');
+
+export const isOperatorWhatsAppTestTemplate = (
+  channel: MessagingChannel,
+  id: string,
+  version: string,
+) => channel === 'WHATSAPP'
+  && id === approvedTemplates.operatorWhatsappTestV1.id
+  && version === approvedTemplates.operatorWhatsappTestV1.version;
+
+const templateFor = (
+  channel: MessagingChannel,
+  id: string,
+  version: string,
+  allowOperatorWhatsAppTest = false,
+) => {
+  const template = allowOperatorWhatsAppTest && isOperatorWhatsAppTestTemplate(channel, id, version)
+    ? approvedTemplates.operatorWhatsappTestV1
+    : channel === 'WHATSAPP' ? approvedTemplates.whatsappV1 : approvedTemplates.emailV1;
   if (template.id !== id || template.version !== version)
     throw new ManualMessagingError('Persisted template is unavailable', 'INVALID_STATE');
   return template;
@@ -167,7 +187,8 @@ const preparedFor = (
   templateId: string,
   templateVersion: string,
   variables: Readonly<Record<string, string>>,
-) => provider.prepare(templateFor(channel, templateId, templateVersion), variables);
+  allowOperatorWhatsAppTest = false,
+) => provider.prepare(templateFor(channel, templateId, templateVersion, allowOperatorWhatsAppTest), variables);
 const snapshotRecord = (value: unknown) => {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
@@ -178,6 +199,7 @@ const validatePreparedSnapshot = (
   persistedChannel: MessagingChannel,
   resultSnapshot: unknown,
   resultFingerprint: string,
+  allowOperatorWhatsAppTest = false,
 ) => {
   if (digest(resultSnapshot) !== resultFingerprint)
     throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
@@ -202,6 +224,7 @@ const validatePreparedSnapshot = (
       snapshot['templateId'],
       snapshot['templateVersion'],
       variables,
+      allowOperatorWhatsAppTest,
     );
     if (
       digest(variables) !== snapshot['renderedInputsFingerprint'] ||
@@ -220,6 +243,7 @@ const validatePreparedSnapshot = (
       snapshot['templateId'],
       snapshot['templateVersion'],
       variables,
+      allowOperatorWhatsAppTest,
     );
     if (
       digest(variables) !== digest(snapshot['variables']) ||
@@ -243,6 +267,9 @@ export async function prepareManualMessage(
   },
   auth: AuthorizationContext,
 ) {
+  const allowOperatorWhatsAppTest = isHmlCloudOperator(auth);
+  if (input.templateId === approvedTemplates.operatorWhatsappTestV1.id && !allowOperatorWhatsAppTest)
+    throw new ManualMessagingError('Operator WhatsApp test template is restricted', 'INELIGIBLE');
   const fingerprint = digest({ pilotRunId, leadId, ...input, principalId: auth.principalId });
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -270,6 +297,7 @@ export async function prepareManualMessage(
         persistedChannel,
         persisted.result_snapshot,
         String(persisted.result_fingerprint),
+        allowOperatorWhatsAppTest,
       );
       if (persistedChannel === 'EMAIL')
         throw new ManualMessagingError(
@@ -297,7 +325,12 @@ export async function prepareManualMessage(
       input.contactId,
       input.requestedChannel,
     );
-    const template = templateFor(input.requestedChannel, input.templateId, input.templateVersion);
+    const template = templateFor(
+      input.requestedChannel,
+      input.templateId,
+      input.templateVersion,
+      allowOperatorWhatsAppTest,
+    );
     if (template.id !== input.templateId || template.version !== input.templateVersion)
       throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
     if (input.requestedChannel === 'EMAIL')
@@ -562,6 +595,20 @@ export async function sendPreparedWhatsAppCloudMessage(
     if (events.some((event) => event.event_type === 'CONTACT_CONFIRMED' || event.event_type === 'RESPONSE_RECORDED' || event.event_type === 'CANCELLED'))
       throw new ManualMessagingError('Preparation is already concluded', 'INVALID_STATE');
 
+    const persistedSnapshot = snapshotRecord(prep.result_snapshot);
+    const persistedTemplateId = typeof persistedSnapshot['templateId'] === 'string'
+      ? persistedSnapshot['templateId']
+      : '';
+    const persistedTemplateVersion = typeof persistedSnapshot['templateVersion'] === 'string'
+      ? persistedSnapshot['templateVersion']
+      : '';
+    if (!isOperatorWhatsAppTestTemplate(
+      'WHATSAPP',
+      persistedTemplateId,
+      persistedTemplateVersion,
+    ))
+      throw new ManualMessagingError('Cloud API requires the internal operator template', 'INVALID_STATE');
+
     const eligible = await exactEligibleContact(
       tx,
       String(prep.pilot_run_id),
@@ -574,6 +621,7 @@ export async function sendPreparedWhatsAppCloudMessage(
       'WHATSAPP',
       prep.result_snapshot,
       String(prep.result_fingerprint),
+      true,
     );
     const eligibleRecipient = normalizePhoneE164(eligible.contact_value);
     if (!eligibleRecipient.ok || eligibleRecipient.digits !== resolved.recipient.digits)

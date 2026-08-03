@@ -43,6 +43,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     realSendEnabled: config.REAL_SEND_ENABLED,
     deploymentEnvironment: config.DEPLOYMENT_ENVIRONMENT,
     maxSends: config.WHATSAPP_CLOUD_MAX_SENDS,
+    sendScope: config.WHATSAPP_CLOUD_TEST_SCOPE,
     ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_PHONE_NUMBER_ID
       ? { phoneNumberId: config.WHATSAPP_CLOUD_PHONE_NUMBER_ID } : {}),
     ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED && config.WHATSAPP_CLOUD_WABA_ID

@@ -78,6 +78,34 @@ describe('WhatsApp Cloud API client', () => {
     expect(String(error)).not.toContain('+5511999999999');
   });
 
+  it('retains only bounded, redacted Meta diagnostics for a rejected response', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: {
+        type: 'OAuthException', code: 131026, error_subcode: 2494102,
+        title: 'Message failed', message: 'recipient +5511999999999 token-secret',
+        error_data: { details: 'https://graph.facebook.com/private' },
+        fbtrace_id: 'synthetic-trace-1',
+      } }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    ));
+    const client = createWhatsAppCloudApiClient({ phoneNumberId, accessToken, fetchImpl });
+
+    const error = await client.sendText({ recipient: '+5519971519337', body: 'TESTE' }).catch((value: unknown) => value);
+    expect(error).toMatchObject({
+      code: 'PROVIDER_REJECTED',
+      providerMetadata: {
+        httpStatus: 400,
+        metaErrorType: 'OAuthException',
+        metaErrorCode: '131026',
+        metaErrorSubcode: '2494102',
+        fbtraceId: 'synthetic-trace-1',
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain('+5511999999999');
+    expect(JSON.stringify(error)).not.toContain('token-secret');
+    expect(JSON.stringify(error)).not.toContain('graph.facebook.com/private');
+  });
+
   it.each([
     ['invalid phone number', { recipient: 'not-a-phone', body: 'TESTE' }],
     ['empty body', { recipient: '+5519971519337', body: '' }],

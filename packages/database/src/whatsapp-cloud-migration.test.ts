@@ -9,6 +9,14 @@ const returningFixMigration = readFileSync(
   new URL('../../../database/migrations/0036_whatsapp_cloud_delivery_returning_fix.sql', import.meta.url),
   'utf8',
 );
+const errorMetadataMigration = readFileSync(
+  new URL('../../../database/migrations/0037_whatsapp_cloud_error_metadata.sql', import.meta.url),
+  'utf8',
+);
+const secondScopeMigration = readFileSync(
+  new URL('../../../database/migrations/0038_whatsapp_cloud_hml_test_002_scope.sql', import.meta.url),
+  'utf8',
+);
 
 describe('WhatsApp Cloud HML delivery migration', () => {
   it('uses append-only, one-scope reservations with no direct runtime table access', () => {
@@ -37,5 +45,22 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(returningFixMigration).toContain('public.pilot_manual_whatsapp_cloud_send_attempts.id');
     expect(returningFixMigration).toContain('public.pilot_manual_whatsapp_cloud_send_events.id');
     expect(returningFixMigration).not.toMatch(/RETURNING\s+id\s*,/i);
+  });
+
+  it('persists only bounded provider diagnostics through a runtime allowlisted function', () => {
+    expect(errorMetadataMigration).toContain('provider_http_status smallint');
+    expect(errorMetadataMigration).toContain('meta_error_code text');
+    expect(errorMetadataMigration).toContain('fbtrace_id text');
+    expect(errorMetadataMigration).toContain('SECURITY DEFINER');
+    expect(errorMetadataMigration).toContain('uuid, text, char, text, smallint, text, text, text, text');
+    expect(errorMetadataMigration).toContain('GRANT EXECUTE ON FUNCTION');
+    expect(errorMetadataMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+(?:TABLE\s+)?public\.pilot_manual_whatsapp_cloud_send_/i);
+    expect(errorMetadataMigration).not.toMatch(/request_body|access_token|recipient/i);
+  });
+
+  it('allows exactly the isolated second HML scope without resetting the first', () => {
+    expect(secondScopeMigration).toContain("send_scope IN ('HML_TEST', 'HML_TEST_002')");
+    expect(secondScopeMigration).toContain('DROP CONSTRAINT IF EXISTS');
+    expect(secondScopeMigration).toContain('UNIQUE(send_scope)');
   });
 });

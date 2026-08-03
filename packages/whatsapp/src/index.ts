@@ -46,10 +46,22 @@ export type WhatsAppCloudDelivery = Readonly<{
   messageId: string;
 }>;
 
+export type WhatsAppCloudProviderMetadata = Readonly<{
+  httpStatus?: number;
+  metaErrorType?: string;
+  metaErrorCode?: string;
+  metaErrorSubcode?: string;
+  metaErrorTitle?: string;
+  metaErrorMessage?: string;
+  metaErrorDetails?: string;
+  fbtraceId?: string;
+}>;
+
 export class WhatsAppCloudApiError extends Error {
   constructor(
     message: string,
     public readonly code: 'INVALID_CONFIGURATION' | 'NETWORK_ERROR' | 'PROVIDER_REJECTED' | 'INVALID_PROVIDER_RESPONSE',
+    public readonly providerMetadata: WhatsAppCloudProviderMetadata = {},
   ) {
     super(message);
   }
@@ -63,6 +75,58 @@ type WhatsAppCloudFetch = (
 const cloudApiVersionSchema = z.string().regex(/^v\d+\.\d+$/);
 const cloudIdSchema = z.string().regex(/^\d{5,30}$/);
 const cloudAccessTokenSchema = z.string().min(32).max(4096).regex(/^[\x21-\x7e]+$/);
+
+const redactProviderText = (value: unknown, maximumLength = 300) => {
+  if (typeof value !== 'string') return undefined;
+  const sanitized = value
+    .replace(/bearer\s+[\x21-\x7e]+/gi, '[REDACTED]')
+    .replace(/(?:access[_-]?token|token)[=:_-]?[A-Za-z0-9._-]+/gi, '[REDACTED]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED]')
+    .replace(/https?:\/\/[^\s]+/gi, '[REDACTED]')
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, '[REDACTED]')
+    .split('').map((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127 ? ' ' : character;
+    }).join('')
+    .trim()
+    .slice(0, maximumLength);
+  return sanitized || undefined;
+};
+
+const providerMetadata = (payload: unknown, httpStatus: number): WhatsAppCloudProviderMetadata => {
+  const error = payload !== null && typeof payload === 'object'
+    ? (payload as { error?: unknown }).error
+    : undefined;
+  const details = error !== null && typeof error === 'object'
+    ? error as Record<string, unknown>
+    : undefined;
+  if (!details) return { httpStatus };
+  const numericOrText = (value: unknown) => {
+    if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+    return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,100}$/.test(value) ? value : undefined;
+  };
+  const metaErrorType = redactProviderText(details.type, 100);
+  const metaErrorCode = numericOrText(details.code);
+  const metaErrorSubcode = numericOrText(details.error_subcode);
+  const metaErrorTitle = redactProviderText(details.title, 200);
+  const metaErrorMessage = redactProviderText(details.message);
+  const metaErrorDetails = details.error_data !== null && typeof details.error_data === 'object'
+    ? redactProviderText((details.error_data as { details?: unknown }).details)
+    : undefined;
+  const fbtraceId = typeof details.fbtrace_id === 'string' && /^[A-Za-z0-9._-]{1,200}$/.test(details.fbtrace_id)
+    ? details.fbtrace_id
+    : undefined;
+  return {
+    httpStatus,
+    ...(metaErrorType ? { metaErrorType } : {}),
+    ...(metaErrorCode ? { metaErrorCode } : {}),
+    ...(metaErrorSubcode ? { metaErrorSubcode } : {}),
+    ...(metaErrorTitle ? { metaErrorTitle } : {}),
+    ...(metaErrorMessage ? { metaErrorMessage } : {}),
+    ...(metaErrorDetails ? { metaErrorDetails } : {}),
+    ...(fbtraceId ? { fbtraceId } : {}),
+  };
+};
 
 const responseMessageId = (value: unknown) => {
   if (value === null || typeof value !== 'object') return undefined;
@@ -118,7 +182,13 @@ export function createWhatsAppCloudApiClient(input: {
         throw new WhatsAppCloudApiError('WhatsApp Cloud provider unavailable', 'NETWORK_ERROR');
       }
       if (!response.ok) {
-        throw new WhatsAppCloudApiError('WhatsApp Cloud provider rejected the message', 'PROVIDER_REJECTED');
+        let payload: unknown;
+        try { payload = await response.json(); } catch { payload = undefined; }
+        throw new WhatsAppCloudApiError(
+          'WhatsApp Cloud provider rejected the message',
+          'PROVIDER_REJECTED',
+          providerMetadata(payload, response.status),
+        );
       }
       let payload: unknown;
       try {

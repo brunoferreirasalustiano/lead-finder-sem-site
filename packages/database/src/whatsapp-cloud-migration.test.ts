@@ -62,5 +62,7 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(secondScopeMigration).toContain("send_scope IN ('HML_TEST', 'HML_TEST_002')");
     expect(secondScopeMigration).toContain('DROP CONSTRAINT IF EXISTS');
     expect(secondScopeMigration).toContain('UNIQUE(send_scope)');
+    expect(secondScopeMigration).toContain('HML_TEST is immutable evidence');
+    expect(secondScopeMigration).toContain('HML_TEST_002');
   });
 });

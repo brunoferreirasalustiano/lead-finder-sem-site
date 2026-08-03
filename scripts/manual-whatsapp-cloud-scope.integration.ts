@@ -67,8 +67,11 @@ const claim = async (item: Fixture, scope: 'HML_TEST' | 'HML_TEST_002', suffix: 
 
 const observedError = (error: unknown) => ({
   code: typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : undefined,
-  constraint: typeof error === 'object' && error !== null && 'constraint' in error
-    ? (error as { constraint?: unknown }).constraint : undefined,
+  constraint: typeof error === 'object' && error !== null && 'constraint_name' in error
+    ? (error as { constraint_name?: unknown }).constraint_name
+    : typeof error === 'object' && error !== null && 'constraint' in error
+      ? (error as { constraint?: unknown }).constraint
+      : undefined,
 });
 
 try {

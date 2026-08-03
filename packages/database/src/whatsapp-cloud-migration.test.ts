@@ -17,6 +17,10 @@ const secondScopeMigration = readFileSync(
   new URL('../../../database/migrations/0038_whatsapp_cloud_hml_test_002_scope.sql', import.meta.url),
   'utf8',
 );
+const scopeConflictMigration = readFileSync(
+  new URL('../../../database/migrations/0039_whatsapp_cloud_scope_conflict_metadata.sql', import.meta.url),
+  'utf8',
+);
 
 describe('WhatsApp Cloud HML delivery migration', () => {
   it('uses append-only, one-scope reservations with no direct runtime table access', () => {
@@ -64,5 +68,11 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(secondScopeMigration).toContain('UNIQUE(send_scope)');
     expect(secondScopeMigration).toContain('HML_TEST is immutable evidence');
     expect(secondScopeMigration).toContain('HML_TEST_002');
+  });
+
+  it('labels only the consumed-scope conflict for strict domain mapping', () => {
+    expect(scopeConflictMigration).toContain("ERRCODE = '23505'");
+    expect(scopeConflictMigration).toContain("CONSTRAINT = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key'");
+    expect(scopeConflictMigration).toContain("RAISE EXCEPTION 'whatsapp cloud send idempotency conflict' USING ERRCODE = '23505'");
   });
 });

@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/npm-audit-transitive-highs
+  pull_request:
+    branches:
+      - hml/render-supabase-plan-b
 
 permissions:
   contents: write
@@ -91,7 +94,7 @@ jobs:
         shell: bash
         run: |
           git diff --check
-          unexpected=$(git status --short | grep -vE '^( M package-lock.json| D \.github/workflows/one-shot-fix-npm-audit\.yml)$' || true)
+          unexpected=$(git status --short | grep -vE '^( M package-lock.json)$' || true)
           if [ -n "$unexpected" ]; then
             echo 'Unexpected files changed:'
             echo "$unexpected"

@@ -5,6 +5,10 @@ const migration = readFileSync(
   new URL('../../../database/migrations/0035_whatsapp_cloud_delivery.sql', import.meta.url),
   'utf8',
 );
+const returningFixMigration = readFileSync(
+  new URL('../../../database/migrations/0036_whatsapp_cloud_delivery_returning_fix.sql', import.meta.url),
+  'utf8',
+);
 
 describe('WhatsApp Cloud HML delivery migration', () => {
   it('uses append-only, one-scope reservations with no direct runtime table access', () => {
@@ -27,5 +31,11 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(migration).toContain('phone_number_id_fingerprint');
     expect(migration).toContain('recipient_fingerprint');
     expect(migration).toContain('message_fingerprint');
+  });
+
+  it('qualifies RETURNING columns to avoid RETURNS TABLE variable ambiguity', () => {
+    expect(returningFixMigration).toContain('public.pilot_manual_whatsapp_cloud_send_attempts.id');
+    expect(returningFixMigration).toContain('public.pilot_manual_whatsapp_cloud_send_events.id');
+    expect(returningFixMigration).not.toMatch(/RETURNING\s+id\s*,/i);
   });
 });

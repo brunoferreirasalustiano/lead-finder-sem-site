@@ -36,6 +36,7 @@ const baseEnvironment: NodeJS.ProcessEnv = {
 };
 
 const fakeDependencies = {
+  cwd: EXPECTED_WORKING_DIRECTORY,
   gitSnapshot: async () => ({
     root: EXPECTED_WORKING_DIRECTORY,
     branch: 'fix/hml-operator-binding-diagnostics',
@@ -251,7 +252,36 @@ describe('operator WhatsApp preflight', () => {
       fetchImpl,
     });
     expect(result.status).toBe('PASS');
+    expect(result.workingDirectoryAllowed).toBe(true);
+    expect(result.workingDirectory).toBe(EXPECTED_WORKING_DIRECTORY);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed for the real process cwd outside the authorized directory', async () => {
+    const { cwd: _injectedCwd, ...dependenciesWithoutCwd } = fakeDependencies;
+    const cwdSpy = vi
+      .spyOn(process, 'cwd')
+      .mockReturnValue('C:\\Users\\corey\\AppData\\Local\\Temp\\other-worktree');
+    try {
+      const result = await runOperatorTestPreflight(baseEnvironment, dependenciesWithoutCwd);
+      expect(result.status).toBe('FAIL');
+      expect(result.errors).toContain('WORKING_DIRECTORY_MISMATCH');
+    } finally {
+      cwdSpy.mockRestore();
+    }
+  });
+
+  it('uses injected cwd only from dependencies, never from environment', async () => {
+    const result = await runOperatorTestPreflight(
+      {
+        ...baseEnvironment,
+        OPERATOR_TEST_CWD: 'C:\\Users\\corey\\AppData\\Local\\Temp\\other-worktree',
+      },
+      fakeDependencies,
+    );
+    expect(result.status).toBe('PASS');
+    expect(result.workingDirectory).toBe(EXPECTED_WORKING_DIRECTORY);
+    expect(result.workingDirectoryAllowed).toBe(true);
   });
 
   it('reports unavailable HML proof metadata and occupied console port', async () => {

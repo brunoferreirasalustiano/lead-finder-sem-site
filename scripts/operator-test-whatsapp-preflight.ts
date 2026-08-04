@@ -64,6 +64,7 @@ export type OperatorPreflightReport = Readonly<{
 }>;
 
 type PreflightDependencies = Readonly<{
+  cwd?: string;
   fetchImpl?: typeof fetch;
   checkPort?: (port: number) => Promise<boolean>;
   gitSnapshot?: () => Promise<GitSnapshot>;
@@ -315,7 +316,7 @@ export async function runOperatorTestPreflight(
   environment: NodeJS.ProcessEnv = process.env,
   dependencies: PreflightDependencies = {},
 ): Promise<OperatorPreflightReport> {
-  const cwd = process.cwd();
+  const cwd = dependencies.cwd ?? process.cwd();
   const workingDirectoryAllowed = samePath(cwd, EXPECTED_WORKING_DIRECTORY);
   const dDriveAccessed = isDDrivePath(cwd);
   const dDriveReferenced = dDriveAccessed;

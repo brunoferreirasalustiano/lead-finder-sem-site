@@ -83,6 +83,8 @@ export interface CitySaturationInput {
   city: ProspectingCity;
   found: number;
   approved: number;
+  /** The run's exclusive primary rejection total. When omitted, reason totals define it. */
+  rejected?: number;
   rejectionReasons: RejectionReasonCounts;
   consecutiveLowYieldRuns?: number;
   auditFailure?: boolean;
@@ -99,7 +101,7 @@ export interface CitySaturationResult {
   reasons: string[];
 }
 
-export type CityTransitionRunInput = Pick<CitySaturationInput, 'found' | 'approved' | 'rejectionReasons' | 'auditFailure' | 'ambiguousResult'>;
+export type CityTransitionRunInput = Pick<CitySaturationInput, 'found' | 'approved' | 'rejected' | 'rejectionReasons' | 'auditFailure' | 'ambiguousResult'>;
 
 export interface CityTransitionInput {
   currentCity: ProspectingCity;
@@ -170,6 +172,8 @@ export function buildProspectingCityRunMetrics(input: ProspectingCityRunMetricsI
   const scoreTotal = Object.values(input.scoreDistribution).reduce((sum, value) => sum + value, 0);
   if (scoreTotal !== input.found) throw new RangeError('scoreDistribution must sum to found');
   const rejectionReasons = normalizeProspectingRejectionReasons(input.rejectionReasons);
+  const rejectionReasonTotal = Object.values(rejectionReasons).reduce((sum, value) => sum + value, 0);
+  if (rejectionReasonTotal !== input.rejected) throw new RangeError('rejectionReasons must sum to rejected');
   return {
     ...input,
     rejectionReasons,
@@ -183,10 +187,14 @@ export function calculateCitySaturation(input: CitySaturationInput): CitySaturat
   assertCity(input.city);
   assertNonNegativeInteger('found', input.found);
   assertNonNegativeInteger('approved', input.approved);
-  if (input.approved > input.found) throw new RangeError('approved cannot exceed found');
+  const reasons = normalizeProspectingRejectionReasons(input.rejectionReasons);
+  const rejectionReasonTotal = Object.values(reasons).reduce((sum, value) => sum + value, 0);
+  const rejected = input.rejected ?? rejectionReasonTotal;
+  assertNonNegativeInteger('rejected', rejected);
+  if (rejectionReasonTotal !== rejected) throw new RangeError('rejectionReasons must sum to rejected');
+  if (input.approved + rejected > input.found) throw new RangeError('approved plus rejected cannot exceed found');
   const consecutiveLowYieldRuns = input.consecutiveLowYieldRuns ?? 0;
   assertNonNegativeInteger('consecutiveLowYieldRuns', consecutiveLowYieldRuns);
-  const reasons = normalizeProspectingRejectionReasons(input.rejectionReasons);
   const structuralRejected = structuralRejectionReasons.reduce((sum, reason) => sum + reasons[reason], 0);
   const safetyRejected = safetyRejectionReasons.reduce((sum, reason) => sum + reasons[reason], 0);
   const structuralRejectionRate = rate(structuralRejected, input.found);

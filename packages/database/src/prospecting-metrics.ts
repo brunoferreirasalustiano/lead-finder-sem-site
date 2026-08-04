@@ -53,7 +53,8 @@ type CityStateRow = {
   version: number;
   updated_at: Date | string;
 };
-type RecentRunRow = { id: string; found: number; approved: number; rejection_reasons: unknown };
+type RecentRunRow = { id: string; found: number; approved: number; rejected: number; created_at: Date | string; rejection_reasons: unknown };
+type SqlExecutor = Pick<Database, 'execute'>;
 
 export type ProspectingRun = ProspectingCityRunMetrics & Readonly<{
   id: string;
@@ -78,7 +79,7 @@ export type ProspectingCityTransition = Readonly<{
   fromCity: ProspectingCity;
   toCity: ProspectingCity;
   reason: string;
-  triggeringRunId: string | null;
+  triggeringRunId: string;
   createdAt: Date;
 }>;
 
@@ -111,6 +112,15 @@ export type CreateProspectingRunInput = Readonly<{
   metrics: ProspectingCityRunMetricsInput;
   startedAt?: Date;
   completedAt?: Date;
+}>;
+
+export type AdvanceProspectingCityStateInput = Readonly<{
+  campaignKey?: string;
+  fromCity: ProspectingCity;
+  toCity: ProspectingCity;
+  reason: string;
+  triggeringRunId: string;
+  expectedVersion: number;
 }>;
 
 const safeKey = (value: string | undefined, field: string, fallback?: string): string => {
@@ -225,12 +235,14 @@ export async function saveProspectingRunReasons(
 ): Promise<void> {
   safeUuid(runId, 'runId');
   const normalized = normalizeProspectingRejectionReasons(rejectionReasons);
-  for (const reason of prospectingRejectionReasons) {
-    await db.execute(sql`
-      INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
-      VALUES (${runId}::uuid, ${reason}, ${normalized[reason]})
-      ON CONFLICT (run_id, reason) DO NOTHING`);
-  }
+  await db.transaction(async (tx) => {
+    for (const reason of prospectingRejectionReasons) {
+      await tx.execute(sql`
+        INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
+        VALUES (${runId}::uuid, ${reason}, ${normalized[reason]})
+        ON CONFLICT (run_id, reason) DO NOTHING`);
+    }
+  });
 }
 
 export async function getRecentProspectingRunsByCity(
@@ -242,10 +254,14 @@ export async function getRecentProspectingRunsByCity(
   const key = safeKey(campaignKey, 'campaignKey', DEFAULT_PROSPECTING_CAMPAIGN_KEY);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError('limit must be between 1 and 100');
   const rows = await db.execute<RunRow>(sql`
-    SELECT * FROM public.prospecting_runs
-    WHERE campaign_key = ${key} AND city = ${city}
-    ORDER BY created_at DESC, id DESC
-    LIMIT ${limit}`);
+    SELECT *
+    FROM (
+      SELECT * FROM public.prospecting_runs
+      WHERE campaign_key = ${key} AND city = ${city}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit}
+    ) recent
+    ORDER BY created_at ASC, id ASC`);
   return Promise.all(rows.map(async (row) => toRun(row, await reasonsForRun(db, row.id))));
 }
 
@@ -264,16 +280,12 @@ export async function updateProspectingCityState(db: Database, input: Readonly<{
   expectedVersion: number;
 }>): Promise<ProspectingCityState> {
   const key = safeKey(input.campaignKey, 'campaignKey', DEFAULT_PROSPECTING_CAMPAIGN_KEY);
-  if (input.nextCity) {
-    if (input.nextCity === input.currentCity) throw new RangeError('nextCity must advance from currentCity');
-    assertMonotonicCityTransition(input.currentCity, input.nextCity);
-  }
+  if (input.nextCity) throw new Error('PROSPECTING_CITY_ADVANCE_REQUIRES_ATOMIC_OPERATION');
   if (!Number.isSafeInteger(input.consecutiveLowYieldRuns) || input.consecutiveLowYieldRuns < 0) throw new RangeError('consecutiveLowYieldRuns must be non-negative');
   if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) throw new RangeError('expectedVersion must be positive');
-  const targetCity = input.nextCity ?? input.currentCity;
   const rows = await db.execute<CityStateRow>(sql`
     UPDATE public.prospecting_city_state
-    SET current_city = ${targetCity}, consecutive_low_yield_runs = ${input.nextCity ? 0 : input.consecutiveLowYieldRuns},
+    SET consecutive_low_yield_runs = ${input.consecutiveLowYieldRuns},
         version = version + 1, updated_at = clock_timestamp()
     WHERE campaign_key = ${key} AND current_city = ${input.currentCity} AND version = ${input.expectedVersion}
     RETURNING *`);
@@ -281,39 +293,63 @@ export async function updateProspectingCityState(db: Database, input: Readonly<{
   return toState(rows[0]);
 }
 
-export async function recordProspectingCityTransition(db: Database, input: Readonly<{
-  campaignKey?: string;
-  fromCity: ProspectingCity;
-  toCity: ProspectingCity;
-  reason: string;
-  triggeringRunId?: string;
-}>): Promise<ProspectingCityTransition> {
+const transitionRowToDomain = (row: {
+  id: string; campaign_key: string; from_city: ProspectingCity; to_city: ProspectingCity;
+  reason: string; triggering_run_id: string; created_at: Date | string;
+}): ProspectingCityTransition => ({
+  id: row.id,
+  campaignKey: row.campaign_key,
+  fromCity: row.from_city,
+  toCity: row.to_city,
+  reason: row.reason,
+  triggeringRunId: row.triggering_run_id,
+  createdAt: asDate(row.created_at),
+});
+
+async function advanceProspectingCityStateInTransaction(
+  tx: SqlExecutor,
+  input: AdvanceProspectingCityStateInput,
+): Promise<{ state: ProspectingCityState; transition: ProspectingCityTransition }> {
   const key = safeKey(input.campaignKey, 'campaignKey', DEFAULT_PROSPECTING_CAMPAIGN_KEY);
   assertMonotonicCityTransition(input.fromCity, input.toCity);
-  if (input.triggeringRunId) safeUuid(input.triggeringRunId, 'triggeringRunId');
+  safeUuid(input.triggeringRunId, 'triggeringRunId');
   if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(input.reason)) throw new RangeError('reason must be a safe code');
-  const rows = await db.execute<{
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) throw new RangeError('expectedVersion must be positive');
+  const stateRows = await tx.execute<CityStateRow>(sql`
+    SELECT * FROM public.prospecting_city_state
+    WHERE campaign_key = ${key}
+    FOR UPDATE`);
+  if (!stateRows[0]) throw new Error('PROSPECTING_CITY_STATE_MISSING');
+  if (stateRows[0].current_city !== input.fromCity || stateRows[0].version !== input.expectedVersion) {
+    throw new Error('PROSPECTING_CITY_STATE_VERSION_CONFLICT');
+  }
+  const runRows = await tx.execute<{ id: string }>(sql`
+    SELECT id FROM public.prospecting_runs
+    WHERE id = ${input.triggeringRunId}::uuid
+      AND campaign_key = ${key}
+      AND city = ${input.fromCity}`);
+  if (!runRows[0]) throw new Error('PROSPECTING_TRIGGERING_RUN_MISMATCH');
+  await tx.execute(sql`
+    SELECT * FROM public.advance_prospecting_city_state(
+      ${key}, ${input.fromCity}, ${input.toCity}, ${input.reason}, ${input.triggeringRunId}::uuid, ${input.expectedVersion}
+    )`);
+  const updatedRows = await tx.execute<CityStateRow>(sql`
+    SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${key}`);
+  const transitionRows = await tx.execute<{
     id: string; campaign_key: string; from_city: ProspectingCity; to_city: ProspectingCity;
-    reason: string; triggering_run_id: string | null; created_at: Date | string;
+    reason: string; triggering_run_id: string; created_at: Date | string;
   }>(sql`
-    INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason, triggering_run_id)
-    VALUES (${key}, ${input.fromCity}, ${input.toCity}, ${input.reason}, ${input.triggeringRunId ?? null}::uuid)
-    ON CONFLICT (campaign_key, from_city, to_city, triggering_run_id) DO NOTHING
-    RETURNING *`);
-  if (rows[0]) return {
-    id: rows[0].id, campaignKey: rows[0].campaign_key, fromCity: rows[0].from_city, toCity: rows[0].to_city,
-    reason: rows[0].reason, triggeringRunId: rows[0].triggering_run_id, createdAt: asDate(rows[0].created_at),
-  };
-  const existing = await db.execute<typeof rows[number]>(sql`
     SELECT * FROM public.prospecting_city_transitions
-    WHERE campaign_key = ${key} AND from_city = ${input.fromCity} AND to_city = ${input.toCity}
-      AND triggering_run_id IS NOT DISTINCT FROM ${input.triggeringRunId ?? null}::uuid`);
-  const row = existing[0];
-  if (!row) throw new Error('PROSPECTING_CITY_TRANSITION_NOT_RECORDED');
-  return {
-    id: row.id, campaignKey: row.campaign_key, fromCity: row.from_city, toCity: row.to_city,
-    reason: row.reason, triggeringRunId: row.triggering_run_id, createdAt: asDate(row.created_at),
-  };
+    WHERE campaign_key = ${key} AND from_city = ${input.fromCity}`);
+  if (!updatedRows[0] || !transitionRows[0]) throw new Error('PROSPECTING_CITY_ADVANCE_NOT_RECORDED');
+  return { state: toState(updatedRows[0]), transition: transitionRowToDomain(transitionRows[0]) };
+}
+
+export async function advanceProspectingCityState(
+  db: Database,
+  input: AdvanceProspectingCityStateInput,
+): Promise<{ state: ProspectingCityState; transition: ProspectingCityTransition }> {
+  return db.transaction((tx) => advanceProspectingCityStateInTransaction(tx, input));
 }
 
 export async function createProspectingRun(db: Database, input: CreateProspectingRunInput): Promise<ProspectingRunCreateResult> {
@@ -324,6 +360,29 @@ export async function createProspectingRun(db: Database, input: CreateProspectin
   const completedAt = input.completedAt ?? new Date();
   if (completedAt < startedAt) throw new RangeError('completedAt must not precede startedAt');
   return db.transaction(async (tx) => {
+    const existing = await tx.execute<RunRow>(sql`SELECT * FROM public.prospecting_runs WHERE execution_fingerprint = ${fingerprint}`);
+    if (existing[0]) {
+      if (existing[0].campaign_key !== campaignKey || existing[0].city !== metrics.city) {
+        throw new Error('PROSPECTING_RUN_FINGERPRINT_SCOPE_MISMATCH');
+      }
+      const reasons = await tx.execute<ReasonRow>(sql`SELECT reason, count FROM public.prospecting_run_rejection_reasons WHERE run_id = ${existing[0].id}`);
+      const stateRows = await tx.execute<CityStateRow>(sql`SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey}`);
+      if (!stateRows[0]) throw new Error('PROSPECTING_CITY_STATE_MISSING');
+      return { run: toRun(existing[0], reasonMap(reasons)), replayed: true, state: toState(stateRows[0]), transition: null };
+    }
+    let stateRows = await tx.execute<CityStateRow>(sql`
+      SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey} FOR UPDATE`);
+    if (!stateRows[0]) {
+      if (metrics.city !== 'Campinas') throw new Error('PROSPECTING_CAMPAIGN_MUST_START_IN_CAMPINAS');
+      await tx.execute(sql`
+        INSERT INTO public.prospecting_city_state (campaign_key, current_city, updated_at)
+        VALUES (${campaignKey}, 'Campinas', clock_timestamp()) ON CONFLICT (campaign_key) DO NOTHING`);
+      stateRows = await tx.execute<CityStateRow>(sql`
+        SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey} FOR UPDATE`);
+    }
+    const state = stateRows[0];
+    if (!state) throw new Error('PROSPECTING_CITY_STATE_MISSING');
+    if (state.current_city !== metrics.city) throw new Error('PROSPECTING_CITY_STATE_MISMATCH');
     const inserted = await tx.execute<RunRow>(sql`
       INSERT INTO public.prospecting_runs (
         execution_fingerprint, campaign_key, city, started_at, completed_at,
@@ -339,73 +398,60 @@ export async function createProspectingRun(db: Database, input: CreateProspectin
         ${metrics.approvalRate}, ${metrics.rejectionRate}, ${metrics.sendRateAmongApproved}
       ) ON CONFLICT (execution_fingerprint) DO NOTHING RETURNING *`);
     if (!inserted[0]) {
-      const existing = await tx.execute<RunRow>(sql`SELECT * FROM public.prospecting_runs WHERE execution_fingerprint = ${fingerprint}`);
-      if (!existing[0]) throw new Error('PROSPECTING_RUN_REPLAY_NOT_FOUND');
-      const reasons = await tx.execute<ReasonRow>(sql`SELECT reason, count FROM public.prospecting_run_rejection_reasons WHERE run_id = ${existing[0].id}`);
-      const stateRows = await tx.execute<CityStateRow>(sql`SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey}`);
-      if (!stateRows[0]) throw new Error('PROSPECTING_CITY_STATE_MISSING');
-      return { run: toRun(existing[0], reasonMap(reasons)), replayed: true, state: toState(stateRows[0]), transition: null };
+      const replay = await tx.execute<RunRow>(sql`SELECT * FROM public.prospecting_runs WHERE execution_fingerprint = ${fingerprint}`);
+      if (!replay[0]) throw new Error('PROSPECTING_RUN_REPLAY_NOT_FOUND');
+      if (replay[0].campaign_key !== campaignKey || replay[0].city !== metrics.city) {
+        throw new Error('PROSPECTING_RUN_FINGERPRINT_SCOPE_MISMATCH');
+      }
+      const reasons = await tx.execute<ReasonRow>(sql`SELECT reason, count FROM public.prospecting_run_rejection_reasons WHERE run_id = ${replay[0].id}`);
+      return { run: toRun(replay[0], reasonMap(reasons)), replayed: true, state: toState(state), transition: null };
     }
     for (const reason of prospectingRejectionReasons) {
       await tx.execute(sql`
         INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
         VALUES (${inserted[0].id}::uuid, ${reason}, ${metrics.rejectionReasons[reason]})`);
     }
-    let stateRows = await tx.execute<CityStateRow>(sql`
-      SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey} FOR UPDATE`);
-    if (!stateRows[0]) {
-      await tx.execute(sql`
-        INSERT INTO public.prospecting_city_state (campaign_key, current_city, updated_at)
-        VALUES (${campaignKey}, ${metrics.city}, clock_timestamp()) ON CONFLICT (campaign_key) DO NOTHING`);
-      stateRows = await tx.execute<CityStateRow>(sql`
-        SELECT * FROM public.prospecting_city_state WHERE campaign_key = ${campaignKey} FOR UPDATE`);
-    }
-    const state = stateRows[0];
-    if (!state) throw new Error('PROSPECTING_CITY_STATE_MISSING');
-    if (state.current_city !== metrics.city) throw new Error('PROSPECTING_CITY_STATE_MISMATCH');
     const recentRows = await tx.execute<RecentRunRow>(sql`
-      SELECT recent.id, recent.found, recent.approved,
+      SELECT recent.id, recent.found, recent.approved, recent.rejected, recent.created_at,
         coalesce(jsonb_object_agg(reasons.reason, reasons.count) FILTER (WHERE reasons.reason IS NOT NULL), '{}'::jsonb) AS rejection_reasons
       FROM (
-        SELECT id, found, approved, created_at
+        SELECT id, found, approved, rejected, created_at
         FROM public.prospecting_runs
         WHERE campaign_key = ${campaignKey} AND city = ${metrics.city}
         ORDER BY created_at DESC, id DESC
         LIMIT 2
       ) recent
       LEFT JOIN public.prospecting_run_rejection_reasons reasons ON reasons.run_id = recent.id
-      GROUP BY recent.id, recent.found, recent.approved, recent.created_at
-      ORDER BY recent.created_at DESC, recent.id DESC`);
+      GROUP BY recent.id, recent.found, recent.approved, recent.rejected, recent.created_at
+      ORDER BY recent.created_at ASC, recent.id ASC`);
     const decision = evaluateCityTransition({
       currentCity: metrics.city,
-      recentRuns: recentRows.map((row) => ({ found: row.found, approved: row.approved, rejectionReasons: reasonMapFromJson(row.rejection_reasons) })),
+      recentRuns: recentRows.map((row) => ({ found: row.found, approved: row.approved, rejected: row.rejected, rejectionReasons: reasonMapFromJson(row.rejection_reasons) })),
     });
-    const targetCity = decision.action === 'ADVANCE' ? decision.nextCity : metrics.city;
-    const updated = await tx.execute<CityStateRow>(sql`
-      UPDATE public.prospecting_city_state
-      SET current_city = ${targetCity}, consecutive_low_yield_runs = ${decision.action === 'ADVANCE' ? 0 : decision.consecutiveLowYieldRuns},
-          version = version + 1, updated_at = clock_timestamp()
-      WHERE campaign_key = ${campaignKey} AND current_city = ${state.current_city} AND version = ${state.version}
-      RETURNING *`);
-    if (!updated[0]) throw new Error('PROSPECTING_CITY_STATE_VERSION_CONFLICT');
     let transition: ProspectingCityTransition | null = null;
+    let updated: ProspectingCityState;
     if (decision.action === 'ADVANCE' && decision.nextCity) {
-      const transitionRows = await tx.execute<{
-        id: string; campaign_key: string; from_city: ProspectingCity; to_city: ProspectingCity;
-        reason: string; triggering_run_id: string | null; created_at: Date | string;
-      }>(sql`
-        INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason, triggering_run_id)
-        VALUES (${campaignKey}, ${metrics.city}, ${decision.nextCity}, ${decision.reasonCodes[0] ?? 'CITY_ADVANCED'}, ${inserted[0].id}::uuid)
-        ON CONFLICT (campaign_key, from_city, to_city, triggering_run_id) DO NOTHING RETURNING *`);
-      const transitionRow = transitionRows[0];
-      if (!transitionRow) throw new Error('PROSPECTING_CITY_TRANSITION_NOT_RECORDED');
-      transition = {
-        id: transitionRow.id, campaignKey: transitionRow.campaign_key, fromCity: transitionRow.from_city,
-        toCity: transitionRow.to_city, reason: transitionRow.reason, triggeringRunId: transitionRow.triggering_run_id,
-        createdAt: asDate(transitionRow.created_at),
-      };
+      const advanced = await advanceProspectingCityStateInTransaction(tx, {
+        campaignKey,
+        fromCity: metrics.city,
+        toCity: decision.nextCity,
+        reason: decision.reasonCodes[0] ?? 'CITY_ADVANCED',
+        triggeringRunId: inserted[0].id,
+        expectedVersion: state.version,
+      });
+      updated = advanced.state;
+      transition = advanced.transition;
+    } else {
+      const progressed = await tx.execute<CityStateRow>(sql`
+        UPDATE public.prospecting_city_state
+        SET consecutive_low_yield_runs = ${decision.consecutiveLowYieldRuns},
+            version = version + 1, updated_at = clock_timestamp()
+        WHERE campaign_key = ${campaignKey} AND current_city = ${state.current_city} AND version = ${state.version}
+        RETURNING *`);
+      if (!progressed[0]) throw new Error('PROSPECTING_CITY_STATE_VERSION_CONFLICT');
+      updated = toState(progressed[0]);
     }
-    return { run: toRun(inserted[0], metrics.rejectionReasons), replayed: false, state: toState(updated[0]), transition };
+    return { run: toRun(inserted[0], metrics.rejectionReasons), replayed: false, state: updated, transition };
   });
 }
 
@@ -434,7 +480,7 @@ export async function getProspectingCityMetricsSnapshot(
     const totals = cityRows.find((row) => row.city === city);
     const reasons = reasonMap(reasonRows.filter((row) => row.city === city));
     const saturation = calculateCitySaturation({
-      city, found: totals?.found ?? 0, approved: totals?.approved ?? 0, rejectionReasons: reasons,
+      city, found: totals?.found ?? 0, approved: totals?.approved ?? 0, rejected: totals?.rejected ?? 0, rejectionReasons: reasons,
       consecutiveLowYieldRuns: city === currentCity ? state?.consecutive_low_yield_runs ?? 0 : 0,
     });
     const cityIndex = prospectingCities.indexOf(city);
@@ -457,5 +503,5 @@ export async function getProspectingCityMetricsSnapshot(
 export const getRecentRuns = getRecentProspectingRunsByCity;
 export const getCityState = getProspectingCityState;
 export const updateCityState = updateProspectingCityState;
-export const recordCityTransition = recordProspectingCityTransition;
+export const advanceCityState = advanceProspectingCityState;
 export const buildCitySnapshot = getProspectingCityMetricsSnapshot;

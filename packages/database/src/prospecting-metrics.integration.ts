@@ -88,7 +88,10 @@ try {
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason)
       VALUES (${campaignKey}, 'Campinas', 'Hortolândia', 'SKIP')`),
-    /must advance exactly one/i,
+    (error: unknown) => {
+      const cause = typeof error === 'object' && error !== null && 'cause' in error ? String(error.cause) : '';
+      return /must advance exactly one/i.test(`${String(error)}\n${cause}`);
+    },
   );
   const snapshot = await getProspectingCityMetricsSnapshot(db, campaignKey);
   assert.equal(snapshot.currentCity, 'Valinhos');

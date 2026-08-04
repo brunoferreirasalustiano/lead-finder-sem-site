@@ -11,6 +11,7 @@ import {
   inspectOperatorEnvironment,
   runOperatorTestPreflight,
   sanitizedFingerprint,
+  sanitizedFingerprintIfPresent,
   expectedOperatorMessageDigestFingerprint,
   expectedOperatorTemplateFingerprint,
 } from './operator-test-whatsapp-preflight.js';
@@ -55,6 +56,53 @@ describe('operator WhatsApp preflight', () => {
     expect(result.localBindingFormatValid).toBe(true);
     expect(result.fingerprintsMatch).toBe(true);
     expect(result.recipientMatch).toBe(true);
+  });
+
+  it('reports unavailable fingerprints without hashing absent or empty values', () => {
+    expect(sanitizedFingerprintIfPresent('OPERATOR_TEST_RECIPIENT_BINDING_KEY', undefined)).toBe(
+      'UNAVAILABLE',
+    );
+    expect(sanitizedFingerprintIfPresent('OPERATOR_TEST_RECIPIENT_BINDING_KEY', '')).toBe(
+      'UNAVAILABLE',
+    );
+    expect(sanitizedFingerprintIfPresent('OPERATOR_TEST_RECIPIENT_BINDING_KEY', bindingKey)).toBe(
+      bindingFingerprint,
+    );
+
+    const result = inspectOperatorEnvironment(
+      {
+        ...baseEnvironment,
+        OPERATOR_TEST_RECIPIENT_BINDING_KEY: undefined,
+      },
+      EXPECTED_WORKING_DIRECTORY,
+    );
+    expect(result.localBindingFingerprint).toBe('UNAVAILABLE');
+    expect(result.localBindingFingerprint).not.toBe(
+      sanitizedFingerprint('OPERATOR_TEST_RECIPIENT_BINDING_KEY', ''),
+    );
+  });
+
+  it('rejects empty secrets as missing before any health check', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200 }));
+    const result = await runOperatorTestPreflight(
+      {
+        ...baseEnvironment,
+        API_AUTH_TOKEN: '',
+        OPERATOR_TEST_RECIPIENT_BINDING_KEY: '',
+        OPERATOR_TEST_FINGERPRINT_KEY: '',
+      },
+      { ...fakeDependencies, fetchImpl },
+    );
+    expect(result.status).toBe('FAIL');
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        'API_AUTH_TOKEN_MISSING',
+        'OPERATOR_TEST_RECIPIENT_BINDING_KEY_MISSING',
+        'OPERATOR_TEST_FINGERPRINT_KEY_MISSING',
+      ]),
+    );
+    expect(result.localBindingFingerprint).toBe('UNAVAILABLE');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('rejects a binding key equal to the API token', () => {

@@ -80,6 +80,10 @@ export function sanitizedFingerprint(context: string, value: string): string {
   return fingerprint(context, value);
 }
 
+export function sanitizedFingerprintIfPresent(context: string, value: string | undefined): string {
+  return value ? sanitizedFingerprint(context, value) : 'UNAVAILABLE';
+}
+
 const hasInvisibleCodePoint = (value: string): boolean => {
   for (const character of value) {
     const codePoint = character.codePointAt(0);
@@ -267,7 +271,7 @@ export function inspectOperatorEnvironment(
   const localBindingFormatValid =
     secretIssues('OPERATOR_TEST_RECIPIENT_BINDING_KEY', bindingKey).length === 0;
   const localBindingFingerprint = localBindingFormatValid
-    ? fingerprint('OPERATOR_TEST_RECIPIENT_BINDING_KEY', bindingKey!)
+    ? sanitizedFingerprintIfPresent('OPERATOR_TEST_RECIPIENT_BINDING_KEY', bindingKey)
     : 'UNAVAILABLE';
   const fingerprintsMatch: MatchStatus =
     localBindingFormatValid && FINGERPRINT_PATTERN.test(expectedHmlFingerprint)

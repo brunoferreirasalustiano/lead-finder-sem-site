@@ -23,27 +23,27 @@ Esta console é separada do fluxo comercial e não cria lead, piloto, campanha, 
 
 ## Configuração local
 
-Defina os valores somente na sessão atual do PowerShell. Não grave telefone ou token em arquivo versionado.
+Use o launcher em uma sessão efêmera. Não grave telefone ou token em arquivo versionado.
 
 ```powershell
-$env:LEAD_FINDER_API_URL="https://URL-DA-API"
-$segredo = Read-Host "Cole o token operator-test" -AsSecureString
-$env:API_AUTH_TOKEN = [System.Net.NetworkCredential]::new("", $segredo).Password
-$env:OPERATOR_TEST_AUTHORIZED="true"
-$env:OPERATOR_TEST_WHATSAPP_E164="+12025550100" # exemplo sintético reservado; use o autorizado só na sessão local
-$binding = Read-Host "Cole a chave exclusiva de recipient binding" -AsSecureString
-$env:OPERATOR_TEST_RECIPIENT_BINDING_KEY = [System.Net.NetworkCredential]::new("", $binding).Password
-
-# Metadados sanitizados obtidos por canal administrativo privado; nunca use o segredo.
-$env:OPERATOR_TEST_EXPECTED_PHONE_SUFFIX="4982"
-$env:OPERATOR_TEST_HML_PHONE_SUFFIX="4982"
-$env:OPERATOR_TEST_HML_BINDING_FINGERPRINT="<12 hex truncados>"
-$env:OPERATOR_TEST_HML_MESSAGE_DIGEST_FINGERPRINT="<12 hex truncados>"
-$env:OPERATOR_TEST_HML_TEMPLATE_FINGERPRINT="<12 hex truncados>"
-$env:OPERATOR_TEST_HML_BINDING_VERSION="operator-recipient-binding-v1"
-npm run operator:test:whatsapp:preflight
-npm run operator:test:whatsapp
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\operator-test-whatsapp-session.ps1
 ```
+
+Esse comando inicia uma nova sessão efêmera, confirma o diretório autorizado,
+solicita o número do operador e os três segredos com `Read-Host -AsSecureString`,
+configura somente variáveis de ambiente do processo, confirma a leitura de volta,
+calcula as fingerprints sanitizadas e executa o preflight na mesma sessão. O número
+completo e os segredos nunca são impressos. A console só é iniciada após `PASS`.
+
+Para validar o carregamento sem HML, sem API e sem console, use exclusivamente os
+segredos sintéticos internos:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\operator-test-whatsapp-session.ps1 -TestMode
+```
+
+O modo de teste confirma a herança para processos Node e tsx e encerra com
+`CONSOLE_STARTED=false`.
 
 O preflight é obrigatório e falha antes de iniciar a console quando o destinatário
 local não coincide com o sufixo autorizado ou com o sufixo sanitizado do HML, quando

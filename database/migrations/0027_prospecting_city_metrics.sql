@@ -108,7 +108,7 @@ CREATE TRIGGER prospecting_city_state_guard
 CREATE OR REPLACE FUNCTION public.prospecting_append_only_guard()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 BEGIN
-  RAISE EXCEPTION '% is append-only' USING ERRCODE = '55000', HINT = 'Create a new run instead of mutating history';
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000', HINT = 'Create a new run instead of mutating history';
 END
 $$;
 

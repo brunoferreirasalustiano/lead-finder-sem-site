@@ -80,7 +80,10 @@ try {
     db.execute(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city, found, approved,
       rejected, score_0_59, score_60_79, score_80_99, score_100)
       VALUES (${`synthetic-${suffix}-invalid`}, ${campaignKey}, 'Valinhos', 1, 2, 0, 1, 0, 0, 0)`),
-    /check constraint|violates check constraint/i,
+    (error: unknown) => {
+      const cause = typeof error === 'object' && error !== null && 'cause' in error ? String(error.cause) : '';
+      return /check constraint|violates check constraint/i.test(`${String(error)}\n${cause}`);
+    },
   );
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason)

@@ -7,22 +7,23 @@ This increment adds an operational, aggregate-only record of prospecting runs. I
 Migration `0027_prospecting_city_metrics` creates four protected tables:
 
 - `prospecting_runs`: immutable counters for one run, keyed by a safe execution fingerprint.
-- `prospecting_run_rejection_reasons`: one row for every allow-listed reason and run.
+- `prospecting_run_rejection_reasons`: one row for every allow-listed primary reason and run.
 - `prospecting_city_state`: the current city, consecutive low-yield count, and optimistic version.
 - `prospecting_city_transitions`: immutable, one-step transition history.
 
-All values are aggregate counters or fixed labels. No lead, contact, e-mail, phone, message, source URL, or provider payload is stored. RLS is enabled; public, anonymous, and authenticated roles receive no access. Runtime access is limited to these tables and the operations required by the persistence service.
+All values are aggregate counters or fixed labels. No lead, contact, e-mail, phone, message, source URL, or provider payload is stored. RLS is enabled; public, anonymous, and authenticated roles receive no access. Runtime access is limited to these tables and the operations required by the persistence service. A new campaign is created only at Campinas; invalid first-city attempts roll back the run, state, and history together.
 
 ## City state and saturation
 
-The fixed order is Campinas, Valinhos, Paulínia, Hortolândia, Sumaré, Indaiatuba. A state update can stay in place or move exactly one position forward. The database trigger and the pure TypeScript transition evaluator enforce the same rule. Indaiatuba is terminal.
+The fixed order is Campinas, Valinhos, Paulínia, Hortolândia, Sumaré, Indaiatuba. A state update can stay in place or move exactly one position forward. The database trigger and the pure TypeScript transition evaluator enforce the same rule. Indaiatuba is terminal. Operational advances use the single transactional `advanceProspectingCityState` operation, which locks the state, validates the triggering run and expected version, writes the transition, and updates the state in one transaction. A campaign can leave each origin city at most once, and every transition has a non-null run from the same campaign and origin city.
 
-Structural reasons are `PREVIOUS_CONTACT`, `OFFICIAL_SITE`, `BUSINESS_EMAIL_NOT_FOUND`, `BUSINESS_EMAIL_UNCERTAIN`, `DUPLICATE`, `INACTIVE`, and `AMBIGUOUS`. Safety reasons such as opt-out, block, complaint, and audit failure do not count as market saturation.
+Structural reasons are `PREVIOUS_CONTACT`, `OFFICIAL_SITE`, `BUSINESS_EMAIL_NOT_FOUND`, `BUSINESS_EMAIL_UNCERTAIN`, `DUPLICATE`, `INACTIVE`, and `AMBIGUOUS`. Safety reasons such as opt-out, block, complaint, and audit failure do not count as market saturation. Rejection reasons are the exclusive primary reason for each rejected lead: their counts must sum exactly to `rejected`, so secondary observations cannot inflate saturation. The recent-run contract is chronological (oldest to newest) after the database selects the newest two runs.
 
 The deterministic index is:
 
 ```text
 structuralRate = structuralRejected / found       (0 when found is zero)
+rejected = sum(primary rejection reason counts)
 lowYield = approved <= 2
 saturationIndex = clamp(structuralRate * 70 + (lowYield ? 30 : 0), 0, 100)
 ```

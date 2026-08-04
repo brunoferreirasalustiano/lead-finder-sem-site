@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertMonotonicCityTransition,
+  buildProspectingCityRunMetrics,
   calculateCitySaturation,
   evaluateCityTransition,
   type CityTransitionRunInput,
@@ -16,6 +17,7 @@ const structuralReasons: RejectionReasonCounts = {
 const lowStructuralRun = (overrides: Partial<CityTransitionRunInput> = {}): CityTransitionRunInput => ({
   found: 10,
   approved: 2,
+  rejected: 8,
   rejectionReasons: structuralReasons,
   ...overrides,
 });
@@ -32,32 +34,77 @@ describe('city saturation', () => {
 
   it('reaches the maximum saturation after structural rejection evidence', () => {
     const result = calculateCitySaturation({
-      city: 'Campinas', found: 10, approved: 0,
-      rejectionReasons: { PREVIOUS_CONTACT: 10, OFFICIAL_SITE: 10 }, consecutiveLowYieldRuns: 2,
+      city: 'Campinas', found: 10, approved: 0, rejected: 10,
+      rejectionReasons: { PREVIOUS_CONTACT: 10 }, consecutiveLowYieldRuns: 2,
     });
     expect(result.saturationIndex).toBe(100);
     expect(result.shouldAdvance).toBe(true);
   });
 
   it('recognizes approved counts of two as low yield and three as non-low-yield', () => {
-    expect(calculateCitySaturation({ city: 'Campinas', found: 3, approved: 2, rejectionReasons: {} }).lowYield).toBe(true);
-    expect(calculateCitySaturation({ city: 'Campinas', found: 3, approved: 3, rejectionReasons: {} }).lowYield).toBe(false);
+    expect(calculateCitySaturation({ city: 'Campinas', found: 3, approved: 2, rejected: 1, rejectionReasons: { OTHER: 1 } }).lowYield).toBe(true);
+    expect(calculateCitySaturation({ city: 'Campinas', found: 3, approved: 3, rejected: 0, rejectionReasons: {} }).lowYield).toBe(false);
   });
 
   it('requires non-negative and coherent counters', () => {
     expect(() => calculateCitySaturation({ city: 'Campinas', found: -1, approved: 0, rejectionReasons: {} })).toThrow(RangeError);
-    expect(() => calculateCitySaturation({ city: 'Campinas', found: 1, approved: 2, rejectionReasons: {} })).toThrow(RangeError);
+    expect(() => calculateCitySaturation({ city: 'Campinas', found: 1, approved: 2, rejected: 0, rejectionReasons: {} })).toThrow(RangeError);
     expect(() => calculateCitySaturation({ city: 'Campinas', found: 1, approved: 0, rejectionReasons: { OTHER: -1 } })).toThrow(RangeError);
   });
 
   it('does not interpret safety suppression as market saturation', () => {
     const result = calculateCitySaturation({
       city: 'Campinas', found: 10, approved: 0,
-      rejectionReasons: { OPT_OUT: 10, BOUNCE: 2 }, consecutiveLowYieldRuns: 2,
+      rejected: 10, rejectionReasons: { OPT_OUT: 8, BOUNCE: 2 }, consecutiveLowYieldRuns: 2,
     });
     expect(result.saturationIndex).toBe(30);
     expect(result.structuralPredominant).toBe(false);
     expect(result.shouldAdvance).toBe(false);
+  });
+
+  it('rejects duplicate or secondary reasons that exceed the primary rejection total', () => {
+    expect(() => calculateCitySaturation({
+      city: 'Campinas', found: 10, approved: 0, rejected: 10,
+      rejectionReasons: { PREVIOUS_CONTACT: 10, OFFICIAL_SITE: 10 },
+    })).toThrow('rejectionReasons must sum to rejected');
+  });
+
+  it('requires exclusive primary reasons to sum to rejected in a persisted run', () => {
+    const input = {
+      city: 'Campinas' as const,
+      found: 10,
+      approved: 0,
+      rejected: 10,
+      sentAcceptedByProvider: 0,
+      immediateBounces: 0,
+      optOuts: 0,
+      replies: 0,
+      complaints: 0,
+      blocked: 0,
+      duplicatesAvoided: 0,
+      rejectionReasons: { PREVIOUS_CONTACT: 10, OFFICIAL_SITE: 10 },
+      scoreDistribution: { score0To59: 10, score60To79: 0, score80To99: 0, score100: 0 },
+    };
+    expect(() => buildProspectingCityRunMetrics(input)).toThrow('rejectionReasons must sum to rejected');
+    expect(() => buildProspectingCityRunMetrics({ ...input, rejectionReasons: { PREVIOUS_CONTACT: 6, OFFICIAL_SITE: 4 } })).not.toThrow();
+  });
+
+  it('keeps structural rejection rates bounded and excludes safety reasons', () => {
+    const result = calculateCitySaturation({
+      city: 'Campinas', found: 10, approved: 0, rejected: 10,
+      rejectionReasons: { OPT_OUT: 10 },
+    });
+    expect(result.structuralRejected).toBeLessThanOrEqual(10);
+    expect(result.structuralRejectionRate).toBeGreaterThanOrEqual(0);
+    expect(result.structuralRejectionRate).toBeLessThanOrEqual(1);
+  });
+
+  it('uses recent runs in chronological order for consecutive decisions', () => {
+    const highYield = lowStructuralRun({ approved: 3, rejected: 7, rejectionReasons: { OTHER: 7 } });
+    expect(evaluateCityTransition({ currentCity: 'Campinas', recentRuns: [lowStructuralRun(), highYield] }).consecutiveLowYieldRuns).toBe(0);
+    expect(evaluateCityTransition({ currentCity: 'Campinas', recentRuns: [highYield, lowStructuralRun()] }).consecutiveLowYieldRuns).toBe(1);
+    expect(evaluateCityTransition({ currentCity: 'Campinas', recentRuns: [lowStructuralRun(), lowStructuralRun()] }).consecutiveLowYieldRuns).toBe(2);
+    expect(evaluateCityTransition({ currentCity: 'Campinas', recentRuns: [highYield, lowStructuralRun(), lowStructuralRun()] }).action).toBe('ADVANCE');
   });
 
   it('requires two consecutive structural low-yield runs before advancing', () => {

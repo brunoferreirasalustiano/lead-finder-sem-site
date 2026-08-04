@@ -14,6 +14,7 @@ const ownerName = `migration_owner_${suffix}`;
 const ownerPassword = `synthetic-owner-${suffix}`;
 const roleNames = ['anon', 'authenticated', 'service_role'] as const;
 const createdRoles = new Set<string>();
+let runtimeRoleCreated = false;
 const admin = postgres(sourceUrl, { max: 1 });
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
 
@@ -132,6 +133,69 @@ try {
   const db = postgres(fixtureUrl.toString(), { max: 1 });
   try {
     await assertDenyAll(db, 'repository migrations must be deny-all');
+
+    const prospectingReconciliation = await readFile(
+      new URL('../database/migrations/0028_prospecting_runtime_deny_all_reconciliation.sql', import.meta.url),
+      'utf8',
+    );
+    const runtimeRole = 'lead_finder_api_runtime';
+    if ((await admin`SELECT 1 FROM pg_roles WHERE rolname = ${runtimeRole}`).length === 0) {
+      await admin.unsafe(`CREATE ROLE ${quoteIdentifier(runtimeRole)} NOLOGIN`);
+      runtimeRoleCreated = true;
+    }
+    await db.unsafe(`
+      GRANT SELECT, INSERT ON TABLE
+        public.prospecting_runs,
+        public.prospecting_run_rejection_reasons,
+        public.prospecting_city_state,
+        public.prospecting_city_transitions
+      TO ${quoteIdentifier(runtimeRole)};
+      GRANT EXECUTE ON FUNCTION
+        public.prospecting_assert_rejection_reason_sum(uuid),
+        public.advance_prospecting_city_state(text, text, text, text, uuid, bigint)
+      TO ${quoteIdentifier(runtimeRole)};
+      CREATE POLICY prospecting_runs_runtime_select
+        ON public.prospecting_runs FOR SELECT TO ${quoteIdentifier(runtimeRole)} USING (true);
+      CREATE POLICY prospecting_runs_runtime_insert
+        ON public.prospecting_runs FOR INSERT TO ${quoteIdentifier(runtimeRole)} WITH CHECK (true);
+      CREATE POLICY prospecting_reasons_runtime_select
+        ON public.prospecting_run_rejection_reasons FOR SELECT TO ${quoteIdentifier(runtimeRole)} USING (true);
+      CREATE POLICY prospecting_reasons_runtime_insert
+        ON public.prospecting_run_rejection_reasons FOR INSERT TO ${quoteIdentifier(runtimeRole)} WITH CHECK (true);
+      CREATE POLICY prospecting_state_runtime_select
+        ON public.prospecting_city_state FOR SELECT TO ${quoteIdentifier(runtimeRole)} USING (true);
+      CREATE POLICY prospecting_state_runtime_insert
+        ON public.prospecting_city_state FOR INSERT TO ${quoteIdentifier(runtimeRole)} WITH CHECK (true);
+      CREATE POLICY prospecting_state_runtime_update
+        ON public.prospecting_city_state FOR UPDATE TO ${quoteIdentifier(runtimeRole)} USING (true) WITH CHECK (true);
+      CREATE POLICY prospecting_transitions_runtime_select
+        ON public.prospecting_city_transitions FOR SELECT TO ${quoteIdentifier(runtimeRole)} USING (true);
+    `);
+    await db.unsafe(prospectingReconciliation);
+    await db.unsafe(prospectingReconciliation);
+    const reconciled = await db<{ policyCount: number; runsSelect: boolean; runsInsert: boolean; advanceExecute: boolean; assertExecute: boolean }[]>`
+      SELECT
+        (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND ${runtimeRole} = ANY(roles)) AS "policyCount",
+        has_table_privilege(${runtimeRole}, 'public.prospecting_runs', 'SELECT') AS "runsSelect",
+        has_table_privilege(${runtimeRole}, 'public.prospecting_runs', 'INSERT') AS "runsInsert",
+        has_function_privilege(${runtimeRole}, 'public.advance_prospecting_city_state(text,text,text,text,uuid,bigint)', 'EXECUTE') AS "advanceExecute",
+        has_function_privilege(${runtimeRole}, 'public.prospecting_assert_rejection_reason_sum(uuid)', 'EXECUTE') AS "assertExecute"`;
+    assert.deepEqual(reconciled[0], { policyCount: 0, runsSelect: false, runsInsert: false, advanceExecute: false, assertExecute: false });
+    const runtimeAllowlist = await readFile(
+      new URL('../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
+      'utf8',
+    );
+    await db.unsafe(runtimeAllowlist);
+    const restored = await db<{ policyCount: number; dataApiPolicyCount: number; runsSelect: boolean; runsInsert: boolean; transitionInsert: boolean; assertExecute: boolean }[]>`
+      SELECT
+        (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND ${runtimeRole} = ANY(roles)) AS "policyCount",
+        (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND ('anon' = ANY(roles) OR 'authenticated' = ANY(roles))) AS "dataApiPolicyCount",
+        has_table_privilege(${runtimeRole}, 'public.prospecting_runs', 'SELECT') AS "runsSelect",
+        has_table_privilege(${runtimeRole}, 'public.prospecting_runs', 'INSERT') AS "runsInsert",
+        has_table_privilege(${runtimeRole}, 'public.prospecting_city_transitions', 'INSERT') AS "transitionInsert",
+        has_function_privilege(${runtimeRole}, 'public.prospecting_assert_rejection_reason_sum(uuid)', 'EXECUTE') AS "assertExecute"`;
+    assert.deepEqual(restored[0], { policyCount: 11, dataApiPolicyCount: 0, runsSelect: true, runsInsert: true, transitionInsert: false, assertExecute: true });
+    console.log(JSON.stringify({ result: 'PROSPECTING_RUNTIME_DENY_ALL_RECONCILIATION_PASS', replay: 2, restoredAllowlist: true }));
 
     const table = await db<{ relrowsecurity: boolean; owner: string }[]>`
       SELECT c.relrowsecurity, pg_get_userbyid(c.relowner) AS owner
@@ -268,6 +332,7 @@ try {
   console.log(JSON.stringify({ result: 'SUPABASE_DATA_API_DENY_ALL_VERIFIED', negativeAclTest: 'FAIL_THEN_PASS', ownerProfile: 'non-postgres' }));
 } finally {
   await admin.unsafe(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`).catch(() => undefined);
+  if (runtimeRoleCreated) await admin.unsafe('DROP ROLE IF EXISTS lead_finder_api_runtime').catch(() => undefined);
   for (const role of [ownerName, ...[...roleNames].reverse()]) {
     if (createdRoles.has(role)) await admin.unsafe(`DROP ROLE IF EXISTS ${quoteIdentifier(role)}`).catch(() => undefined);
   }

@@ -67,6 +67,9 @@ import {
   recordManualResponse,
   cancelManualPreparation,
   ManualMessagingError,
+  getWhatsappCloudSendScopeStatus,
+  resolveWhatsAppCloudSendScope,
+  type WhatsAppCloudSendScopeStatus,
   sendPreparedWhatsAppCloudMessage,
   type WhatsAppCloudRuntime,
   type WhatsAppCloudDeliver,
@@ -207,6 +210,7 @@ export function buildApp(db: Database, options: {
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
   deliverWhatsAppCloud?: WhatsAppCloudDeliver;
   sendPreparedWhatsAppCloud?: typeof sendPreparedWhatsAppCloudMessage;
+  getWhatsappCloudSendScopeStatus?: typeof getWhatsappCloudSendScopeStatus;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   authentication?: AuthenticationOptions;
@@ -228,6 +232,7 @@ export function buildApp(db: Database, options: {
   const manualEmailSendEnabled = options.manualEmailSendEnabled ?? false;
   const whatsappCloudRuntime = options.whatsappCloudRuntime;
   const sendPreparedWhatsAppCloud = options.sendPreparedWhatsAppCloud ?? sendPreparedWhatsAppCloudMessage;
+  const readWhatsappCloudSendScopeStatus = options.getWhatsappCloudSendScopeStatus ?? getWhatsappCloudSendScopeStatus;
   const contractQueries: HttpContractQueries = {
     listLeads,
     getLead,
@@ -779,7 +784,23 @@ export function buildApp(db: Database, options: {
   app.post('/manual-message-preparations/:id/confirm',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=confirmManualMessageSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid confirmation request',code:'INVALID_REQUEST'});if(request.principal?.authenticationSource==='HML_SMOKE_BEARER_TOKEN'&&body.data.result==='SENT_CONFIRMED')return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await confirmManualResult(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_confirmed',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_confirmed');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/response',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=recordManualResponseSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid response request',code:'INVALID_REQUEST'});if(body.data.result==='OPT_OUT'&&!request.principal?.permissions.has('manual-messaging:opt-out'))return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await recordManualResponse(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_response_recorded',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_response_recorded');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/send',async(request,reply)=>{const id=parseId(request.params);if(!id.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid send request',code:'INVALID_REQUEST'});if(!manualEmailSendEnabled||!options.deliverManualEmail||!options.manualEmailSender||!options.manualEmailFingerprintKey)return reply.status(503).send({error:'Service unavailable',code:'MANUAL_EMAIL_DISABLED'});return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled,killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender!,fingerprintKey:options.manualEmailFingerprintKey!,deliver:options.deliverManualEmail!});request.log.info({event:'manual_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id},'manual_email_delivery_recorded');return reply.status(201).send({state:result.state,provider:result.provider,messageIdFingerprint:result.messageIdFingerprint});});});
-  app.post('/manual-message-preparations/:id/whatsapp-cloud-send',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);if(!id.success||!key.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid WhatsApp Cloud send request',code:'INVALID_REQUEST'});if(!whatsappCloudRuntime?.enabled||!whatsappCloudRuntime.realSendEnabled||!options.deliverWhatsAppCloud)return reply.status(503).send({error:'Service unavailable',code:'WHATSAPP_CLOUD_DISABLED'});if(request.principal?.authenticationSource!=='HML_OPERATOR_BEARER_TOKEN')return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await sendPreparedWhatsAppCloud(db,id.data,authorizationContextFor(request),whatsappCloudRuntime,options.deliverWhatsAppCloud!,key.data);request.log.info({event:'manual_whatsapp_cloud_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed},'manual_whatsapp_cloud_delivery_recorded');return reply.status(creationStatus(result.replayed)).send({state:result.state,provider:result.provider,replayed:result.replayed,attemptId:result.attemptId,providerMessageFingerprint:result.providerMessageFingerprint});});});
+  app.post('/manual-message-preparations/:id/whatsapp-cloud-send',async(request,reply)=>{
+    const id=parseId(request.params);
+    const key=idempotencyKey(request.headers);
+    if(!id.success||!key.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid WhatsApp Cloud send request',code:'INVALID_REQUEST'});
+    if(request.principal?.authenticationSource!=='HML_OPERATOR_BEARER_TOKEN')return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});
+    const runtime=whatsappCloudRuntime;
+    // Production (and any non-HML runtime) is blocked before the scope can be used as an oracle.
+    if(!runtime||runtime.deploymentEnvironment!=='homologation')return reply.status(503).send({error:'Service unavailable',code:'WHATSAPP_CLOUD_DISABLED'});
+    let sendScope: Parameters<typeof readWhatsappCloudSendScopeStatus>[1];
+    try{sendScope=resolveWhatsAppCloudSendScope(runtime.sendScope);}catch{return reply.status(500).send({error:'Internal server error',code:'INTERNAL_ERROR'});}
+    let scopeStatus: WhatsAppCloudSendScopeStatus;
+    try{scopeStatus=await readWhatsappCloudSendScopeStatus(db,sendScope);}catch{return reply.status(500).send({error:'Internal server error',code:'INTERNAL_ERROR'});}
+    if(scopeStatus==='CONSUMED')return reply.status(409).send({error:'WhatsApp test scope already consumed',code:'WHATSAPP_TEST_SCOPE_CONSUMED',retryAllowed:false});
+    if(scopeStatus==='UNKNOWN')return reply.status(500).send({error:'Internal server error',code:'INTERNAL_ERROR'});
+    if(!runtime.enabled||!runtime.realSendEnabled||!options.deliverWhatsAppCloud)return reply.status(503).send({error:'Service unavailable',code:'WHATSAPP_CLOUD_DISABLED'});
+    return manualMessagingRoute(reply,async()=>{const result=await sendPreparedWhatsAppCloud(db,id.data,authorizationContextFor(request),runtime,options.deliverWhatsAppCloud!,key.data);request.log.info({event:'manual_whatsapp_cloud_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed},'manual_whatsapp_cloud_delivery_recorded');return reply.status(creationStatus(result.replayed)).send({state:result.state,provider:result.provider,replayed:result.replayed,attemptId:result.attemptId,providerMessageFingerprint:result.providerMessageFingerprint});});
+  });
   app.post('/collect', async (request, reply) => {
     if (!collectionEgressEnabled) {
       request.log.info({

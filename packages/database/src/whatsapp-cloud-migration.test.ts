@@ -21,6 +21,10 @@ const scopeConflictMigration = readFileSync(
   new URL('../../../database/migrations/0039_whatsapp_cloud_scope_conflict_metadata.sql', import.meta.url),
   'utf8',
 );
+const scopeStatusMigration = readFileSync(
+  new URL('../../../database/migrations/0040_whatsapp_cloud_scope_status_read.sql', import.meta.url),
+  'utf8',
+);
 
 describe('WhatsApp Cloud HML delivery migration', () => {
   it('uses append-only, one-scope reservations with no direct runtime table access', () => {
@@ -74,5 +78,17 @@ describe('WhatsApp Cloud HML delivery migration', () => {
     expect(scopeConflictMigration).toContain("CONSTRAINT = 'pilot_manual_whatsapp_cloud_send_attempts_send_scope_key'");
     expect(scopeConflictMigration).toContain("RAISE EXCEPTION 'whatsapp cloud send idempotency conflict' USING ERRCODE = '23505'");
     expect(scopeConflictMigration.match(/CONSTRAINT\s*=/g)).toHaveLength(1);
+  });
+
+  it('exposes only a read-only, allowlisted scope status function to the runtime role', () => {
+    expect(scopeStatusMigration).toContain('RETURNS text');
+    expect(scopeStatusMigration).toContain('LANGUAGE sql');
+    expect(scopeStatusMigration).toContain('STABLE');
+    expect(scopeStatusMigration).toContain('SECURITY DEFINER');
+    expect(scopeStatusMigration).toContain('SET search_path = pg_catalog, public');
+    expect(scopeStatusMigration).toContain("p_send_scope IS NULL OR p_send_scope NOT IN ('HML_TEST', 'HML_TEST_002')");
+    expect(scopeStatusMigration).toContain('GRANT EXECUTE ON FUNCTION public.get_manual_whatsapp_cloud_send_scope_status(text) TO lead_finder_api_runtime');
+    expect(scopeStatusMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+(?:TABLE\s+)?public\.pilot_manual_whatsapp_cloud_send_/i);
+    expect(scopeStatusMigration).not.toMatch(/request_body|access_token|recipient_fingerprint|message_fingerprint|payload_fingerprint|phone_number_id_fingerprint/i);
   });
 });

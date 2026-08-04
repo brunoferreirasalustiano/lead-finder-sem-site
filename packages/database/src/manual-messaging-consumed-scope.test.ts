@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   isConsumedWhatsappTestScopeConstraint,
+  getWhatsappCloudSendScopeStatus,
   ManualMessagingError,
+  resolveWhatsAppCloudSendScope,
   WHATSAPP_CONSUMED_SCOPE_CONSTRAINT,
 } from './manual-messaging.js';
 
@@ -35,5 +37,21 @@ describe('consumed WhatsApp Cloud scope errors', () => {
     expect(error).toMatchObject({ code: 'WHATSAPP_TEST_SCOPE_CONSUMED' });
     expect(error.message).not.toContain('23505');
     expect(error.message).not.toContain(WHATSAPP_CONSUMED_SCOPE_CONSTRAINT);
+  });
+
+  it('resolves only server-side allowlisted scopes', () => {
+    expect(resolveWhatsAppCloudSendScope(undefined)).toBe('HML_TEST_002');
+    expect(resolveWhatsAppCloudSendScope('HML_TEST')).toBe('HML_TEST');
+    expect(() => resolveWhatsAppCloudSendScope('client-selected-scope')).toThrow('WHATSAPP_CLOUD_SCOPE_CONFIGURATION_INVALID');
+  });
+
+  it.each(['CONSUMED', 'AVAILABLE', 'UNKNOWN'] as const)('returns the sanitized %s preflight status', async (status) => {
+    const db = { execute: () => Promise.resolve([{ status }]) } as never;
+    await expect(getWhatsappCloudSendScopeStatus(db, 'HML_TEST_002')).resolves.toBe(status);
+  });
+
+  it('fails closed when the read-only status function returns an invalid value', async () => {
+    const db = { execute: () => Promise.resolve([{ status: 'PII' }]) } as never;
+    await expect(getWhatsappCloudSendScopeStatus(db, 'HML_TEST_002')).rejects.toThrow('WHATSAPP_CLOUD_SCOPE_STATUS_UNAVAILABLE');
   });
 });

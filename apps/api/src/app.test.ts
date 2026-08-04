@@ -633,20 +633,96 @@ describe('WhatsApp Cloud HML delivery route', () => {
     maxSends: 1,
   };
 
-  it('fails closed while Cloud API is disabled and does not touch the database', async () => {
+  it('reads the fixed scope before returning Cloud API disabled', async () => {
+    const readScope = vi.fn().mockResolvedValue('AVAILABLE');
     const app = buildApp({} as Database, {
-      authentication: { token: testToken, principalPermissions: permissions },
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
       whatsappCloudRuntime: { ...runtime, enabled: false },
       deliverWhatsAppCloud: vi.fn(),
+      getWhatsappCloudSendScopeStatus: readScope,
     });
-    const response = await authenticatedInject(app, {
+    const response = await app.inject({
       method: 'POST',
       url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
-      headers: { 'idempotency-key': 'synthetic-cloud-disabled-1' },
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-disabled-1' },
       payload: {},
     });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ error: 'Service unavailable', code: 'WHATSAPP_CLOUD_DISABLED' });
+    expect(readScope).toHaveBeenCalledWith(expect.anything(), 'HML_TEST_002');
+    await app.close();
+  });
+
+  it('returns a non-retryable 409 for a consumed scope while Cloud API is disabled', async () => {
+    const readScope = vi.fn().mockResolvedValue('CONSUMED');
+    const deliver = vi.fn();
+    const app = buildApp({} as Database, {
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
+      whatsappCloudRuntime: { ...runtime, enabled: false, realSendEnabled: false },
+      deliverWhatsAppCloud: deliver,
+      getWhatsappCloudSendScopeStatus: readScope,
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-consumed-preflight-1' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: 'WhatsApp test scope already consumed',
+      code: 'WHATSAPP_TEST_SCOPE_CONSUMED',
+      retryAllowed: false,
+    });
+    expect(deliver).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('blocks production before reading scope state', async () => {
+    const readScope = vi.fn();
+    const app = buildApp({} as Database, {
+      authentication: {
+        token: testToken,
+        principalPermissions: [],
+        operatorTemporary: {
+          tokenHash: createHash('sha256').update(operatorToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-internal-whatsapp-operator',
+          principalPermissions: ['manual-messaging:cloud-send'],
+          environment: 'homologation',
+        },
+      },
+      whatsappCloudRuntime: { ...runtime, deploymentEnvironment: 'production' },
+      getWhatsappCloudSendScopeStatus: readScope,
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/whatsapp-cloud-send`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'idempotency-key': 'synthetic-cloud-production-1' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(503);
+    expect(readScope).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -674,6 +750,7 @@ describe('WhatsApp Cloud HML delivery route', () => {
       whatsappCloudRuntime: runtime,
       deliverWhatsAppCloud: vi.fn(),
       sendPreparedWhatsAppCloud: sendPrepared,
+      getWhatsappCloudSendScopeStatus: vi.fn().mockResolvedValue('AVAILABLE'),
     });
     const denied = await authenticatedInject(app, {
       method: 'POST',
@@ -721,6 +798,7 @@ describe('WhatsApp Cloud HML delivery route', () => {
         'WhatsApp Cloud test scope has already been consumed',
         'WHATSAPP_TEST_SCOPE_CONSUMED',
       )),
+      getWhatsappCloudSendScopeStatus: vi.fn().mockResolvedValue('AVAILABLE'),
     });
     const response = await app.inject({
       method: 'POST',
@@ -758,6 +836,7 @@ describe('WhatsApp Cloud HML delivery route', () => {
       whatsappCloudRuntime: runtime,
       deliverWhatsAppCloud: vi.fn(),
       sendPreparedWhatsAppCloud: vi.fn().mockRejectedValue(unrelated),
+      getWhatsappCloudSendScopeStatus: vi.fn().mockResolvedValue('AVAILABLE'),
     });
     const response = await app.inject({
       method: 'POST',

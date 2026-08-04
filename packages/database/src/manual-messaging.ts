@@ -24,6 +24,11 @@ export type ManualMessagingResult =
   | 'NEGATIVE_REPLY'
   | 'OPT_OUT'
   | 'OPERATIONAL_ERROR';
+
+export const WHATSAPP_CLOUD_TEST_SCOPES = ['HML_TEST', 'HML_TEST_002'] as const;
+export type WhatsAppCloudSendScope = typeof WHATSAPP_CLOUD_TEST_SCOPES[number];
+export type WhatsAppCloudSendScopeStatus = 'CONSUMED' | 'AVAILABLE' | 'UNKNOWN';
+
 export class ManualMessagingError extends Error {
   constructor(
     message: string,
@@ -68,6 +73,34 @@ export const isConsumedWhatsappTestScopeConstraint = (error: unknown): boolean =
   }
   return false;
 };
+
+const isWhatsAppCloudSendScope = (value: unknown): value is WhatsAppCloudSendScope =>
+  typeof value === 'string' && (WHATSAPP_CLOUD_TEST_SCOPES as readonly string[]).includes(value);
+
+/** Resolves only the server-side allowlisted HML scope; client input never reaches this function. */
+export const resolveWhatsAppCloudSendScope = (value: unknown): WhatsAppCloudSendScope => {
+  const scope = value ?? 'HML_TEST_002';
+  if (!isWhatsAppCloudSendScope(scope)) throw new Error('WHATSAPP_CLOUD_SCOPE_CONFIGURATION_INVALID');
+  return scope;
+};
+
+/**
+ * Reads the append-only scope reservation through the narrowly granted database
+ * function. The function returns no identifiers or contact data and cannot
+ * mutate the reservation or event tables.
+ */
+export async function getWhatsappCloudSendScopeStatus(
+  db: Database,
+  sendScope: WhatsAppCloudSendScope,
+): Promise<WhatsAppCloudSendScopeStatus> {
+  const rows = await db.execute<{ status: string }>(sql`
+    select public.get_manual_whatsapp_cloud_send_scope_status(${sendScope}) as status
+  `);
+  const status = rows[0]?.status;
+  if (status !== 'CONSUMED' && status !== 'AVAILABLE' && status !== 'UNKNOWN')
+    throw new Error('WHATSAPP_CLOUD_SCOPE_STATUS_UNAVAILABLE');
+  return status;
+}
 const canonical = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === 'object')
@@ -590,7 +623,7 @@ const resolveCloudRuntime = (runtime: WhatsAppCloudRuntime) => {
   const recipient = normalizePhoneE164(runtime.testRecipient);
   if (!recipient.ok)
     throw new ManualMessagingError('WhatsApp Cloud test recipient is invalid', 'WHATSAPP_CLOUD_INVALID_CONFIGURATION');
-  const sendScope = runtime.sendScope ?? 'HML_TEST_002';
+  const sendScope = resolveWhatsAppCloudSendScope(runtime.sendScope);
   return {
     enabled: true as const,
     realSendEnabled: true as const,

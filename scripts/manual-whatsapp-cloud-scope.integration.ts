@@ -77,10 +77,23 @@ const observedError = (error: unknown) => ({
 try {
   await raw`truncate pilot_manual_whatsapp_cloud_send_events,pilot_manual_whatsapp_cloud_send_attempts`;
 
+  const availableStatus = await raw`
+    select public.get_manual_whatsapp_cloud_send_scope_status('HML_TEST_002') as status
+  `;
+  assert.equal(availableStatus[0]?.status, 'AVAILABLE');
+  const unknownStatus = await raw`
+    select public.get_manual_whatsapp_cloud_send_scope_status('UNTRUSTED_SCOPE') as status
+  `;
+  assert.equal(unknownStatus[0]?.status, 'UNKNOWN');
+
   const firstScope = await fixture('first');
   const secondScope = await fixture('second');
   const firstClaim = await claim(firstScope, 'HML_TEST_002', 'first');
   assert.equal(firstClaim.length, 1, 'first claim must be allowed');
+  const consumedStatus = await raw`
+    select public.get_manual_whatsapp_cloud_send_scope_status('HML_TEST_002') as status
+  `;
+  assert.equal(consumedStatus[0]?.status, 'CONSUMED');
 
   let consumedError: unknown;
   try {

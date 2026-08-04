@@ -9,6 +9,7 @@
     { "path": "packages/overpass-client" },
     { "path": "packages/database" },
     { "path": "packages/batch-processor" },
+    { "path": "packages/prospecting-orchestrator" },
     { "path": "apps/api" },
     { "path": "apps/worker" }
   ]

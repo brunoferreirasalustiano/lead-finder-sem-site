@@ -100,7 +100,10 @@ try {
 
   await assert.rejects(
     db.execute(sql`UPDATE public.prospecting_runs SET approved = 0 WHERE id = ${first.run.id}::uuid`),
-    /append-only/,
+    (error: unknown) => {
+      const cause = typeof error === 'object' && error !== null && 'cause' in error ? String(error.cause) : '';
+      return /append-only/i.test(`${String(error)}\n${cause}`);
+    },
   );
   assert.equal((await getProspectingRunByFingerprint(db, firstFingerprint))?.approved, 1);
 

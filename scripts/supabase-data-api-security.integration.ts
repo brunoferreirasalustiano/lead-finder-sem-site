@@ -207,6 +207,22 @@ try {
     assert.deepEqual(restored[0], { policyCount: 11, dataApiPolicyCount: 0, runsSelect: true, runsInsert: true, transitionInsert: false, assertExecute: true });
     console.log(JSON.stringify({ result: 'PROSPECTING_RUNTIME_DENY_ALL_RECONCILIATION_PASS', replay: 2, restoredAllowlist: true }));
 
+    await db.unsafe(`
+      DROP POLICY IF EXISTS lead_finder_api_runtime_operator_events_select ON public.operator_channel_test_events;
+      DROP POLICY IF EXISTS lead_finder_api_runtime_operator_preparations_select ON public.operator_channel_test_preparations;
+      DROP POLICY IF EXISTS prospecting_state_runtime_insert ON public.prospecting_city_state;
+      DROP POLICY IF EXISTS prospecting_state_runtime_select ON public.prospecting_city_state;
+      DROP POLICY IF EXISTS prospecting_state_runtime_update ON public.prospecting_city_state;
+      DROP POLICY IF EXISTS prospecting_transitions_runtime_select ON public.prospecting_city_transitions;
+      DROP POLICY IF EXISTS prospecting_reasons_runtime_insert ON public.prospecting_run_rejection_reasons;
+      DROP POLICY IF EXISTS prospecting_reasons_runtime_select ON public.prospecting_run_rejection_reasons;
+      DROP POLICY IF EXISTS prospecting_runs_runtime_insert ON public.prospecting_runs;
+      DROP POLICY IF EXISTS prospecting_runs_runtime_select ON public.prospecting_runs;
+      DROP POLICY IF EXISTS lead_finder_api_runtime_schema_migrations_select ON public.schema_migrations;
+    `);
+    await admin.unsafe('DROP ROLE IF EXISTS lead_finder_api_runtime');
+    runtimeRoleCreated = false;
+
     const table = await db<{ relrowsecurity: boolean; owner: string }[]>`
       SELECT c.relrowsecurity, pg_get_userbyid(c.relowner) AS owner
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

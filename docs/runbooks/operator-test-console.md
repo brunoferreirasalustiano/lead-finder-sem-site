@@ -33,8 +33,29 @@ $env:OPERATOR_TEST_AUTHORIZED="true"
 $env:OPERATOR_TEST_WHATSAPP_E164="+12025550100" # exemplo sintético reservado; use o autorizado só na sessão local
 $binding = Read-Host "Cole a chave exclusiva de recipient binding" -AsSecureString
 $env:OPERATOR_TEST_RECIPIENT_BINDING_KEY = [System.Net.NetworkCredential]::new("", $binding).Password
+
+# Metadados sanitizados obtidos por canal administrativo privado; nunca use o segredo.
+$env:OPERATOR_TEST_EXPECTED_PHONE_SUFFIX="4982"
+$env:OPERATOR_TEST_HML_PHONE_SUFFIX="4982"
+$env:OPERATOR_TEST_HML_BINDING_FINGERPRINT="<12 hex truncados>"
+$env:OPERATOR_TEST_HML_MESSAGE_DIGEST_FINGERPRINT="<12 hex truncados>"
+$env:OPERATOR_TEST_HML_TEMPLATE_FINGERPRINT="<12 hex truncados>"
+$env:OPERATOR_TEST_HML_BINDING_VERSION="operator-recipient-binding-v1"
+npm run operator:test:whatsapp:preflight
 npm run operator:test:whatsapp
 ```
+
+O preflight é obrigatório e falha antes de iniciar a console quando o destinatário
+local não coincide com o sufixo autorizado ou com o sufixo sanitizado do HML, quando
+a fingerprint local da chave não coincide com a fingerprint sanitizada do HML, ou
+quando há segredo inválido, bloco PowerShell, CRLF, caractere invisível, build
+incompleto, worktree sujo, porta ocupada ou API não saudável. Ele executa somente
+leituras de saúde da API; não cria preparação, não chama WhatsApp e não chama Meta.
+
+`recipientE164` participa da entrada do HMAC. Portanto, uma divergência entre os
+quatro últimos dígitos locais e os quatro últimos dígitos sanitizados do HML é
+causa suficiente para `INVALID_OPERATOR_RECIPIENT_BINDING`; corrija a configuração
+privada e reinicie a sessão antes de qualquer nova preparação.
 
 A porta padrão é `4174`. Para alterá-la:
 

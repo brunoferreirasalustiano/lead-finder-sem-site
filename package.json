@@ -25,7 +25,7 @@
     "dev:api": "tsx watch apps/api/src/index.ts",
     "dev:worker": "tsx watch apps/worker/src/index.ts",
     "operator:whatsapp": "tsx scripts/manual-whatsapp-console.ts",
-    "operator:test:whatsapp": "tsx scripts/operator-test-console.ts",
+    "operator:test:whatsapp": "tsx scripts/operator-test-console-v2.ts",
     "test:pilot": "tsx scripts/integration-test.ts",
     "test:pilot:restart": "tsx scripts/pilot-restart-test.ts",
     "pilot:real:preflight": "tsx scripts/pilot-real-preflight.ts",

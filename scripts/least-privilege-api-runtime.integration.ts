@@ -183,7 +183,7 @@ try {
   const expectedTablePrivileges = new Map([
     ['operator_channel_test_events', { canSelect: true, canInsert: false, canUpdate: false }],
     ['operator_channel_test_preparations', { canSelect: true, canInsert: false, canUpdate: false }],
-    ['prospecting_city_state', { canSelect: true, canInsert: true, canUpdate: true }],
+    ['prospecting_city_state', { canSelect: true, canInsert: true, canUpdate: false }],
     ['prospecting_city_transitions', { canSelect: true, canInsert: false, canUpdate: false }],
     ['prospecting_run_rejection_reasons', { canSelect: true, canInsert: true, canUpdate: false }],
     ['prospecting_runs', { canSelect: true, canInsert: true, canUpdate: false }],

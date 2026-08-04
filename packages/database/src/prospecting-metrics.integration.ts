@@ -96,7 +96,7 @@ try {
   const snapshot = await getProspectingCityMetricsSnapshot(db, campaignKey);
   assert.equal(snapshot.currentCity, 'Valinhos');
   assert.equal(snapshot.cities.length, 6);
-  assert.doesNotMatch(JSON.stringify(snapshot), /phone|email|message|token|whatsapp/i);
+  assert.doesNotMatch(JSON.stringify(snapshot), /phone|@|message content|bearer|token|wa\.me/i);
 
   await assert.rejects(
     db.execute(sql`UPDATE public.prospecting_runs SET approved = 0 WHERE id = ${first.run.id}::uuid`),

@@ -50,7 +50,7 @@ type CityStateRow = {
   campaign_key: string;
   current_city: ProspectingCity;
   consecutive_low_yield_runs: number;
-  version: number;
+  version: number | string;
   updated_at: Date | string;
 };
 type RecentRunRow = { id: string; found: number; approved: number; rejected: number; created_at: Date | string; rejection_reasons: unknown };
@@ -139,6 +139,12 @@ const safeUuid = (value: string, field: string): string => {
 
 const asDate = (value: Date | string): Date => value instanceof Date ? value : new Date(value);
 
+const safeVersion = (value: number | string): number => {
+  const version = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error('PROSPECTING_CITY_STATE_VERSION_INVALID');
+  return version;
+};
+
 const emptyReasons = (): Record<ProspectingRejectionReason, number> =>
   Object.fromEntries(prospectingRejectionReasons.map((reason) => [reason, 0])) as Record<ProspectingRejectionReason, number>;
 
@@ -195,7 +201,7 @@ const toState = (row: CityStateRow): ProspectingCityState => ({
   campaignKey: row.campaign_key,
   currentCity: row.current_city,
   consecutiveLowYieldRuns: row.consecutive_low_yield_runs,
-  version: row.version,
+  version: safeVersion(row.version),
   updatedAt: asDate(row.updated_at),
 });
 
@@ -320,7 +326,8 @@ async function advanceProspectingCityStateInTransaction(
     WHERE campaign_key = ${key}
     FOR UPDATE`);
   if (!stateRows[0]) throw new Error('PROSPECTING_CITY_STATE_MISSING');
-  if (stateRows[0].current_city !== input.fromCity || stateRows[0].version !== input.expectedVersion) {
+  const currentVersion = safeVersion(stateRows[0].version);
+  if (stateRows[0].current_city !== input.fromCity || currentVersion !== input.expectedVersion) {
     throw new Error('PROSPECTING_CITY_STATE_VERSION_CONFLICT');
   }
   const runRows = await tx.execute<{ id: string }>(sql`
@@ -437,7 +444,7 @@ export async function createProspectingRun(db: Database, input: CreateProspectin
         toCity: decision.nextCity,
         reason: decision.reasonCodes[0] ?? 'CITY_ADVANCED',
         triggeringRunId: inserted[0].id,
-        expectedVersion: state.version,
+        expectedVersion: safeVersion(state.version),
       });
       updated = advanced.state;
       transition = advanced.transition;
@@ -446,7 +453,7 @@ export async function createProspectingRun(db: Database, input: CreateProspectin
         UPDATE public.prospecting_city_state
         SET consecutive_low_yield_runs = ${decision.consecutiveLowYieldRuns},
             version = version + 1, updated_at = clock_timestamp()
-        WHERE campaign_key = ${campaignKey} AND current_city = ${state.current_city} AND version = ${state.version}
+        WHERE campaign_key = ${campaignKey} AND current_city = ${state.current_city} AND version = ${safeVersion(state.version)}
         RETURNING *`);
       if (!progressed[0]) throw new Error('PROSPECTING_CITY_STATE_VERSION_CONFLICT');
       updated = toState(progressed[0]);

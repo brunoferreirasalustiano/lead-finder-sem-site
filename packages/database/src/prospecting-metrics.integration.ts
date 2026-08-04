@@ -105,6 +105,7 @@ try {
 
   const state = await getProspectingCityState(db, campaignKey);
   assert.equal(state?.currentCity, 'Valinhos');
+  assert.equal(Number.isSafeInteger(state?.version), true, 'bigint state versions must normalize to safe integers');
   await assert.rejects(
     updateProspectingCityState(db, {
       campaignKey, currentCity: 'Valinhos', consecutiveLowYieldRuns: 0,

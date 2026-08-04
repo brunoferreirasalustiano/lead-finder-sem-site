@@ -22,6 +22,8 @@ const fixtureUrl = new URL(sourceUrl);
 fixtureUrl.pathname = `/${databaseName}`;
 fixtureUrl.username = ownerName;
 fixtureUrl.password = ownerPassword;
+const privilegedFixtureUrl = new URL(sourceUrl);
+privilegedFixtureUrl.pathname = `/${databaseName}`;
 
 async function seedSupabaseDefaults(url: string) {
   const db = postgres(url, { max: 1 });
@@ -181,11 +183,19 @@ try {
         has_function_privilege(${runtimeRole}, 'public.advance_prospecting_city_state(text,text,text,text,uuid,bigint)', 'EXECUTE') AS "advanceExecute",
         has_function_privilege(${runtimeRole}, 'public.prospecting_assert_rejection_reason_sum(uuid)', 'EXECUTE') AS "assertExecute"`;
     assert.deepEqual(reconciled[0], { policyCount: 0, runsSelect: false, runsInsert: false, advanceExecute: false, assertExecute: false });
+    await admin.unsafe('DROP ROLE IF EXISTS lead_finder_api_runtime');
+    runtimeRoleCreated = false;
     const runtimeAllowlist = await readFile(
       new URL('../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
       'utf8',
     );
-    await db.unsafe(runtimeAllowlist);
+    const privilegedFixture = postgres(privilegedFixtureUrl.toString(), { max: 1 });
+    try {
+      await privilegedFixture.unsafe(runtimeAllowlist);
+    } finally {
+      await privilegedFixture.end();
+    }
+    runtimeRoleCreated = true;
     const restored = await db<{ policyCount: number; dataApiPolicyCount: number; runsSelect: boolean; runsInsert: boolean; transitionInsert: boolean; assertExecute: boolean }[]>`
       SELECT
         (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND ${runtimeRole} = ANY(roles)) AS "policyCount",

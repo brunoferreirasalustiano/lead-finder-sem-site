@@ -30,6 +30,11 @@ const rollbackSql = await readFile(
   'utf8',
 );
 const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
+const expectSqlState = (expectedCode: string) => (error: unknown) => {
+  const candidate = error as { code?: unknown };
+  assert.equal(candidate.code, expectedCode);
+  return true;
+};
 const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
 const writeFailureEvidence = async (stage: string, error: unknown) => {
   const candidate = error as { name?: unknown; code?: unknown };
@@ -341,16 +346,25 @@ try {
   assert.equal(prospectingReplay.state.currentCity, 'Valinhos');
 
   stage = 'VERIFY_DIRECT_WRITES_DENIED';
-  await assert.rejects(restrictedRaw`
-    INSERT INTO public.prospecting_city_transitions(
-      campaign_key, from_city, to_city, reason, triggering_run_id
-    ) VALUES (
-      ${prospectingCampaignKey}, 'Valinhos', 'Indaiatuba', 'DIRECT_WRITE', ${prospectingRun.run.id}::uuid
-    )`);
-  await assert.rejects(restrictedRaw`
-    UPDATE public.prospecting_city_state
-    SET current_city = 'Indaiatuba'
-    WHERE campaign_key = ${prospectingCampaignKey}`);
+  await assert.rejects(
+    restrictedRaw`
+      INSERT INTO public.prospecting_city_transitions(
+        campaign_key, from_city, to_city, reason, triggering_run_id
+      ) VALUES (
+        ${prospectingCampaignKey}, 'Valinhos', 'Paulínia', 'DIRECT_WRITE', ${prospectingRun.run.id}::uuid
+      )`,
+    expectSqlState('42501'),
+  );
+  await assert.rejects(
+    restrictedRaw`
+      UPDATE public.prospecting_city_state
+      SET current_city = 'Paulínia',
+          version = version + 1,
+          updated_at = clock_timestamp()
+      WHERE campaign_key = ${prospectingCampaignKey}
+        AND current_city = 'Valinhos'`,
+    expectSqlState('42501'),
+  );
   await assert.rejects(restrictedRaw`
     INSERT INTO public.operator_channel_test_preparations(
       channel, purpose, recipient_fingerprint, template_id, template_version,

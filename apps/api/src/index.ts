@@ -77,6 +77,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
       },
     } : {}),
   },
+  prospectingMetricsEnabled: config.PROSPECTING_METRICS_ENABLED,
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
   cronAuthAudience: config.CRON_AUTH_AUDIENCE,
   ...(config.API_BATCH_PROCESSING_ENABLED ? {

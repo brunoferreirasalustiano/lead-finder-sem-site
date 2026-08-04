@@ -28,6 +28,8 @@ COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /app/packages/database/dist ./packages/database/dist
+COPY --from=build --chown=node:node /app/packages/prospecting-orchestrator/package.json ./packages/prospecting-orchestrator/package.json
+COPY --from=build --chown=node:node /app/packages/prospecting-orchestrator/dist ./packages/prospecting-orchestrator/dist
 COPY --from=build --chown=node:node /app/packages/messaging/package.json ./packages/messaging/package.json
 COPY --from=build --chown=node:node /app/packages/messaging/dist ./packages/messaging/dist
 COPY --from=build --chown=node:node /app/packages/email/package.json ./packages/email/package.json
@@ -36,5 +38,5 @@ COPY --from=build --chown=node:node /app/packages/whatsapp/package.json ./packag
 COPY --from=build --chown=node:node /app/packages/whatsapp/dist ./packages/whatsapp/dist
 COPY --from=build --chown=node:node /app/packages/batch-processor/package.json ./packages/batch-processor/package.json
 COPY --from=build --chown=node:node /app/packages/batch-processor/dist ./packages/batch-processor/dist
-RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/email/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f database/migrations/0001_initial.sql && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/batch-processor')"
+RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/prospecting-orchestrator/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/email/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f database/migrations/0001_initial.sql && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor')"
 CMD ["node","apps/api/dist/index.js"]

@@ -75,6 +75,10 @@ try {
   assert.equal(await transitionCount(campaignKey), 1);
   assert.equal((await createProspectingRun(db, { executionFingerprint: `synthetic-${suffix}-two`, campaignKey, metrics: metrics('Campinas') })).replayed, true);
   assert.equal(await transitionCount(campaignKey), 1);
+  await assert.rejects(
+    createProspectingRun(db, { executionFingerprint: firstFingerprint, campaignKey: `${campaignKey}-other`, metrics: metrics('Campinas') }),
+    /PROSPECTING_RUN_FINGERPRINT_SCOPE_MISMATCH/,
+  );
 
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason, triggering_run_id)
@@ -102,6 +106,24 @@ try {
   assert.equal(concurrent.filter((result) => result.replayed).length, 1);
   assert.equal((await db.execute<{ count: number }>(sql`
     SELECT count(*)::int AS count FROM public.prospecting_runs WHERE execution_fingerprint = ${concurrentFingerprint}`))[0]?.count, 1);
+
+  const concurrentReplayCampaign = `synthetic-metrics-${suffix}-concurrent-advance-replay`;
+  await createProspectingRun(db, {
+    executionFingerprint: `${concurrentReplayCampaign}-seed`, campaignKey: concurrentReplayCampaign, metrics: metrics('Campinas'),
+  });
+  const replayRaceFingerprint = `${concurrentReplayCampaign}-same-fingerprint`;
+  const replayRaceStateBefore = await getProspectingCityState(db, concurrentReplayCampaign);
+  assert.equal(replayRaceStateBefore?.currentCity, 'Campinas');
+  const replayRace = await Promise.all([
+    createProspectingRun(db, { executionFingerprint: replayRaceFingerprint, campaignKey: concurrentReplayCampaign, metrics: metrics('Campinas') }),
+    createProspectingRun(db, { executionFingerprint: replayRaceFingerprint, campaignKey: concurrentReplayCampaign, metrics: metrics('Campinas') }),
+  ]);
+  assert.equal(replayRace.filter((result) => !result.replayed).length, 1);
+  assert.equal(replayRace.filter((result) => result.replayed).length, 1);
+  const replayRaceStateAfter = await getProspectingCityState(db, concurrentReplayCampaign);
+  assert.equal(replayRaceStateAfter?.currentCity, 'Valinhos');
+  assert.equal(replayRaceStateAfter?.version, (replayRaceStateBefore?.version ?? 0) + 1);
+  assert.equal(await transitionCount(concurrentReplayCampaign), 1);
 
   const state = await getProspectingCityState(db, campaignKey);
   assert.equal(state?.currentCity, 'Valinhos');
@@ -178,6 +200,43 @@ try {
     }),
     (error: unknown) => /rejection reasons must sum to rejected/i.test(causeText(error)),
   );
+  const parentOnlyFingerprint = `synthetic-${suffix}-parent-only-rejected`;
+  await assert.rejects(
+    db.transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city, found, approved, rejected,
+        score_0_59, score_60_79, score_80_99, score_100)
+        VALUES (${parentOnlyFingerprint}, ${campaignKey}, 'Valinhos', 2, 0, 2, 2, 0, 0, 0)`);
+    }),
+    (error: unknown) => /rejection reasons must sum to rejected/i.test(causeText(error)),
+  );
+  assert.equal((await db.execute<{ count: number }>(sql`
+    SELECT count(*)::int AS count FROM public.prospecting_runs WHERE execution_fingerprint = ${parentOnlyFingerprint}`))[0]?.count, 0);
+
+  for (const [label, reasonTotal] of [['child-sum-one', 1], ['child-sum-three', 3]] as const) {
+    await assert.rejects(
+      db.transaction(async (tx) => {
+        const run = (await tx.execute<{ id: string }>(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city,
+          found, approved, rejected, score_0_59, score_60_79, score_80_99, score_100)
+          VALUES (${`synthetic-${suffix}-${label}`}, ${campaignKey}, 'Valinhos', 3, 0, 2, 3, 0, 0, 0) RETURNING id`))[0];
+        await tx.execute(sql`INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
+          VALUES (${run?.id}::uuid, 'OFFICIAL_SITE', ${reasonTotal})`);
+      }),
+      (error: unknown) => /rejection reasons must sum to rejected/i.test(causeText(error)),
+    );
+  }
+  const validReasonRun = await db.transaction(async (tx) => {
+    const run = (await tx.execute<{ id: string }>(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city,
+      found, approved, rejected, score_0_59, score_60_79, score_80_99, score_100)
+      VALUES (${`synthetic-${suffix}-child-sum-two`}, ${campaignKey}, 'Valinhos', 2, 0, 2, 2, 0, 0, 0) RETURNING id`))[0];
+    await tx.execute(sql`INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
+      VALUES (${run?.id}::uuid, 'OFFICIAL_SITE', 2)`);
+    return run?.id;
+  });
+  assert.ok(validReasonRun);
+  const validZeroRun = (await db.execute<{ id: string }>(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city,
+    found, approved, rejected, score_0_59, score_60_79, score_80_99, score_100)
+    VALUES (${`synthetic-${suffix}-child-sum-zero`}, ${campaignKey}, 'Valinhos', 0, 0, 0, 0, 0, 0, 0) RETURNING id`))[0];
+  assert.ok(validZeroRun);
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_city_transitions (campaign_key, from_city, to_city, reason, triggering_run_id)
       VALUES (${campaignKey}, 'Valinhos', 'Hortolândia', 'SKIP', ${valinhosRun.id}::uuid)`),

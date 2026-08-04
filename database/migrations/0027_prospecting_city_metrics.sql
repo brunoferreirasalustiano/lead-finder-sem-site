@@ -144,10 +144,9 @@ CREATE TRIGGER prospecting_transitions_append_only
   BEFORE UPDATE OR DELETE ON public.prospecting_city_transitions
   FOR EACH ROW EXECUTE FUNCTION public.prospecting_append_only_guard();
 
-CREATE OR REPLACE FUNCTION public.prospecting_rejection_reason_sum_guard()
-RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+CREATE OR REPLACE FUNCTION public.prospecting_assert_rejection_reason_sum(target_run_id uuid)
+RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 DECLARE
-  target_run_id uuid := COALESCE(NEW.run_id, OLD.run_id);
   expected_rejected integer;
   actual_rejected integer;
 BEGIN
@@ -163,16 +162,38 @@ BEGIN
   IF actual_rejected <> expected_rejected THEN
     RAISE EXCEPTION 'prospecting rejection reasons must sum to rejected' USING ERRCODE = '23514';
   END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.prospecting_rejection_reason_sum_guard()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+BEGIN
+  PERFORM public.prospecting_assert_rejection_reason_sum(COALESCE(NEW.run_id, OLD.run_id));
   RETURN NULL;
 END
 $$;
 
+CREATE OR REPLACE FUNCTION public.prospecting_run_rejection_reason_sum_guard()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+BEGIN
+  PERFORM public.prospecting_assert_rejection_reason_sum(NEW.id);
+  RETURN NULL;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.prospecting_assert_rejection_reason_sum(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prospecting_rejection_reason_sum_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.prospecting_run_rejection_reason_sum_guard() FROM PUBLIC;
 DROP TRIGGER IF EXISTS prospecting_rejection_reason_sum_guard ON public.prospecting_run_rejection_reasons;
 CREATE CONSTRAINT TRIGGER prospecting_rejection_reason_sum_guard
   AFTER INSERT OR UPDATE OR DELETE ON public.prospecting_run_rejection_reasons
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION public.prospecting_rejection_reason_sum_guard();
+DROP TRIGGER IF EXISTS prospecting_run_rejection_reason_sum_guard ON public.prospecting_runs;
+CREATE CONSTRAINT TRIGGER prospecting_run_rejection_reason_sum_guard
+  AFTER INSERT ON public.prospecting_runs
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION public.prospecting_run_rejection_reason_sum_guard();
 
 CREATE OR REPLACE FUNCTION public.advance_prospecting_city_state(
   p_campaign_key text,
@@ -254,6 +275,9 @@ REVOKE ALL ON FUNCTION public.prospecting_validate_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prospecting_city_state_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prospecting_city_state_insert_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prospecting_append_only_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.prospecting_assert_rejection_reason_sum(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.prospecting_rejection_reason_sum_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.prospecting_run_rejection_reason_sum_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.advance_prospecting_city_state(text, text, text, text, uuid, bigint) FROM PUBLIC;
 
 DO $$
@@ -267,6 +291,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     EXECUTE 'GRANT SELECT, INSERT ON TABLE public.prospecting_runs, public.prospecting_run_rejection_reasons, public.prospecting_city_transitions TO service_role';
     EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE public.prospecting_city_state TO service_role';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.prospecting_assert_rejection_reason_sum(uuid) TO service_role';
     EXECUTE 'GRANT EXECUTE ON FUNCTION public.advance_prospecting_city_state(text, text, text, text, uuid, bigint) TO service_role';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lead_finder_api_runtime') THEN
@@ -274,6 +299,7 @@ BEGIN
     EXECUTE 'REVOKE INSERT, UPDATE, DELETE ON TABLE public.prospecting_city_transitions FROM lead_finder_api_runtime';
     EXECUTE 'GRANT SELECT, INSERT ON TABLE public.prospecting_city_state TO lead_finder_api_runtime';
     EXECUTE 'GRANT UPDATE (consecutive_low_yield_runs, version, updated_at) ON TABLE public.prospecting_city_state TO lead_finder_api_runtime';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.prospecting_assert_rejection_reason_sum(uuid) TO lead_finder_api_runtime';
     EXECUTE 'GRANT EXECUTE ON FUNCTION public.advance_prospecting_city_state(text, text, text, text, uuid, bigint) TO lead_finder_api_runtime';
     EXECUTE 'DROP POLICY IF EXISTS prospecting_runs_runtime_policy ON public.prospecting_runs';
     EXECUTE 'DROP POLICY IF EXISTS prospecting_reasons_runtime_policy ON public.prospecting_run_rejection_reasons';

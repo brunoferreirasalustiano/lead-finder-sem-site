@@ -389,6 +389,19 @@ export async function createProspectingRun(db: Database, input: CreateProspectin
     }
     const state = stateRows[0];
     if (!state) throw new Error('PROSPECTING_CITY_STATE_MISSING');
+    // A concurrent caller may have observed no fingerprint before waiting on
+    // this campaign lock. Re-read after the lock so a completed transition
+    // is treated as an idempotent replay instead of a city mismatch.
+    const lockedExisting = await tx.execute<RunRow>(sql`
+      SELECT * FROM public.prospecting_runs WHERE execution_fingerprint = ${fingerprint}`);
+    if (lockedExisting[0]) {
+      if (lockedExisting[0].campaign_key !== campaignKey || lockedExisting[0].city !== metrics.city) {
+        throw new Error('PROSPECTING_RUN_FINGERPRINT_SCOPE_MISMATCH');
+      }
+      const reasons = await tx.execute<ReasonRow>(sql`
+        SELECT reason, count FROM public.prospecting_run_rejection_reasons WHERE run_id = ${lockedExisting[0].id}`);
+      return { run: toRun(lockedExisting[0], reasonMap(reasons)), replayed: true, state: toState(state), transition: null };
+    }
     if (state.current_city !== metrics.city) throw new Error('PROSPECTING_CITY_STATE_MISMATCH');
     const inserted = await tx.execute<RunRow>(sql`
       INSERT INTO public.prospecting_runs (

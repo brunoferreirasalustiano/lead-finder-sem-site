@@ -33,6 +33,7 @@ describe('environment configuration', () => {
       API_PORT: 3000,
       API_BATCH_PROCESSING_ENABLED: false,
       COLLECTION_EGRESS_ENABLED: false,
+      PROSPECTING_METRICS_ENABLED: false,
       PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
     });
@@ -58,6 +59,12 @@ describe('environment configuration', () => {
     expect(parseWorkerConfig({ ...database, OVERPASS_API_URL: '' }).OVERPASS_API_URL).toBeUndefined();
     expect(parseApiConfig({ ...database, COLLECTION_EGRESS_ENABLED: '' }).COLLECTION_EGRESS_ENABLED).toBe(false);
     expect(parseWorkerConfig({ ...database, COLLECTION_EGRESS_ENABLED: '' }).COLLECTION_EGRESS_ENABLED).toBe(false);
+  });
+
+  it('keeps prospecting metrics disabled by default and rejects ambiguous values', () => {
+    expect(parseApiConfig(database).PROSPECTING_METRICS_ENABLED).toBe(false);
+    expect(parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'true' }).PROSPECTING_METRICS_ENABLED).toBe(true);
+    expect(() => parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'yes' })).toThrow('PROSPECTING_METRICS_ENABLED');
   });
 
   it.each([

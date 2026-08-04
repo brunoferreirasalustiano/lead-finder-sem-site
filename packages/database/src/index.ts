@@ -21,6 +21,7 @@ export * from './pilot.js';
 export * from './manual-messaging.js';
 export * from './operator-channel-test.js';
 export * from './deployment-processing.js';
+export * from './prospecting-metrics.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed

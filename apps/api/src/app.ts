@@ -64,6 +64,7 @@ import {
   confirmManualResult,
   recordManualResponse,
   ManualMessagingError,
+  getProspectingCityMetricsSnapshot,
 } from '@lead-finder/database';
 import {
   collectSchema,
@@ -150,6 +151,7 @@ type HttpContractQueries = Readonly<{
   listRecipientAttempts: typeof listRecipientAttempts;
   reserveSimulatedRecipient: typeof reserveSimulatedRecipient;
   createAttemptWithOutbox: typeof createAttemptWithOutbox;
+  getProspectingCityMetricsSnapshot: typeof getProspectingCityMetricsSnapshot;
 }>;
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
   const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
@@ -195,6 +197,7 @@ export function buildApp(db: Database, options: {
   realProviderConfigured?: boolean;
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
+  prospectingMetricsEnabled?: boolean;
   authentication?: AuthenticationOptions;
   enqueueCollection?: typeof enqueueCollection;
   internalCronSecret?: string;
@@ -230,6 +233,7 @@ export function buildApp(db: Database, options: {
     listRecipientAttempts,
     reserveSimulatedRecipient,
     createAttemptWithOutbox,
+    getProspectingCityMetricsSnapshot,
     ...options.contractQueries,
   };
   const app = Fastify({
@@ -318,6 +322,13 @@ export function buildApp(db: Database, options: {
   });
   app.get('/internal/operational-snapshot', async (_request, reply) => {
     try { return await getOperationalSnapshot(db); }
+    catch { return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' }); }
+  });
+  app.get('/internal/prospecting/city-metrics', async (_request, reply) => {
+    if (options.prospectingMetricsEnabled !== true) {
+      return reply.status(503).send({ error: 'Service unavailable', code: 'PROSPECTING_METRICS_DISABLED' });
+    }
+    try { return await contractQueries.getProspectingCityMetricsSnapshot(db); }
     catch { return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' }); }
   });
   app.get('/leads', async (request, reply) => {

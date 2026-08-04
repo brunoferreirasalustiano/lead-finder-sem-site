@@ -212,11 +212,6 @@ const sendHtml = (response: ServerResponse, status: number, html: string) => {
   response.end(html);
 };
 
-const redirect = (response: ServerResponse, location: string) => {
-  response.writeHead(303, { ...headers, location });
-  response.end();
-};
-
 async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -299,18 +294,23 @@ const renderHome = (csrfToken: string, config: ConsoleConfig, error?: string) =>
 const renderPrepared = (csrfToken: string, preparation: ActivePreparation) => page(
   'Preparação auditada criada',
   `<h1>Preparação auditada criada</h1>
-  <p class="notice">Registrar abertura não confirma envio. Revise o destinatário e o texto dentro do WhatsApp.</p>
+  <p class="notice">Revise o destinatário e o texto antes de abrir o WhatsApp. Visualizar ou copiar o link não registra abertura.</p>
   <dl>
     <dt>Preparação</dt><dd><code>${escapeHtml(preparation.preparationId)}</code></dd>
     <dt>Template</dt><dd><code>${escapeHtml(preparation.templateId)} ${escapeHtml(preparation.templateVersion)}</code></dd>
     <dt>Destino local</dt><dd><strong>${escapeHtml(preparation.maskedPhone)}</strong></dd>
   </dl>
   <pre>${escapeHtml(preparation.message)}</pre>
-  <form method="post" action="/open" target="_blank">
+  <p><a href="${escapeHtml(preparation.link)}" target="_blank" rel="noopener noreferrer">Abrir WhatsApp manualmente</a></p>
+  <form method="post" action="/open">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="preparationId" value="${escapeHtml(preparation.preparationId)}">
-    <button type="submit">Registrar abertura e abrir WhatsApp</button>
+    <button type="submit">Registrar que abri o WhatsApp</button>
   </form>
+  <p><small>Depois de registrar a abertura, a console disponibilizará a confirmação do envio manual.</small></p>`,
+);
+
+const renderConfirmationActions = (csrfToken: string, preparation: ActivePreparation) => `
   <h2>Depois da revisão manual</h2>
   <div class="grid">
     <form method="post" action="/confirm">
@@ -325,7 +325,14 @@ const renderPrepared = (csrfToken: string, preparation: ActivePreparation) => pa
       <input type="hidden" name="result" value="NOT_SENT">
       <button class="secondary" type="submit">Registrar que não enviei</button>
     </form>
-  </div>`,
+  </div>`;
+
+const renderOpened = (csrfToken: string, preparation: ActivePreparation) => page(
+  'Abertura registrada',
+  `<h1>Abertura registrada</h1>
+  <p class="notice">OPENED_RECORDED=true<br>MESSAGE_SENT=false</p>
+  <p>A abertura não confirma envio. Confirme o envio somente depois de enviar manualmente pelo WhatsApp Business.</p>
+  ${renderConfirmationActions(csrfToken, preparation)}`,
 );
 
 const renderResponse = (csrfToken: string, preparation: ActivePreparation) => page(
@@ -428,7 +435,7 @@ export function startOperatorTestConsole(environment: NodeJS.ProcessEnv = proces
 
       if (url.pathname === '/open') {
         await apiRequest(config, `/operator-test-preparations/${preparationId}/open`, {});
-        redirect(response, preparation.link);
+        sendHtml(response, 200, renderOpened(csrfToken, preparation));
         return;
       }
 

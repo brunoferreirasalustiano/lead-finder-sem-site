@@ -71,7 +71,10 @@ try {
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_run_rejection_reasons (run_id, reason, count)
       VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'DUPLICATE', 1)`),
-    /foreign key|violates foreign key/i,
+    (error: unknown) => {
+      const cause = typeof error === 'object' && error !== null && 'cause' in error ? String(error.cause) : '';
+      return /foreign key|violates foreign key/i.test(`${String(error)}\n${cause}`);
+    },
   );
   await assert.rejects(
     db.execute(sql`INSERT INTO public.prospecting_runs (execution_fingerprint, campaign_key, city, found, approved,

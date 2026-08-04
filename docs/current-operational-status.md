@@ -24,7 +24,7 @@ A baseline de runtime contém:
 - EMAIL fail-closed enquanto não existe consumidor local restrito;
 - vínculo composto entre autorização e revogação;
 - normalização controlada do `pgcrypto` para o schema `extensions`;
-- readiness exigindo a migration `0026_narrow_contact_resolution_hardening`.
+- readiness exigindo a migration `0027_prospecting_city_metrics`.
 
 Isso não autoriza deploy, DDL hospedado, alteração de roles ou credenciais hospedadas, habilitação de provider, uso de dados reais ou contato real. O ambiente de homologação ainda precisa ser reconciliado e atualizado de forma controlada.
 
@@ -39,7 +39,7 @@ Estados atuais:
 - `KNOWN_P0_OPEN=0`;
 - `KNOWN_P1_OPEN=0`;
 - `HOSTED_BASELINE_PARTIALLY_VERIFIED=true`;
-- `HOSTED_MIGRATIONS_0021_TO_0026_PENDING=true`;
+- `HOSTED_MIGRATIONS_0021_TO_0027_PENDING=true`;
 - `LEAD_FINDER_API_RUNTIME_ROLE_PENDING=true`;
 - `LEAD_FINDER_CONTACT_RESOLVER_RUNTIME_ROLE_PENDING=true`;
 - `RENDER_LIVE_SHA_NOT_REVALIDATED=true`;
@@ -84,7 +84,7 @@ Regras obrigatórias:
 - não reaplicar `0019` ou `0020`;
 - não inserir versões artificialmente em nenhum registry;
 - validar a paridade dos objetos e ACLs importados antes de avançar;
-- aplicar `0021` a `0026` somente em ordem, após preflight completo;
+- aplicar `0021` a `0027` somente em ordem, após preflight completo;
 - interromper diante de qualquer divergência de schema, grants, RLS, trigger, função, extensão ou registry;
 - validar cada migration imediatamente após a aplicação;
 - preservar backup, rollback e evidência do estado anterior.
@@ -98,7 +98,8 @@ A sequência hospedada pendente deve ser tratada como uma unidade ordenada:
 3. `0023_reference_only_campaign_payloads`;
 4. `0024_crm_idempotency_safe_results`;
 5. `0025_narrow_contact_resolution`;
-6. `0026_narrow_contact_resolution_hardening`.
+6. `0026_narrow_contact_resolution_hardening`;
+7. `0027_prospecting_city_metrics`.
 
 Os identificadores acima são os basenames exatos registrados pelo migration runner.
 
@@ -106,7 +107,8 @@ Funções dos gates finais:
 
 - `0024` protege resultados persistentes de idempotência CRM;
 - `0025` adiciona resolução estreita, fingerprints opacos, revogações, locks e `resolve_narrow_contact`;
-- `0026` normaliza `pgcrypto`, vincula revogações à tupla exata de autorização e passa a ser a migration mínima exigida pelo readiness da aplicação.
+- `0026` normaliza `pgcrypto` e vincula revogações à tupla exata de autorização;
+- `0027` persiste métricas e estado de prospecção por cidade e passa a ser a migration mínima exigida pelo readiness da aplicação.
 
 A migration `0026` faz preflight de revogações históricas e falha fechado caso encontre uma tupla incompatível. Esse resultado exige reconciliação controlada; nunca deve ser contornado apagando histórico ou reduzindo constraints.
 
@@ -175,7 +177,7 @@ Antes de qualquer escrita hospedada, comprovar:
 2. CI e smoke verdes no SHA/árvore de código alvo;
 3. backup e procedimento de restore;
 4. registries de migration reconciliados;
-5. matriz `0021–0026` com dependências, preflight, pós-validação e rollback;
+5. matriz `0021–0027` com dependências, preflight, pós-validação e rollback;
 6. estado e schema efetivo do `pgcrypto`;
 7. ausência de revogações históricas com tupla incompatível;
 8. scripts das roles com testes positivos e negativos;

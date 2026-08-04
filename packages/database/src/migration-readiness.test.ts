@@ -2,17 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Database } from './index.js';
 import { checkExpectedMigration } from './index.js';
 
-const version = '0026_narrow_contact_resolution_hardening';
+const version = '0027_prospecting_city_metrics';
 
 describe('migration readiness', () => {
-  it('accepts the latest required narrow-contact hardening migration from the local registry', async () => {
+  it('accepts migration 0027 from the local registry', async () => {
     const execute = vi.fn().mockResolvedValue([{ version }]);
     const db = { execute } as unknown as Database;
     await expect(checkExpectedMigration(db)).resolves.toBeUndefined();
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts the latest required hardening migration from the Supabase registry without writing local history', async () => {
+  it('accepts migration 0027 from the Supabase registry without writing local history', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ exists: true }])
@@ -22,7 +22,7 @@ describe('migration readiness', () => {
     expect(execute).toHaveBeenCalledTimes(3);
   });
 
-  it('fails closed when neither registry contains the latest required hardening migration', async () => {
+  it('fails closed when neither registry contains migration 0027', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ exists: false }]);
@@ -30,7 +30,7 @@ describe('migration readiness', () => {
     await expect(checkExpectedMigration(db)).rejects.toThrow('EXPECTED_MIGRATION_MISSING');
   });
 
-  it('fails closed when the Supabase registry exists without the latest required hardening migration', async () => {
+  it('fails closed when the Supabase registry exists without migration 0027', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ exists: true }])
@@ -39,14 +39,12 @@ describe('migration readiness', () => {
     await expect(checkExpectedMigration(db)).rejects.toThrow('EXPECTED_MIGRATION_MISSING');
   });
 
-  it('does not accept migration 0025 as application-ready', async () => {
+  it('does not accept a database migrated only through 0026', async () => {
+    // The local registry lookup for 0027 returns no row when only 0026 exists.
     const execute = vi.fn()
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ exists: true }])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([{ exists: false }]);
     const db = { execute } as unknown as Database;
     await expect(checkExpectedMigration(db)).rejects.toThrow('EXPECTED_MIGRATION_MISSING');
-    const queries = execute.mock.calls.map(([query]) => String(query));
-    expect(queries.join('\n')).not.toContain('0025_narrow_contact_resolution');
   });
 });

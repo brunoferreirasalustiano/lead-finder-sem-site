@@ -21,6 +21,8 @@ COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /app/packages/database/dist ./packages/database/dist
+COPY --from=build --chown=node:node /app/packages/prospecting-orchestrator/package.json ./packages/prospecting-orchestrator/package.json
+COPY --from=build --chown=node:node /app/packages/prospecting-orchestrator/dist ./packages/prospecting-orchestrator/dist
 COPY --from=build --chown=node:node /app/packages/messaging/package.json ./packages/messaging/package.json
 COPY --from=build --chown=node:node /app/packages/messaging/dist ./packages/messaging/dist
 COPY --from=build --chown=node:node /app/packages/whatsapp/package.json ./packages/whatsapp/package.json
@@ -31,5 +33,5 @@ COPY --from=build --chown=node:node /app/packages/lead-scoring/package.json ./pa
 COPY --from=build --chown=node:node /app/packages/lead-scoring/dist ./packages/lead-scoring/dist
 COPY --from=build --chown=node:node /app/packages/overpass-client/package.json ./packages/overpass-client/package.json
 COPY --from=build --chown=node:node /app/packages/overpass-client/dist ./packages/overpass-client/dist
-RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f packages/lead-scoring/dist/index.js && test -f packages/overpass-client/dist/index.js && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
+RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/prospecting-orchestrator/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f packages/lead-scoring/dist/index.js && test -f packages/overpass-client/dist/index.js && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
 CMD ["node","apps/worker/dist/index.js"]

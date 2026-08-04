@@ -21,6 +21,7 @@ export * from './pilot.js';
 export * from './manual-messaging.js';
 export * from './operator-channel-test.js';
 export * from './deployment-processing.js';
+export * from './prospecting-metrics.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed
@@ -41,7 +42,7 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0026_narrow_contact_resolution_hardening'): Promise<void> {
+export async function checkExpectedMigration(db: Database, version = '0027_prospecting_city_metrics'): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version
     FROM public.schema_migrations

@@ -213,7 +213,7 @@ describe('operator test console', () => {
     }
   });
 
-  it('prepares, opens and confirms through the API while keeping phone and link local', async () => {
+  it('shows the local link before open and keeps opening and confirmation explicit', async () => {
     const preparationId = 'fbd6c2ce-7922-4f86-8a25-ffb715cad85b';
     const apiFetch = vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce((_input, init) => Promise.resolve(new Response(JSON.stringify(
@@ -254,8 +254,21 @@ describe('operator test console', () => {
       );
       expect(prepared.status).toBe(200);
       expect(prepared.body).toContain(preparationId);
-      expect(prepared.body).not.toContain(FICTIONAL_DIGITS);
-      expect(prepared.body).not.toContain('wa.me');
+      expect(prepared.body).toContain(FICTIONAL_DIGITS);
+      expect(prepared.body).toContain('wa.me');
+      const localLink = prepared.body.match(
+        /<a href="([^"]+)" target="_blank" rel="noopener noreferrer">Abrir WhatsApp manualmente<\/a>/,
+      )?.[1];
+      expect(localLink).toBeTruthy();
+      expect(isSafeWhatsAppUrl(
+        localLink ?? '',
+        approvedTemplates.operatorWhatsappTestV1.body,
+      )).toBe(true);
+      expect(prepared.body).toContain('action="/open"');
+      expect(prepared.body).toContain('Registrar que abri o WhatsApp');
+      expect(prepared.body).not.toContain('Confirmar que enviei');
+      expect(prepared.body).not.toContain('action="/confirm"');
+      expect(apiFetch).toHaveBeenCalledTimes(1);
 
       const prepareCall = apiFetch.mock.calls[0];
       expect(prepareCall?.[0]).toBe('https://api.example.com/operator-tests/whatsapp/preparations');
@@ -272,15 +285,11 @@ describe('operator test console', () => {
         'POST',
         new URLSearchParams({ csrf: csrf ?? '', preparationId }).toString(),
       );
-      expect(opened.status).toBe(303);
-      expect(opened.headers.location).toMatch(new RegExp(`^https://wa\\.me/${FICTIONAL_DIGITS}\\?text=`));
-      expect(new URL(String(opened.headers.location)).searchParams.get('text')).toBe(
-        approvedTemplates.operatorWhatsappTestV1.body,
-      );
-      expect(isSafeWhatsAppUrl(
-        String(opened.headers.location),
-        approvedTemplates.operatorWhatsappTestV1.body,
-      )).toBe(true);
+      expect(opened.status).toBe(200);
+      expect(opened.headers.location).toBeUndefined();
+      expect(opened.body).toContain('OPENED_RECORDED=true');
+      expect(opened.body).toContain('MESSAGE_SENT=false');
+      expect(opened.body).toContain('Confirmar que enviei');
       expect(apiFetch.mock.calls[1]?.[0]).toBe(
         `https://api.example.com/operator-test-preparations/${preparationId}/open`,
       );

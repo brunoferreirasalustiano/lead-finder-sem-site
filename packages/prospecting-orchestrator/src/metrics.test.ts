@@ -29,7 +29,13 @@ describe('prospecting run metrics', () => {
   });
 
   it('returns zero rates when found or approved is zero', () => {
-    const emptyRun = { ...baseMetrics, found: 0, approved: 0, rejected: 0 };
+    const emptyRun = {
+      ...baseMetrics,
+      found: 0,
+      approved: 0,
+      rejected: 0,
+      sentAcceptedByProvider: 0,
+    };
     delete emptyRun.scoreDistribution;
     expect(buildProspectingRunMetrics(emptyRun)).toMatchObject({ approvalRate: 0, sendRateAmongApproved: 0 });
     expect(buildProspectingRunMetrics({ ...baseMetrics, approved: 0, rejected: 10, sentAcceptedByProvider: 0 })).toMatchObject({ approvalRate: 0, sendRateAmongApproved: 0 });
@@ -54,5 +60,23 @@ describe('prospecting run metrics', () => {
     expect(() => buildProspectingRunMetrics({ ...baseMetrics, found: -1 })).toThrow(RangeError);
     expect(() => buildProspectingRunMetrics({ ...baseMetrics, city: '   ' })).toThrow(RangeError);
     expect(() => buildProspectingRunMetrics({ ...baseMetrics, scoreDistribution: { '0-19': 1 } })).toThrow(RangeError);
+  });
+
+  it('rejects aggregate counts that cannot describe a coherent run', () => {
+    expect(() => buildProspectingRunMetrics({
+      ...baseMetrics,
+      found: 1,
+      approved: 1,
+      rejected: 1,
+      sentAcceptedByProvider: 1,
+      scoreDistribution: { '80-100': 1 },
+    })).toThrow('approved plus rejected cannot exceed found');
+
+    expect(() => buildProspectingRunMetrics({
+      ...baseMetrics,
+      approved: 1,
+      rejected: 9,
+      sentAcceptedByProvider: 2,
+    })).toThrow('sentAcceptedByProvider cannot exceed approved');
   });
 });

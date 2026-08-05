@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [switch]$TestMode
+    [switch]$TestMode,
+    [AllowEmptyString()]
+    [string]$ExpectedHmlBindingFingerprint = $env:OPERATOR_TEST_HML_BINDING_FINGERPRINT
 )
 
 Set-StrictMode -Version Latest
@@ -8,7 +10,6 @@ $ErrorActionPreference = 'Stop'
 
 $expectedWorkingDirectory = 'C:\Users\corey\AppData\Local\Temp\lead-finder-whatsapp-final-test'
 $expectedPhoneSuffix = '4982'
-$expectedHmlBindingFingerprint = 'a28c046e1d33'
 $expectedBindingVersion = 'operator-recipient-binding-v1'
 $privateNames = @(
     'API_AUTH_TOKEN',
@@ -27,7 +28,6 @@ $environmentNames = @(
     'OPERATOR_TEST_HML_BINDING_VERSION'
 ) + $privateNames
 $originalEnvironment = @{}
-$configuredNames = New-Object 'System.Collections.Generic.List[string]'
 $failureCode = 'SESSION_FAILED'
 $stage = 'START'
 $exitCode = 0
@@ -66,12 +66,8 @@ function Set-ProcessEnvironmentValue {
         $Name,
         [EnvironmentVariableTarget]::Process
     )
-    $providerValue = (Get-Item -LiteralPath "Env:$Name" -ErrorAction SilentlyContinue).Value
-    if ($readBack -cne $Value -or $providerValue -cne $Value) {
+    if ($readBack -cne $Value) {
         Stop-Safely "${Name}_PROCESS_READBACK_FAILED"
-    }
-    if (-not $configuredNames.Contains($Name)) {
-        $null = $configuredNames.Add($Name)
     }
 }
 
@@ -118,13 +114,10 @@ function Get-SecretFormatError {
     if ($Value.Length -lt 32 -or $Value.Length -gt 512) {
         return "${Name}_FORMAT_INVALID"
     }
-    if ($Value -match '[\r\n]') {
-        return "${Name}_LINE_BREAK"
-    }
-    if ($Value -match '[^\x21-\x7e]') {
+    if ($Value -match '\s' -or $Value -match '[^\x21-\x7e]') {
         return "${Name}_FORMAT_INVALID"
     }
-    if ($Value -match '(?i)(\$env:|(?:^|[\s;|&])(?:Set|Get|Invoke|Start|Stop|New|Remove|Write|Read|Test)-[A-Za-z]+|(?:^|[\s;|&])(?:Where-Object|ForEach-Object)\b)') {
+    if ($Value -match '(?i)(\$env:|(?:^|[;|&])(?:Set|Get|Invoke|Start|Stop|New|Remove|Write|Read|Test)-[A-Za-z]+|(?:^|[;|&])(?:Where-Object|ForEach-Object)\b)') {
         return "${Name}_POWERSHELL_COMMAND"
     }
     return $null
@@ -178,21 +171,30 @@ function Test-ChildEnvironmentInheritance {
         Stop-Safely 'TSX_ENV_INHERITANCE_FAILED'
     }
     $npmOutput = @(& npm exec --yes -- node -e "const names=['API_AUTH_TOKEN','OPERATOR_TEST_RECIPIENT_BINDING_KEY','OPERATOR_TEST_FINGERPRINT_KEY']; process.stdout.write(names.every((name)=>Boolean(process.env[name]))?'NPM_ENV_PRESENT=true':'NPM_ENV_PRESENT=false')" 2>&1)
-    $npmExitCode = $LASTEXITCODE
     $npmResult = $npmOutput |
         Where-Object { $_ -is [string] -and $_.Trim() -eq 'NPM_ENV_PRESENT=true' } |
         Select-Object -Last 1
-    if ($npmExitCode -ne 0 -or [string]$npmResult -ne 'NPM_ENV_PRESENT=true') {
+    if ($LASTEXITCODE -ne 0 -or [string]$npmResult -ne 'NPM_ENV_PRESENT=true') {
         Stop-Safely 'NPM_ENV_INHERITANCE_FAILED'
     }
 }
 
 try {
+    $stage = 'EXPECTED_HML_BINDING_FINGERPRINT'
+    if ($TestMode) {
+        $expectedHmlBindingFingerprint = '000000000000'
+    }
+    else {
+        if ([string]::IsNullOrWhiteSpace($ExpectedHmlBindingFingerprint) -or
+            $ExpectedHmlBindingFingerprint -notmatch '^[0-9a-fA-F]{12}$') {
+            Stop-Safely 'EXPECTED_HML_BINDING_FINGERPRINT_INVALID'
+        }
+        $expectedHmlBindingFingerprint = $ExpectedHmlBindingFingerprint.ToLowerInvariant()
+    }
+
     $stage = 'WORKING_DIRECTORY'
     $actualWorkingDirectory = Get-NormalizedPath ((Get-Location).ProviderPath)
-    $stage = 'WORKING_DIRECTORY_ACTUAL'
     $scriptDirectory = Get-NormalizedPath (Join-Path $expectedWorkingDirectory 'scripts')
-    $stage = 'WORKING_DIRECTORY_SCRIPT'
     if ((Test-ForbiddenPath $actualWorkingDirectory) -or (Test-ForbiddenPath $scriptDirectory)) {
         Stop-Safely 'FORBIDDEN_DRIVE'
     }
@@ -266,7 +268,6 @@ try {
     $stage = 'FINGERPRINT_DIAGNOSTICS'
     $fingerprints = Get-FingerprintDiagnostics
     if ($TestMode) {
-        $stage = 'TEST_CHILD_INHERITANCE'
         $metadata.OPERATOR_TEST_HML_BINDING_FINGERPRINT = [string]$fingerprints.binding
         Set-ProcessEnvironmentValue 'OPERATOR_TEST_HML_BINDING_FINGERPRINT' $metadata.OPERATOR_TEST_HML_BINDING_FINGERPRINT
     }
@@ -295,11 +296,10 @@ try {
     else {
         $stage = 'PREFLIGHT'
         $preflightOutput = @(& npm run operator:test:whatsapp:preflight 2>&1)
-        $preflightExitCode = $LASTEXITCODE
         $reportLine = $preflightOutput |
             Where-Object { $_ -is [string] -and $_.TrimStart().StartsWith('{') } |
             Select-Object -Last 1
-        if ($preflightExitCode -ne 0 -or [string]::IsNullOrEmpty($reportLine)) {
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($reportLine)) {
             Stop-Safely 'PREFLIGHT_FAILED'
         }
         try {

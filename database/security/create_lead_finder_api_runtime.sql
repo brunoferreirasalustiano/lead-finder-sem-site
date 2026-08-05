@@ -19,6 +19,12 @@ BEGIN
   LOOP
     EXECUTE format('REVOKE %I FROM lead_finder_api_runtime', parent_role.name);
   END LOOP;
+
+  -- Supavisor custom database users are managed by the postgres administrator,
+  -- while the runtime role itself remains NOINHERIT and receives no parent role.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    EXECUTE 'GRANT lead_finder_api_runtime TO postgres';
+  END IF;
 END
 $$;
 

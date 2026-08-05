@@ -197,8 +197,11 @@ Requisitos mínimos:
 - identificação clara do remetente;
 - finalidade comercial transparente;
 - opt-out simples;
-- primeiro contato sem link, PDF, imagem, preço, proposta ou tracking;
+- WhatsApp no primeiro contato sem link, PDF, imagem, preço, proposta ou tracking até autorização explícita do destinatário;
+- e-mail pode conter somente o link oficial de demonstrações quando usar `pilot-email-first-contact@v2`, com contato `BUSINESS / APPROVED` e diagnóstico individual de ausência de site oficial próprio;
 - nenhuma alegação não sustentada pelo diagnóstico aprovado.
+
+A exceção do e-mail v2 não permite URL individual de lead, encurtador, parâmetro de tracking, PDF, imagem, anexo, preço ou proposta. Qualquer outro template de primeiro contato permanece sem link.
 
 ## Etapa 9 — Decisão individual
 
@@ -255,7 +258,8 @@ Para cada ficha apresentada, um revisor deve responder “sim” a todas:
 - [ ] supressões estão limpas na consulta específica;
 - [ ] template e versão correspondem ao canal;
 - [ ] mensagem atingiu pelo menos `8/10` e nenhuma dimensão ficou em zero;
-- [ ] mensagem não contém link, PDF, imagem, preço, proposta ou tracking no primeiro contato;
+- [ ] WhatsApp não contém link, PDF, imagem, preço, proposta ou tracking no primeiro contato;
+- [ ] e-mail com link usa exclusivamente `pilot-email-first-contact@v2` e o URL oficial de demonstrações, sem tracking, anexo, preço ou proposta;
 - [ ] aprovação não foi registrada como envio;
 - [ ] ficha contém somente os dados necessários;
 - [ ] gate global #117 continua respeitado.

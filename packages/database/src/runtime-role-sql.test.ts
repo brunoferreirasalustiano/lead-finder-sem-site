@@ -5,6 +5,10 @@ const createSql = readFileSync(
   new URL('../../../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
 );
+const hmlSupplementSql = readFileSync(
+  new URL('../../../database/security/create_lead_finder_api_runtime_hml.sql', import.meta.url),
+  'utf8',
+);
 const rollbackSql = readFileSync(
   new URL('../../../database/security/rollback_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
@@ -18,18 +22,22 @@ const whatsappRuntimeFunctions = [
 ] as const;
 
 describe('least-privilege runtime SQL replay contract', () => {
-  it('restores every HML WhatsApp function grant after the blanket function revoke', () => {
+  it('keeps HML WhatsApp grants out of the generic role and restores them explicitly', () => {
     const blanketRevokePosition = createSql.indexOf(
       'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM lead_finder_api_runtime;',
     );
     expect(blanketRevokePosition).toBeGreaterThanOrEqual(0);
 
     for (const signature of whatsappRuntimeFunctions) {
-      expect(createSql.indexOf(signature)).toBeGreaterThan(blanketRevokePosition);
+      expect(createSql).not.toContain(signature);
+      expect(hmlSupplementSql).toContain(signature);
     }
 
-    expect(createSql).not.toContain('pilot_manual_whatsapp_cloud_send_attempts');
-    expect(createSql).not.toContain('pilot_manual_whatsapp_cloud_send_events');
+    expect(hmlSupplementSql).toContain(
+      "RAISE EXCEPTION 'lead_finder_api_runtime must be provisioned before the HML supplement'",
+    );
+    expect(hmlSupplementSql).not.toContain('pilot_manual_whatsapp_cloud_send_attempts');
+    expect(hmlSupplementSql).not.toContain('pilot_manual_whatsapp_cloud_send_events');
   });
 
   it('keeps the runtime role non-inheriting while allowing postgres to administer it', () => {

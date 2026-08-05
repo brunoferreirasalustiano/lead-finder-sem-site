@@ -19,7 +19,11 @@ export type OperationalPrincipal = Readonly<{
   id: string;
   type: 'OPERATOR';
   permissions: ReadonlySet<Permission>;
-  authenticationSource: 'BEARER_TOKEN' | 'HML_SMOKE_BEARER_TOKEN' | 'HML_OPERATOR_BEARER_TOKEN';
+  authenticationSource:
+    | 'BEARER_TOKEN'
+    | 'HML_SMOKE_BEARER_TOKEN'
+    | 'HML_OPERATOR_BEARER_TOKEN'
+    | 'HML_METRICS_BEARER_TOKEN';
 }>;
 
 declare module 'fastify' {
@@ -111,7 +115,7 @@ export const routePolicies: readonly RoutePolicy[] = [
 const policiesByRoute = new Map(routePolicies.map((item) => [`${item.method} ${item.path}`, item.permission]));
 if (policiesByRoute.size !== routePolicies.length) throw new Error('Duplicate API route authorization policy');
 
-type TemporaryAuthentication = Readonly<{
+export type TemporaryAuthentication = Readonly<{
   tokenHash: string;
   expiresAt: Date;
   principalId: string;
@@ -125,6 +129,7 @@ export type AuthenticationOptions = Readonly<{
   principalPermissions?: readonly Permission[];
   temporary?: TemporaryAuthentication;
   operatorTemporary?: TemporaryAuthentication;
+  metricsTemporary?: TemporaryAuthentication;
   authenticate?: (request: FastifyRequest) => OperationalPrincipal | undefined | Promise<OperationalPrincipal | undefined>;
 }>;
 
@@ -167,6 +172,16 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
       authenticationSource: 'HML_OPERATOR_BEARER_TOKEN' as const,
     };
   }
+  const metricsTemporary = options.metricsTemporary;
+  if (metricsTemporary && metricsTemporary.environment === 'homologation'
+    && metricsTemporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, metricsTemporary.tokenHash)) {
+    return {
+      id: metricsTemporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(metricsTemporary.principalPermissions),
+      authenticationSource: 'HML_METRICS_BEARER_TOKEN' as const,
+    };
+  }
   return undefined;
 };
 
@@ -205,7 +220,7 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
   const failedTemporaryAuthentication = new Map<string, { count: number; resetAt: number }>();
   const temporaryRateLimit = (request: FastifyRequest) => {
     const now = Date.now();
-    const activeTemporary = [options.temporary, options.operatorTemporary]
+    const activeTemporary = [options.temporary, options.operatorTemporary, options.metricsTemporary]
       .find((candidate) => candidate && candidate.expiresAt.getTime() > now);
     if (!activeTemporary || activeTemporary.expiresAt.getTime() <= Date.now()) return false;
     const key = request.ip || 'unknown';
@@ -248,6 +263,9 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     }
     if (principal.authenticationSource === 'HML_OPERATOR_BEARER_TOKEN') {
       request.log.info({ event: 'hml_operator_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_operator_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_METRICS_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_metrics_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_metrics_authentication_accepted');
     }
 
     const requiredPermission = policiesByRoute.get(routeKey);

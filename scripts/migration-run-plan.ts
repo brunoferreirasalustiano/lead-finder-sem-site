@@ -1,4 +1,4 @@
-export type MigrationRegistrySource = 'LOCAL' | 'IMPORTED' | 'PENDING';
+import type { MigrationSource } from './migration-registry-plan.js';
 
 export function parseMigrationOnlyVersion(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
@@ -18,7 +18,7 @@ export function assertKnownMigrationOnlyVersion(
 
 export function buildMigrationRunPlan(
   versions: readonly string[],
-  sourceFor: (version: string) => MigrationRegistrySource,
+  sourceFor: (version: string) => MigrationSource,
   onlyVersion?: string,
 ): string[] {
   if (!onlyVersion) return [...versions];

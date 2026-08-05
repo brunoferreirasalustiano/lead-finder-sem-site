@@ -10,10 +10,10 @@ export type HmlMetricsAuthEnvironment = Readonly<Record<string, string | undefin
 export type HmlMetricsAuthConflicts = Readonly<{
   deploymentEnvironment: 'development' | 'homologation' | 'production';
   apiAuthToken: string;
-  smokeTokenHash?: string;
-  operatorTokenHash?: string;
-  smokePrincipalId?: string;
-  operatorPrincipalId?: string;
+  smokeTokenHash: string | undefined;
+  operatorTokenHash: string | undefined;
+  smokePrincipalId: string | undefined;
+  operatorPrincipalId: string | undefined;
   now?: Date;
 }>;
 

@@ -11,6 +11,31 @@ DROP POLICY IF EXISTS lead_finder_api_runtime_operator_preparations_select
 DROP POLICY IF EXISTS lead_finder_api_runtime_schema_migrations_select
   ON public.schema_migrations;
 
+DROP POLICY IF EXISTS prospecting_runs_runtime_policy
+  ON public.prospecting_runs;
+DROP POLICY IF EXISTS prospecting_reasons_runtime_policy
+  ON public.prospecting_run_rejection_reasons;
+DROP POLICY IF EXISTS prospecting_state_runtime_policy
+  ON public.prospecting_city_state;
+DROP POLICY IF EXISTS prospecting_transitions_runtime_policy
+  ON public.prospecting_city_transitions;
+DROP POLICY IF EXISTS prospecting_runs_runtime_select
+  ON public.prospecting_runs;
+DROP POLICY IF EXISTS prospecting_runs_runtime_insert
+  ON public.prospecting_runs;
+DROP POLICY IF EXISTS prospecting_reasons_runtime_select
+  ON public.prospecting_run_rejection_reasons;
+DROP POLICY IF EXISTS prospecting_reasons_runtime_insert
+  ON public.prospecting_run_rejection_reasons;
+DROP POLICY IF EXISTS prospecting_state_runtime_select
+  ON public.prospecting_city_state;
+DROP POLICY IF EXISTS prospecting_state_runtime_insert
+  ON public.prospecting_city_state;
+DROP POLICY IF EXISTS prospecting_state_runtime_update
+  ON public.prospecting_city_state;
+DROP POLICY IF EXISTS prospecting_transitions_runtime_select
+  ON public.prospecting_city_transitions;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lead_finder_api_runtime') THEN

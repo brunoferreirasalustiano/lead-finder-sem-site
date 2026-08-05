@@ -1,7 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises';
 import postgres from 'postgres';
 import { getMigrationSource } from './migration-registry-plan.js';
-import { buildMigrationRunPlan, parseMigrationOnlyVersion } from './migration-run-plan.js';
+import {
+  assertKnownMigrationOnlyVersion,
+  buildMigrationRunPlan,
+  parseMigrationOnlyVersion,
+} from './migration-run-plan.js';
 import { assertImportedMigrationParity, loadMigrationRegistry } from './migration-registry.js';
 import { prepareMigrationSqlForRunner } from './migration-sql.js';
 
@@ -9,10 +13,7 @@ const directory = new URL('../database/migrations/', import.meta.url);
 const allFiles = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
 const allVersions = allFiles.map((file) => file.replace(/\.sql$/, ''));
 const onlyVersion = parseMigrationOnlyVersion(process.env['MIGRATION_ONLY_VERSION']);
-
-if (onlyVersion !== undefined && !allVersions.includes(onlyVersion)) {
-  throw new Error(`MIGRATION_ONLY_VERSION_UNKNOWN:${onlyVersion}`);
-}
+assertKnownMigrationOnlyVersion(allVersions, onlyVersion);
 
 const url = process.env['DATABASE_URL'];
 if (!url) throw new Error('DATABASE_URL is required');

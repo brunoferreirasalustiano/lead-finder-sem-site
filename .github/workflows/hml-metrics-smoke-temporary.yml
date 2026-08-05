@@ -1,0 +1,100 @@
+name: HML metrics smoke temporary
+
+on:
+  push:
+    branches:
+      - temp/hml-metrics-smoke-20260805
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify metrics-only HML principal
+        shell: bash
+        env:
+          BASE_URL: https://lead-finder-api-hml.onrender.com
+          SMOKE_SEED: lfb-hml-metrics-smoke-20260805-1539
+        run: |
+          set -euo pipefail
+
+          TOKEN="$(node -e "const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(process.env.SMOKE_SEED+':bearer').digest('base64url'))")"
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+
+          request() {
+            local name="$1"
+            shift
+            local status
+            status="$(curl --silent --show-error --max-time 30 --output "$workdir/$name.json" --write-out '%{http_code}' "$@")"
+            printf '%s' "$status" > "$workdir/$name.status"
+          }
+
+          request no_auth "$BASE_URL/internal/prospecting/city-metrics"
+          request wrong_token --header 'Authorization: Bearer invalid-smoke-token' "$BASE_URL/internal/prospecting/city-metrics"
+          request valid_token --header "Authorization: Bearer $TOKEN" "$BASE_URL/internal/prospecting/city-metrics"
+          request out_of_scope --header "Authorization: Bearer $TOKEN" "$BASE_URL/internal/operational-snapshot"
+
+          WORKDIR="$workdir" node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const dir = process.env.WORKDIR;
+          const readStatus = (name) => Number(fs.readFileSync(path.join(dir, `${name}.status`), 'utf8'));
+          const readJson = (name) => {
+            try { return JSON.parse(fs.readFileSync(path.join(dir, `${name}.json`), 'utf8')); }
+            catch { return null; }
+          };
+          const collectKeys = (value, output = new Set()) => {
+            if (Array.isArray(value)) for (const item of value) collectKeys(item, output);
+            else if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) {
+              output.add(key);
+              collectKeys(child, output);
+            }
+            return output;
+          };
+          const forbiddenKeys = new Set([
+            'email', 'phone', 'whatsapp', 'recipient', 'address', 'contact',
+            'message', 'payload', 'token', 'secret', 'accessToken', 'refreshToken',
+          ]);
+          const codeOf = (body) => body && typeof body === 'object' && typeof body.code === 'string' ? body.code : null;
+
+          const noAuthBody = readJson('no_auth');
+          const wrongBody = readJson('wrong_token');
+          const validBody = readJson('valid_token');
+          const scopeBody = readJson('out_of_scope');
+          const allKeys = [...collectKeys(validBody)].sort();
+          const piiLikeKeys = allKeys.filter((key) => forbiddenKeys.has(key));
+          const result = {
+            noAuth: { status: readStatus('no_auth'), code: codeOf(noAuthBody) },
+            wrongToken: { status: readStatus('wrong_token'), code: codeOf(wrongBody) },
+            validToken: {
+              status: readStatus('valid_token'),
+              topLevelKeys: validBody && typeof validBody === 'object' && !Array.isArray(validBody)
+                ? Object.keys(validBody).sort()
+                : [],
+              allKeys,
+              piiLikeKeys,
+            },
+            outOfScope: { status: readStatus('out_of_scope'), code: codeOf(scopeBody) },
+          };
+          result.ok = result.noAuth.status === 401
+            && result.wrongToken.status === 401
+            && result.validToken.status === 200
+            && result.outOfScope.status === 403
+            && result.validToken.piiLikeKeys.length === 0;
+
+          console.log(JSON.stringify(result));
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `## HML metrics authenticated smoke\n\n` +
+            `- no auth: ${result.noAuth.status} (${result.noAuth.code})\n` +
+            `- wrong token: ${result.wrongToken.status} (${result.wrongToken.code})\n` +
+            `- metrics-only token: ${result.validToken.status}\n` +
+            `- out-of-scope route: ${result.outOfScope.status} (${result.outOfScope.code})\n` +
+            `- response keys: ${result.validToken.allKeys.join(', ') || '(none)'}\n` +
+            `- PII-like keys: ${result.validToken.piiLikeKeys.length}\n` +
+            `- result: ${result.ok ? 'PASS' : 'FAIL'}\n`);
+          if (!result.ok) process.exit(1);
+          NODE

@@ -15,9 +15,9 @@ const forbiddenPermissionPrefixes = [
 ] as const;
 
 describe('HML metrics principal permission contract', () => {
-  it('contains exactly one read-only metrics permission', () => {
+  it('contains exactly one immutable read-only metrics permission', () => {
     expect(hmlMetricsAuthPermissions).toEqual(['prospecting:metrics:read']);
-    expect(Object.isFrozen(hmlMetricsAuthPermissions)).toBe(false);
+    expect(Object.isFrozen(hmlMetricsAuthPermissions)).toBe(true);
     expect(hmlMetricsAuthPermissions).toHaveLength(1);
   });
 

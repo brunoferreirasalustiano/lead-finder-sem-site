@@ -80,7 +80,7 @@ export async function insertLeads(
     normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
   }));
   if (values.length === 0) return 0;
-  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id, status: leads.status }))
+  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
     .length;
 }
 export interface LeadFilters {

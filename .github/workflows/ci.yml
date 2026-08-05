@@ -234,3 +234,54 @@ jobs:
             cat artifacts/pilot-readiness.json >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
+  postgres17-migration-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: leadfinder
+          POSTGRES_USER: leadfinder
+          POSTGRES_PASSWORD: postgres17-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U leadfinder -d leadfinder"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://leadfinder:postgres17-only@127.0.0.1:5432/leadfinder
+      PGPASSWORD: postgres17-only
+      DEPLOYMENT_PROFILE: supabase-render
+      DRY_RUN: 'true'
+      REAL_SEND_ENABLED: 'false'
+      REAL_PROVIDERS_ENABLED: 'false'
+      COLLECTION_EGRESS_ENABLED: 'false'
+      SHADOW_MODE_ENABLED: 'true'
+      INTERNAL_CRON_SECRET: synthetic-postgres17-cron-secret-0001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: Confirm PostgreSQL 17 server
+        run: |
+          set -Eeuo pipefail
+          version="$(psql "$DATABASE_URL" -Atqc 'show server_version')"
+          [[ "$version" == 17.* ]]
+          echo "PostgreSQL server: $version"
+      - name: Apply migrations twice and verify registry parity
+        run: |
+          npm run db:migrate
+          npm run db:migrate
+          npm run test:migration-registry
+      - name: Exercise atomic runtime role provisioning
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_api_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_contact_resolver_runtime.sql
+      - name: Verify narrow role and migration behavior on PostgreSQL 17
+        run: |
+          npm run test:narrow-contact-resolution
+          npm run test:integration

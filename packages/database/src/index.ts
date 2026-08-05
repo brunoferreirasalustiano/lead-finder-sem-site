@@ -43,7 +43,10 @@ export type Database = ReturnType<typeof createDatabase>['db'];
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
-export async function checkExpectedMigration(db: Database, version = '0027_prospecting_city_metrics'): Promise<void> {
+export async function checkExpectedMigration(
+  db: Database,
+  version = '0028_prospecting_runtime_deny_all_reconciliation',
+): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version
     FROM public.schema_migrations
@@ -77,7 +80,7 @@ export async function insertLeads(
     normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
   }));
   if (values.length === 0) return 0;
-  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
+  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id, status: leads.status }))
     .length;
 }
 export interface LeadFilters {

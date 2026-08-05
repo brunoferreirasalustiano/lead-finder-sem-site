@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedTemplates,
+  currentPilotEmailTemplate,
   DeterministicFakeMessagingProvider,
   emailBusinessEvidenceSchema,
+  LEAD_FINDER_DEMOS_URL,
   whatsappAuthorizationSchema,
 } from './index.js';
 describe('fake messaging provider', () => {
@@ -16,6 +18,32 @@ describe('fake messaging provider', () => {
       p.prepare(approvedTemplates.emailV1, { EMPRESA: 'Empresa', FONTE: 'site empresarial' }),
     ).toEqual(a);
     expect(JSON.stringify(a)).not.toMatch(/sent|delivered/i);
+  });
+
+  it('preserves the historical email v1 content for fingerprint replay', () => {
+    expect(approvedTemplates.emailV1.version).toBe('v1');
+    expect(approvedTemplates.emailV1.subject).toBe('Ideia de presença digital para [EMPRESA]');
+    expect(approvedTemplates.emailV1.body).not.toContain(LEAD_FINDER_DEMOS_URL);
+  });
+
+  it('prepares the current manual email v2 with the approved subject, demo link and opt-out', () => {
+    const prepared = new DeterministicFakeMessagingProvider().prepare(
+      currentPilotEmailTemplate,
+      {
+        EMPRESA: 'Studio Bela',
+        FONTE: 'perfil comercial público',
+      },
+    );
+
+    expect(prepared.templateId).toBe('pilot-email-first-contact');
+    expect(prepared.templateVersion).toBe('v2');
+    expect(prepared.subject).toBe('Posso preparar uma ideia de site para a Studio Bela?');
+    expect(prepared.body).toContain('não localizei um site oficial próprio');
+    expect(prepared.body).toContain('demonstração de site sem compromisso');
+    expect(prepared.body).toContain(LEAD_FINDER_DEMOS_URL);
+    expect(prepared.body).toContain('basta responder a este e-mail');
+    expect(`${prepared.subject}\n${prepared.body}`).not.toMatch(/\[[A-Z_]+\]/);
+    expect(prepared.body).not.toMatch(/utm_|tracking|pixel invisível/i);
   });
 
   it('keeps the operator email test fixed and unrelated to lead content', () => {

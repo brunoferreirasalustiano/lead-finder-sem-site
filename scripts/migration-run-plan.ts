@@ -7,6 +7,15 @@ export function parseMigrationOnlyVersion(raw: string | undefined): string | und
   return normalized;
 }
 
+export function assertKnownMigrationOnlyVersion(
+  versions: readonly string[],
+  onlyVersion: string | undefined,
+): void {
+  if (onlyVersion !== undefined && !versions.includes(onlyVersion)) {
+    throw new Error(`MIGRATION_ONLY_VERSION_UNKNOWN:${onlyVersion}`);
+  }
+}
+
 export function buildMigrationRunPlan(
   versions: readonly string[],
   sourceFor: (version: string) => MigrationRegistrySource,
@@ -14,10 +23,8 @@ export function buildMigrationRunPlan(
 ): string[] {
   if (!onlyVersion) return [...versions];
 
+  assertKnownMigrationOnlyVersion(versions, onlyVersion);
   const targetIndex = versions.indexOf(onlyVersion);
-  if (targetIndex < 0) {
-    throw new Error(`MIGRATION_ONLY_VERSION_UNKNOWN:${onlyVersion}`);
-  }
 
   for (const predecessor of versions.slice(0, targetIndex)) {
     if (sourceFor(predecessor) === 'PENDING') {

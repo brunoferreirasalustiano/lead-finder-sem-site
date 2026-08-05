@@ -45,7 +45,7 @@ describe('HML metrics authentication configuration', () => {
     expect(parsed?.principalPermissions).toEqual(['prospecting:metrics:read']);
   });
 
-  it('rejects non-homologation, expired, or excessive lifetimes', () => {
+  it('rejects non-homologation, expired, excessive, malformed, and impossible dates', () => {
     expect(() => parseHmlMetricsAuthentication(validEnvironment, {
       ...conflicts,
       deploymentEnvironment: 'production',
@@ -62,6 +62,13 @@ describe('HML metrics authentication configuration', () => {
       ...validEnvironment,
       HML_METRICS_AUTH_EXPIRES_AT: '2026-08-05 12:30:00',
     }, conflicts)).toThrow('ISO-8601');
+    expect(() => parseHmlMetricsAuthentication({
+      ...validEnvironment,
+      HML_METRICS_AUTH_EXPIRES_AT: '2025-02-29T00:15:00.000Z',
+    }, {
+      ...conflicts,
+      now: new Date('2025-03-01T00:00:00.000Z'),
+    })).toThrow('valid ISO-8601');
   });
 
   it('rejects malformed hashes and principal identifiers', () => {

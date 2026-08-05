@@ -1,5 +1,4 @@
 import { createHmac } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import postgres from 'postgres';
 import { z } from 'zod';
 
@@ -16,6 +15,13 @@ class ReconciliationError extends Error {
     super(code);
   }
 }
+
+const readStdin = async () => {
+  process.stdin.setEncoding('utf8');
+  let value = '';
+  for await (const chunk of process.stdin) value += chunk;
+  return value;
+};
 
 const canonicalFingerprint = (
   key: string,
@@ -36,7 +42,7 @@ async function main() {
     throw new ReconciliationError('EMAIL_SUPPRESSION_FINGERPRINT_KEY_INVALID');
   }
 
-  const rawInput = await readFile(0, 'utf8');
+  const rawInput = await readStdin();
   let decoded: unknown;
   try {
     decoded = JSON.parse(rawInput);

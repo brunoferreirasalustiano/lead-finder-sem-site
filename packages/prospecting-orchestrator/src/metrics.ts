@@ -72,6 +72,12 @@ export function buildProspectingRunMetrics(input: ProspectingRunMetricsInput): P
     'inactiveOrUncertain', 'ambiguousResults',
   ] as const;
   for (const field of countFields) assertNonNegativeInteger(field, input[field]);
+  if (input.approved + input.rejected > input.found) {
+    throw new RangeError('approved plus rejected cannot exceed found');
+  }
+  if (input.sentAcceptedByProvider > input.approved) {
+    throw new RangeError('sentAcceptedByProvider cannot exceed approved');
+  }
   const city = assertCity(input.city);
   const scoreDistribution = normalizeScoreDistribution(input.scoreDistribution, input.found);
 

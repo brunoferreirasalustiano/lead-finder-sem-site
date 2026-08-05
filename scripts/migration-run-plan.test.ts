@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertKnownMigrationOnlyVersion,
   buildMigrationRunPlan,
   parseMigrationOnlyVersion,
   type MigrationRegistrySource,
@@ -26,6 +27,23 @@ describe('targeted migration environment parsing', () => {
   it('trims a nonblank exact target', () => {
     expect(parseMigrationOnlyVersion(' 0021_operator_channel_test '))
       .toBe('0021_operator_channel_test');
+  });
+});
+
+describe('targeted migration preflight', () => {
+  it('accepts an absent or exact known target', () => {
+    expect(() => assertKnownMigrationOnlyVersion(versions, undefined)).not.toThrow();
+    expect(() => assertKnownMigrationOnlyVersion(
+      versions,
+      '0022_persisted_pii_audit_json',
+    )).not.toThrow();
+  });
+
+  it('rejects an unknown target before database access', () => {
+    expect(() => assertKnownMigrationOnlyVersion(
+      versions,
+      '0022_wrong_name',
+    )).toThrow('MIGRATION_ONLY_VERSION_UNKNOWN:0022_wrong_name');
   });
 });
 
@@ -68,7 +86,7 @@ describe('targeted migration run plan', () => {
     )).toThrow('MIGRATION_ONLY_PREDECESSOR_PENDING:0021_operator_channel_test');
   });
 
-  it('rejects an unknown exact migration identifier before execution', () => {
+  it('also rejects an unknown exact migration identifier', () => {
     expect(() => buildMigrationRunPlan(
       versions,
       sourceMap({}),

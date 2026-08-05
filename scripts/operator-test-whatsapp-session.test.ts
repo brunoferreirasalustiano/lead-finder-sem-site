@@ -22,6 +22,14 @@ describe('operator WhatsApp session launcher', () => {
     expect(sessionScript).toContain('Read-Host -Prompt "$Name (entrada oculta)" -AsSecureString');
   });
 
+  it('requires a sanitized runtime HML binding fingerprint without hard-coding one', () => {
+    expect(sessionScript).toContain('[string]$ExpectedHmlBindingFingerprint');
+    expect(sessionScript).toContain('$env:OPERATOR_TEST_HML_BINDING_FINGERPRINT');
+    expect(sessionScript).toContain('EXPECTED_HML_BINDING_FINGERPRINT_INVALID');
+    expect(sessionScript).toContain("'^[0-9a-fA-F]{12}$'");
+    expect(sessionScript).not.toContain('a28c046e1d33');
+  });
+
   it('checks child inheritance and starts the console only after a passing preflight', () => {
     expect(sessionScript).toContain('CHILD_ENV_PRESENT=true');
     expect(sessionScript).toContain('TSX_ENV_PRESENT=true');

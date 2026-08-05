@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { MigrationSource } from './migration-registry-plan.js';
 import {
   assertKnownMigrationOnlyVersion,
   buildMigrationRunPlan,
   parseMigrationOnlyVersion,
-  type MigrationRegistrySource,
 } from './migration-run-plan.js';
 
 const versions = [
@@ -12,8 +12,8 @@ const versions = [
   '0023_reference_only_campaign_payloads',
 ];
 
-const sourceMap = (entries: Record<string, MigrationRegistrySource>) =>
-  (version: string): MigrationRegistrySource => entries[version] ?? 'PENDING';
+const sourceMap = (entries: Record<string, MigrationSource>) =>
+  (version: string): MigrationSource => entries[version] ?? 'PENDING';
 
 describe('targeted migration environment parsing', () => {
   it('preserves full local and CI behavior only when the variable is absent', () => {
@@ -52,7 +52,7 @@ describe('targeted migration run plan', () => {
     expect(buildMigrationRunPlan(versions, sourceMap({}))).toEqual(versions);
   });
 
-  it('selects the target after every predecessor is recorded', () => {
+  it('selects the target after every predecessor is recorded locally', () => {
     const plan = buildMigrationRunPlan(
       versions,
       sourceMap({
@@ -67,16 +67,19 @@ describe('targeted migration run plan', () => {
     ]);
   });
 
-  it('accepts imported predecessors', () => {
-    expect(buildMigrationRunPlan(
-      versions,
-      sourceMap({ '0021_operator_channel_test': 'IMPORTED' }),
-      '0022_persisted_pii_audit_json',
-    )).toEqual([
-      '0021_operator_channel_test',
-      '0022_persisted_pii_audit_json',
-    ]);
-  });
+  it.each(['SUPABASE', 'BOTH'] as const)(
+    'accepts a predecessor recorded with the real %s registry source',
+    (source) => {
+      expect(buildMigrationRunPlan(
+        versions,
+        sourceMap({ '0021_operator_channel_test': source }),
+        '0022_persisted_pii_audit_json',
+      )).toEqual([
+        '0021_operator_channel_test',
+        '0022_persisted_pii_audit_json',
+      ]);
+    },
+  );
 
   it('fails closed when a predecessor remains pending', () => {
     expect(() => buildMigrationRunPlan(

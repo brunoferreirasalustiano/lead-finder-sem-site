@@ -3,6 +3,7 @@ import { assertApiKillSwitchReleased, hmlOperatorAuthPermissions, hmlSmokeAuthPe
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
+import { parseHmlMetricsAuthentication } from './hml-metrics-auth.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { createGmailApiManualEmailConsumer, createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
 import { createWhatsAppCloudApiClient } from '@lead-finder/whatsapp';
@@ -22,6 +23,20 @@ const config = (() => {
     return abortStartup(error instanceof Error && error.message === 'PILOT_KILL_SWITCH_ENGAGED'
       ? 'PILOT_KILL_SWITCH_ENGAGED'
       : 'INVALID_CONFIGURATION');
+  }
+})();
+const metricsTemporary = (() => {
+  try {
+    return parseHmlMetricsAuthentication(process.env, {
+      deploymentEnvironment: config.DEPLOYMENT_ENVIRONMENT,
+      apiAuthToken: config.API_AUTH_TOKEN,
+      smokeTokenHash: config.HML_SMOKE_AUTH_TOKEN_HASH,
+      operatorTokenHash: config.HML_OPERATOR_AUTH_TOKEN_HASH,
+      smokePrincipalId: config.HML_SMOKE_AUTH_PRINCIPAL_ID,
+      operatorPrincipalId: config.HML_OPERATOR_AUTH_PRINCIPAL_ID,
+    });
+  } catch {
+    return abortStartup('INVALID_CONFIGURATION');
   }
 })();
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
@@ -76,6 +91,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
         environment: 'homologation' as const,
       },
     } : {}),
+    ...(metricsTemporary ? { metricsTemporary } : {}),
   },
   prospectingMetricsEnabled: config.PROSPECTING_METRICS_ENABLED,
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),

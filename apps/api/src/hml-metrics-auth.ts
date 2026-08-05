@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import type { TemporaryAuthentication } from './auth.js';
 
 export const hmlMetricsAuthPermissions = Object.freeze([
@@ -19,7 +20,7 @@ export type HmlMetricsAuthConflicts = Readonly<{
 
 const optionalValue = (value: string | undefined) => value === undefined || value === '' ? undefined : value;
 const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
-const isoWithOffset = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const expiresAtSchema = z.string().datetime({ offset: true }).transform((value) => new Date(value));
 const maximumLifetimeMs = 60 * 60 * 1_000;
 
 export function parseHmlMetricsAuthentication(
@@ -49,13 +50,14 @@ export function parseHmlMetricsAuthentication(
   if (!tokenHash || !/^[0-9a-f]{64}$/i.test(tokenHash)) {
     throw new Error('HML_METRICS_AUTH_TOKEN_HASH must be a SHA-256 hex digest');
   }
-  if (!expiresAtValue || !isoWithOffset.test(expiresAtValue)) {
+  if (!expiresAtValue) {
     throw new Error('HML_METRICS_AUTH_EXPIRES_AT must be an ISO-8601 timestamp with an offset');
   }
-  const expiresAt = new Date(expiresAtValue);
-  if (!Number.isFinite(expiresAt.getTime())) {
-    throw new Error('HML_METRICS_AUTH_EXPIRES_AT must be a valid timestamp');
+  const parsedExpiry = expiresAtSchema.safeParse(expiresAtValue);
+  if (!parsedExpiry.success) {
+    throw new Error('HML_METRICS_AUTH_EXPIRES_AT must be a valid ISO-8601 timestamp with an offset');
   }
+  const expiresAt = parsedExpiry.data;
   const now = conflicts.now ?? new Date();
   if (expiresAt.getTime() <= now.getTime()) {
     throw new Error('HML_METRICS_AUTH_EXPIRES_AT must be in the future');

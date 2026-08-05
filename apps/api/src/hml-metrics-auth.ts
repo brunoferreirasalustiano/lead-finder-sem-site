@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { TemporaryAuthentication } from './auth.js';
 
-export const hmlMetricsAuthPermissions = [
+export const hmlMetricsAuthPermissions = Object.freeze([
   'prospecting:metrics:read',
-] as const satisfies TemporaryAuthentication['principalPermissions'];
+] as const) satisfies TemporaryAuthentication['principalPermissions'];
 
 export type HmlMetricsAuthEnvironment = Readonly<Record<string, string | undefined>>;
 

@@ -37,6 +37,8 @@ DROP POLICY IF EXISTS prospecting_transitions_runtime_select
   ON public.prospecting_city_transitions;
 
 DO $$
+DECLARE
+  member_role record;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lead_finder_api_runtime') THEN
     REVOKE ALL ON SCHEMA public FROM lead_finder_api_runtime;
@@ -57,6 +59,16 @@ BEGIN
       'REVOKE CONNECT ON DATABASE %I FROM lead_finder_api_runtime',
       current_database()
     );
+
+    FOR member_role IN
+      SELECT member.rolname AS name
+      FROM pg_auth_members membership
+      JOIN pg_roles granted_role ON granted_role.oid = membership.roleid
+      JOIN pg_roles member ON member.oid = membership.member
+      WHERE granted_role.rolname = 'lead_finder_api_runtime'
+    LOOP
+      EXECUTE format('REVOKE lead_finder_api_runtime FROM %I', member_role.name);
+    END LOOP;
   END IF;
 END
 $$;

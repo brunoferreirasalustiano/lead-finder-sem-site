@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
+export const LEAD_FINDER_DEMOS_URL =
+  'https://brunoferreirasalustiano.github.io/lead-finder-demos/' as const;
+
 export const messagingChannelSchema = z.enum(['WHATSAPP', 'EMAIL']);
 export const whatsappAuthorizationOriginSchema = z.enum([
   'DIRECT_OPT_IN',
@@ -143,4 +146,14 @@ export const approvedTemplates = {
     subject: 'Ideia de presença digital para [EMPRESA]',
     body: 'Olá, tudo bem? Meu nome é Bruno F. Salustiano, fundador da Lead Finder Brasil. Encontrei o contato comercial da [EMPRESA] em [FONTE] e estou entrando em contato individualmente porque trabalho com criação de páginas e soluções digitais para negócios locais. Preparei uma ideia de demonstração relacionada ao segmento de vocês. Posso enviar para uma avaliação, sem compromisso? Caso prefira não receber novos contatos, basta responder a este e-mail informando isso e farei o bloqueio imediato.',
   }),
+  emailV2: templateSchema.parse({
+    id: 'pilot-email-first-contact',
+    version: 'v2',
+    channel: 'EMAIL',
+    approved: true,
+    subject: 'Posso preparar uma ideia de site para a [EMPRESA]?',
+    body: `Olá, tudo bem? Meu nome é Bruno F. Salustiano, fundador da Lead Finder Brasil. Encontrei o e-mail comercial da [EMPRESA] em [FONTE]. Ao revisar a presença digital do negócio, não localizei um site oficial próprio. Posso preparar uma demonstração de site sem compromisso? Estes são exemplos de sites e demonstrações da Lead Finder Brasil: ${LEAD_FINDER_DEMOS_URL} Caso prefira não receber novos contatos, basta responder a este e-mail e farei o bloqueio imediato.`,
+  }),
 } as const;
+
+export const currentPilotEmailTemplate = approvedTemplates.emailV2;

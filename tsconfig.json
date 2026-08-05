@@ -8,8 +8,9 @@
     { "path": "packages/ai" },
     { "path": "packages/lead-scoring" },
     { "path": "packages/overpass-client" },
-    { "path": "packages/database" },
     { "path": "packages/batch-processor" },
+    { "path": "packages/prospecting-orchestrator" },
+    { "path": "packages/database" },
     { "path": "apps/api" },
     { "path": "apps/worker" }
   ]

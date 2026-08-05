@@ -10,6 +10,7 @@ export const apiAuthPermissions = [
   'campaigns:read',
   'campaigns:write',
   'operations:read',
+  'prospecting:metrics:read',
   'collection:execute',
   'pilot:read',
   'pilot:write',
@@ -138,6 +139,7 @@ const apiSchema = commonSchema.extend({
   REAL_PROVIDER_CONFIGURED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  PROSPECTING_METRICS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_WHATSAPP_E164: optionalEnvironmentString(
     z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'OPERATOR_TEST_WHATSAPP_E164 must use E.164 format'),
   ),

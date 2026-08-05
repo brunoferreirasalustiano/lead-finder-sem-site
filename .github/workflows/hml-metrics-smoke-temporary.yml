@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - temp/hml-metrics-smoke-20260805
+  pull_request:
+    branches:
+      - hml/render-supabase-plan-b
 
 permissions:
   contents: read

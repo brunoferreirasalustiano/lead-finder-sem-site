@@ -17,7 +17,7 @@ const conflicts = {
   smokeTokenHash: 'b'.repeat(64),
   operatorTokenHash: 'c'.repeat(64),
   smokePrincipalId: 'hml-smoke-test',
-  operatorPrincipalId: 'hml-internal-operator',
+  operatorPrincipalId: 'hml-metrics-existing-operator',
   now,
 };
 

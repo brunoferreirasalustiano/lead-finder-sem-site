@@ -58,11 +58,7 @@ GRANT EXECUTE ON FUNCTION
   public.create_operator_channel_test_preparation(char, char, char, char, char, char),
   public.append_operator_channel_test_event(uuid, text, text, char, char, char),
   public.create_operator_email_test_attempt(char, char, char, char, char, char),
-  public.append_operator_email_test_event(uuid, text, char, char, char),
-  public.create_manual_whatsapp_cloud_send_attempt(uuid, uuid, uuid, uuid, text, text, char, char, char, char, char),
-  public.append_manual_whatsapp_cloud_send_event(uuid, text, char, text),
-  public.append_manual_whatsapp_cloud_send_event(uuid, text, char, text, smallint, text, text, text, text),
-  public.get_manual_whatsapp_cloud_send_scope_status(text)
+  public.append_operator_email_test_event(uuid, text, char, char, char)
 TO lead_finder_api_runtime;
 
 -- Prospecting access is installed here, after migrations have established the

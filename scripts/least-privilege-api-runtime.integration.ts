@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import postgres from 'postgres';
 import {
+  advanceProspectingCityState,
   checkExpectedMigration,
   confirmOperatorTestResult,
   createDatabase,
+  createProspectingRun,
   getReadiness,
   prepareOperatorWhatsAppTest,
   recordOperatorTestOpen,
@@ -32,6 +34,11 @@ const rollbackSql = await readFile(
   'utf8',
 );
 const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
+const expectSqlState = (expectedCode: string) => (error: unknown) => {
+  const candidate = error as { code?: unknown };
+  assert.equal(candidate.code, expectedCode);
+  return true;
+};
 const evidencePath = new URL('../artifacts/pilot-readiness.json', import.meta.url);
 const writeFailureEvidence = async (stage: string, error: unknown) => {
   const candidate = error as { name?: unknown; code?: unknown };
@@ -69,6 +76,22 @@ const input = () => ({
   templateVersion: 'v1',
   idempotencyKey: randomUUID(),
 });
+const prospectingCampaignKey = `runtime-prospecting-${process.pid}-${Date.now()}`;
+const prospectingMetrics = {
+  city: 'Campinas' as const,
+  found: 10,
+  approved: 1,
+  rejected: 9,
+  sentAcceptedByProvider: 0,
+  immediateBounces: 0,
+  optOuts: 0,
+  replies: 0,
+  complaints: 0,
+  blocked: 0,
+  duplicatesAvoided: 0,
+  rejectionReasons: { OFFICIAL_SITE: 5, BUSINESS_EMAIL_NOT_FOUND: 4 },
+  scoreDistribution: { score0To59: 10, score60To79: 0, score80To99: 0, score100: 0 },
+};
 
 let restrictedRaw: ReturnType<typeof postgres> | undefined;
 let closeRestricted: (() => Promise<void>) | undefined;
@@ -167,21 +190,58 @@ try {
         OR has_table_privilege(${roleName}, table_record.oid, 'TRIGGER')
       )
     ORDER BY table_record.relname`;
-  assert.equal(tablePrivileges.length, 3);
+  assert.equal(tablePrivileges.length, 7);
   assert.deepEqual(tablePrivileges.map((row) => row.name), [
     'operator_channel_test_events',
     'operator_channel_test_preparations',
+    'prospecting_city_state',
+    'prospecting_city_transitions',
+    'prospecting_run_rejection_reasons',
+    'prospecting_runs',
     'schema_migrations',
   ]);
+  const expectedTablePrivileges = new Map([
+    ['operator_channel_test_events', { canSelect: true, canInsert: false, canUpdate: false }],
+    ['operator_channel_test_preparations', { canSelect: true, canInsert: false, canUpdate: false }],
+    ['prospecting_city_state', { canSelect: true, canInsert: true, canUpdate: false }],
+    ['prospecting_city_transitions', { canSelect: true, canInsert: false, canUpdate: false }],
+    ['prospecting_run_rejection_reasons', { canSelect: true, canInsert: true, canUpdate: false }],
+    ['prospecting_runs', { canSelect: true, canInsert: true, canUpdate: false }],
+    ['schema_migrations', { canSelect: true, canInsert: false, canUpdate: false }],
+  ]);
   for (const privilege of tablePrivileges) {
+    const expected = expectedTablePrivileges.get(privilege.name);
+    assert.ok(expected, `${privilege.name} must be explicitly allowlisted`);
     assert.equal(privilege.canSelect, true, `${privilege.name} must be selectable`);
-    assert.equal(privilege.canInsert, false, `${privilege.name} must reject INSERT`);
-    assert.equal(privilege.canUpdate, false, `${privilege.name} must reject UPDATE`);
+    assert.equal(privilege.canInsert, expected.canInsert, `${privilege.name} INSERT privilege mismatch`);
+    assert.equal(privilege.canUpdate, expected.canUpdate, `${privilege.name} UPDATE privilege mismatch`);
     assert.equal(privilege.canDelete, false, `${privilege.name} must reject DELETE`);
     assert.equal(privilege.canTruncate, false, `${privilege.name} must reject TRUNCATE`);
     assert.equal(privilege.canReferences, false, `${privilege.name} must reject REFERENCES`);
     assert.equal(privilege.canTrigger, false, `${privilege.name} must reject TRIGGER`);
   }
+
+  stage = 'VERIFY_PROSPECTING_COLUMN_ACL';
+  const stateColumnPrivileges = await owner<{
+    campaignKey: boolean;
+    currentCity: boolean;
+    consecutiveLowYieldRuns: boolean;
+    version: boolean;
+    updatedAt: boolean;
+  }[]>`
+    SELECT
+      has_column_privilege(${roleName}, 'public.prospecting_city_state', 'campaign_key', 'UPDATE') AS "campaignKey",
+      has_column_privilege(${roleName}, 'public.prospecting_city_state', 'current_city', 'UPDATE') AS "currentCity",
+      has_column_privilege(${roleName}, 'public.prospecting_city_state', 'consecutive_low_yield_runs', 'UPDATE') AS "consecutiveLowYieldRuns",
+      has_column_privilege(${roleName}, 'public.prospecting_city_state', 'version', 'UPDATE') AS version,
+      has_column_privilege(${roleName}, 'public.prospecting_city_state', 'updated_at', 'UPDATE') AS "updatedAt"`;
+  assert.deepEqual(stateColumnPrivileges[0], {
+    campaignKey: false,
+    currentCity: false,
+    consecutiveLowYieldRuns: true,
+    version: true,
+    updatedAt: true,
+  });
 
   stage = 'VERIFY_FUNCTION_ACL';
   const executableFunctions = await owner<{ identity: string }[]>`
@@ -192,10 +252,12 @@ try {
       AND has_function_privilege(${roleName}, procedure_record.oid, 'EXECUTE')
     ORDER BY identity`;
   assert.deepEqual(executableFunctions.map(({ identity }) => identity), [
+    'advance_prospecting_city_state(text,text,text,text,uuid,bigint)',
     'append_operator_channel_test_event(uuid,text,text,character,character,character)',
     'append_operator_email_test_event(uuid,text,character,character,character)',
     'create_operator_channel_test_preparation(character,character,character,character,character,character)',
     'create_operator_email_test_attempt(character,character,character,character,character,character)',
+    'prospecting_assert_rejection_reason_sum(uuid)',
   ]);
   const publicExecutableFunctions = await owner<{ identity: string }[]>`
     SELECT procedure_record.oid::regprocedure::text AS identity
@@ -203,10 +265,12 @@ try {
     JOIN pg_namespace namespace_record ON namespace_record.oid = procedure_record.pronamespace
     WHERE namespace_record.nspname = 'public'
       AND procedure_record.proname IN (
+        'advance_prospecting_city_state',
         'append_operator_channel_test_event',
         'append_operator_email_test_event',
         'create_operator_channel_test_preparation',
-        'create_operator_email_test_attempt'
+        'create_operator_email_test_attempt',
+        'prospecting_assert_rejection_reason_sum'
       )
       AND has_function_privilege('public', procedure_record.oid, 'EXECUTE')
     ORDER BY identity`;
@@ -223,6 +287,14 @@ try {
     'lead_finder_api_runtime_operator_events_select',
     'lead_finder_api_runtime_operator_preparations_select',
     'lead_finder_api_runtime_schema_migrations_select',
+    'prospecting_reasons_runtime_insert',
+    'prospecting_reasons_runtime_select',
+    'prospecting_runs_runtime_insert',
+    'prospecting_runs_runtime_select',
+    'prospecting_state_runtime_insert',
+    'prospecting_state_runtime_select',
+    'prospecting_state_runtime_update',
+    'prospecting_transitions_runtime_select',
   ]);
 
   stage = 'CONNECT_RESTRICTED_ROLE';
@@ -297,7 +369,54 @@ try {
       ${'d'.repeat(64)}::char(64), ${'e'.repeat(64)}::char(64), ${'f'.repeat(64)}::char(64)
     )`);
 
+  stage = 'VERIFY_PROSPECTING_FLOW';
+  const prospectingFingerprint = `${prospectingCampaignKey}-run`;
+  const prospectingRun = await createProspectingRun(restrictedDatabase.db, {
+    executionFingerprint: prospectingFingerprint,
+    campaignKey: prospectingCampaignKey,
+    metrics: prospectingMetrics,
+  });
+  assert.equal(prospectingRun.replayed, false);
+  assert.equal(prospectingRun.state.currentCity, 'Campinas');
+  const advanced = await advanceProspectingCityState(restrictedDatabase.db, {
+    campaignKey: prospectingCampaignKey,
+    fromCity: 'Campinas',
+    toCity: 'Valinhos',
+    reason: 'RUNTIME_ROLE_TEST',
+    triggeringRunId: prospectingRun.run.id,
+    expectedVersion: prospectingRun.state.version,
+  });
+  assert.equal(advanced.state.currentCity, 'Valinhos');
+  assert.equal(advanced.transition.triggeringRunId, prospectingRun.run.id);
+  const prospectingReplay = await createProspectingRun(restrictedDatabase.db, {
+    executionFingerprint: prospectingFingerprint,
+    campaignKey: prospectingCampaignKey,
+    metrics: prospectingMetrics,
+  });
+  assert.equal(prospectingReplay.replayed, true);
+  assert.equal(prospectingReplay.run.id, prospectingRun.run.id);
+  assert.equal(prospectingReplay.state.currentCity, 'Valinhos');
+
   stage = 'VERIFY_DIRECT_WRITES_DENIED';
+  await assert.rejects(
+    restrictedRaw`
+      INSERT INTO public.prospecting_city_transitions(
+        campaign_key, from_city, to_city, reason, triggering_run_id
+      ) VALUES (
+        ${prospectingCampaignKey}, 'Valinhos', 'Paulínia', 'DIRECT_WRITE', ${prospectingRun.run.id}::uuid
+      )`,
+    expectSqlState('42501'),
+  );
+  await assert.rejects(
+    restrictedRaw`
+      UPDATE public.prospecting_city_state
+      SET current_city = 'Paulínia',
+          version = version + 1,
+          updated_at = clock_timestamp()
+      WHERE campaign_key = ${prospectingCampaignKey}
+        AND current_city = 'Valinhos'`,
+    expectSqlState('42501'),
+  );
   for (const table of [
     'operator_email_test_attempts',
     'operator_email_test_events',
@@ -362,8 +481,12 @@ try {
   console.log(JSON.stringify({
     result: 'LEAST_PRIVILEGE_API_RUNTIME_ROLE_PASS',
     positiveFlow: 'PREPARED_OPENED_CONFIRMED_RESPONSE',
+    emailFunctionFlow: 'ATTEMPT_CREATED_EVENT_APPENDED',
+    prospectingFlow: 'RUN_CREATED_ADVANCED_REPLAYED',
     readinessMode: 'restricted',
     directTableWrites: 'DENIED',
+    directProspectingTransitionWrite: 'DENIED',
+    unauthorizedProspectingStateUpdate: 'DENIED',
     outboxPayloadRead: 'DENIED',
     ddl: 'DENIED',
     grantEscalation: 'NO_EFFECT',

@@ -49,42 +49,16 @@ export function createDatabase(databaseUrl: string, options: { max?: number; ssl
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
 
-type PostgresErrorLike = { code?: unknown; cause?: unknown };
-const postgresErrorCode = (error: unknown): string | undefined => {
-  const visited = new Set<object>();
-  let current: unknown = error;
-  while (current && typeof current === 'object' && !visited.has(current)) {
-    visited.add(current);
-    const candidate = current as PostgresErrorLike;
-    if (typeof candidate.code === 'string') return candidate.code;
-    current = candidate.cause;
-  }
-  return undefined;
-};
-
 export async function recordManualOpen(
   db: Database,
   preparationId: string,
   input: { idempotencyKey: string },
   auth: AuthorizationContext,
 ) {
-  try {
-    const preparations = await db.execute<{ channel: string }>(sql`
-      select channel
-      from public.pilot_manual_message_preparations
-      where id=${preparationId}::uuid
-      limit 1
-    `);
-    if (preparations[0]?.channel === 'EMAIL') {
-      return recordRestrictedManualOpen(db, preparationId, input, auth);
-    }
+  if (!auth.permissions.has('manual-messaging:open')) {
     return recordLegacyManualOpen(db, preparationId, input, auth);
-  } catch (error) {
-    if (postgresErrorCode(error) === '42501') {
-      return recordRestrictedManualOpen(db, preparationId, input, auth);
-    }
-    throw error;
   }
+  return recordRestrictedManualOpen(db, preparationId, input, auth);
 }
 
 export async function checkDatabase(db: Database): Promise<void> {

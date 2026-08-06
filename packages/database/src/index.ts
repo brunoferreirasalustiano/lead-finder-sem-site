@@ -19,6 +19,12 @@ export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
+export {
+  prepareManualMessage,
+  recordManualOpen,
+  sendPreparedManualEmail,
+  type RestrictedManualEmailDeliveryResult,
+} from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';
 export * from './deployment-processing.js';
@@ -165,7 +171,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, job.id));
+      .where(eq(collectionJobs.id, id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

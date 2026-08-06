@@ -79,7 +79,7 @@ describe('runtime email grants reconciliation', () => {
     expect(restrictedEmailMigration).toContain("p_event_type NOT IN ('DELIVERED','FAILED','AMBIGUOUS')");
     expect(restrictedEmailMigration).toContain("p_template_version <> 'v2'");
     expect(restrictedEmailMigration).toContain("event.event_type='OPENED'");
-    expect(restrictedEmailMigration).toContain('UNIQUE');
+    expect(restrictedEmailMigration).toContain('FOR UPDATE');
     expect(restrictedEmailMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+(?:TABLE\s+)?public\.pilot_manual_email/i);
     expect(restrictedEmailMigration).not.toMatch(/CREATE POLICY/i);
     expect(restrictedEmailMigration).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);

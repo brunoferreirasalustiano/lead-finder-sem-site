@@ -1,4 +1,5 @@
 import { domainToASCII } from 'node:url';
+import { z } from 'zod';
 
 export const technicalEmailStates = ['VALID', 'INVALID', 'UNCERTAIN', 'BLOCKED'] as const;
 export type TechnicalEmailState = (typeof technicalEmailStates)[number];
@@ -42,6 +43,14 @@ export const technicalEmailReasons = [
   'BLOCKED',
 ] as const;
 export type TechnicalEmailReason = (typeof technicalEmailReasons)[number];
+
+export const resolverUncertaintyReasons = [
+  'DNS_TIMEOUT',
+  'DNS_RESOLVER_ERROR',
+  'DNS_RESPONSE_MALFORMED',
+  'DNS_RESULT_UNKNOWN',
+] as const;
+export type ResolverUncertaintyReason = (typeof resolverUncertaintyReasons)[number];
 
 export type SuppressionSignal = boolean | 'UNKNOWN';
 
@@ -96,6 +105,13 @@ const MAX_RESOLVER_TIMEOUT_MS = 10_000;
 const MAX_EMAIL_LENGTH = 254;
 const MAX_DOMAIN_LENGTH = 253;
 
+const technicalEmailInputSchema = z.object({
+  email: z.unknown(),
+  domainResolution: z.unknown().optional(),
+  publicBusinessProvenance: z.unknown(),
+  suppression: z.unknown(),
+}).passthrough();
+
 const isOneOf = <T extends readonly string[]>(value: unknown, values: T): value is T[number] =>
   typeof value === 'string' && values.includes(value);
 
@@ -148,6 +164,28 @@ export function inspectEmailSyntax(value: unknown): EmailSyntaxInspection {
 }
 
 const unknownResolution: EmailDomainResolution = { domainExists: 'UNKNOWN', mx: 'UNKNOWN' };
+
+const invalidTopLevelInputResult = (): TechnicalEmailQualificationResult => ({
+  state: 'UNCERTAIN',
+  domain: null,
+  syntax: 'UNKNOWN',
+  domainExists: 'UNKNOWN',
+  mx: 'UNKNOWN',
+  publicBusinessProvenance: 'UNKNOWN',
+  blockedBy: [],
+  reason: 'INVALID_INPUT',
+});
+
+const parseTechnicalEmailInput = (input: unknown): TechnicalEmailEvaluationInput | null => {
+  const parsed = technicalEmailInputSchema.safeParse(input);
+  if (!parsed.success) return null;
+  return {
+    email: parsed.data.email,
+    domainResolution: parsed.data.domainResolution,
+    publicBusinessProvenance: parsed.data.publicBusinessProvenance,
+    suppression: parsed.data.suppression,
+  };
+};
 
 const normalizeDomainResolution = (value: unknown): { value: EmailDomainResolution; malformed: boolean } => {
   if (value === undefined) return { value: unknownResolution, malformed: false };
@@ -212,11 +250,14 @@ const classifyUncertain = (
   reason,
 });
 
-export function classifyTechnicalEmail(input: TechnicalEmailEvaluationInput, resolverIssue?: TechnicalEmailReason): TechnicalEmailQualificationResult {
-  const syntax = inspectEmailSyntax(input.email);
-  const resolutionResult = normalizeDomainResolution(input.domainResolution);
-  const provenance = normalizeProvenance(input.publicBusinessProvenance);
-  const suppressionResult = normalizeSuppression(input.suppression);
+export function classifyTechnicalEmail(input: unknown, resolverIssue?: ResolverUncertaintyReason): TechnicalEmailQualificationResult {
+  const parsedInput = parseTechnicalEmailInput(input);
+  if (parsedInput === null) return invalidTopLevelInputResult();
+
+  const syntax = inspectEmailSyntax(parsedInput.email);
+  const resolutionResult = normalizeDomainResolution(parsedInput.domainResolution);
+  const provenance = normalizeProvenance(parsedInput.publicBusinessProvenance);
+  const suppressionResult = normalizeSuppression(parsedInput.suppression);
   const blockedBy = suppressionKeys
     .filter(([key]) => suppressionResult.values[key] === true)
     .map(([, signal]) => signal);
@@ -275,9 +316,13 @@ const normalizeTimeout = (timeoutMs: number | undefined): number | null => {
   return Number.isSafeInteger(value) && value > 0 && value <= MAX_RESOLVER_TIMEOUT_MS ? value : null;
 };
 
-const resolveWithTimeout = async (resolver: EmailDomainResolver, domain: string, timeoutMs: number): Promise<{ value: unknown; issue?: TechnicalEmailReason }> => {
+const resolveWithTimeout = async (
+  resolver: EmailDomainResolver,
+  domain: string,
+  timeoutMs: number,
+): Promise<{ value: unknown; issue?: ResolverUncertaintyReason }> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<{ value: unknown; issue: TechnicalEmailReason }>((resolve) => {
+  const timeout = new Promise<{ value: unknown; issue: ResolverUncertaintyReason }>((resolve) => {
     timer = setTimeout(() => resolve({ value: unknownResolution, issue: 'DNS_TIMEOUT' }), timeoutMs);
   });
   const resolution = Promise.resolve()
@@ -290,15 +335,18 @@ const resolveWithTimeout = async (resolver: EmailDomainResolver, domain: string,
 };
 
 export async function evaluateTechnicalEmail(
-  input: TechnicalEmailEvaluationInput,
+  input: unknown,
   resolver?: EmailDomainResolver,
   options: TechnicalEmailResolverOptions = {},
 ): Promise<TechnicalEmailQualificationResult> {
-  const syntax = inspectEmailSyntax(input.email);
-  if (!syntax.valid || syntax.domain === null) return classifyTechnicalEmail(input);
-  if (resolver === undefined) return classifyTechnicalEmail(input, 'DNS_RESULT_UNKNOWN');
+  const parsedInput = parseTechnicalEmailInput(input);
+  if (parsedInput === null) return invalidTopLevelInputResult();
+
+  const syntax = inspectEmailSyntax(parsedInput.email);
+  if (!syntax.valid || syntax.domain === null) return classifyTechnicalEmail(parsedInput);
+  if (resolver === undefined) return classifyTechnicalEmail(parsedInput, 'DNS_RESULT_UNKNOWN');
   const timeoutMs = normalizeTimeout(options.timeoutMs);
-  if (timeoutMs === null) return classifyTechnicalEmail(input, 'DNS_RESOLVER_ERROR');
+  if (timeoutMs === null) return classifyTechnicalEmail(parsedInput, 'DNS_RESOLVER_ERROR');
   const resolution = await resolveWithTimeout(resolver, syntax.domain, timeoutMs);
-  return classifyTechnicalEmail({ ...input, domainResolution: resolution.value }, resolution.issue);
+  return classifyTechnicalEmail({ ...parsedInput, domainResolution: resolution.value }, resolution.issue);
 }

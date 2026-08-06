@@ -506,14 +506,12 @@ BEGIN
     REVOKE ALL ON FUNCTION public.append_manual_email_send_event(uuid,text,text,character,text) FROM service_role;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_api_runtime') THEN
-    GRANT EXECUTE ON FUNCTION
-      public.resolve_manual_email_contact_context(uuid,uuid,uuid,text),
-      public.create_manual_email_preparation(uuid,uuid,uuid,text,text,text,character,text,character,jsonb),
-      public.resolve_manual_email_preparation_context(uuid,text,boolean),
-      public.append_manual_email_open_event(uuid,text,character,text),
-      public.create_manual_email_send_attempt(uuid,text,character,character,character),
-      public.append_manual_email_send_event(uuid,text,text,character,text)
-    TO lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.resolve_manual_email_contact_context(uuid,uuid,uuid,text) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.create_manual_email_preparation(uuid,uuid,uuid,text,text,text,character,text,character,jsonb) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.resolve_manual_email_preparation_context(uuid,text,boolean) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.append_manual_email_open_event(uuid,text,character,text) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.create_manual_email_send_attempt(uuid,text,character,character,character) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.append_manual_email_send_event(uuid,text,text,character,text) FROM lead_finder_api_runtime;
   END IF;
 END
 $$;

@@ -4,11 +4,14 @@ import postgres from 'postgres';
 import {
   normalizeAddress,
   normalizeBusinessName,
+  type AuthorizationContext,
   type LeadStatus,
   type NormalizedLead,
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
+import { recordManualOpen as recordLegacyManualOpen } from './manual-messaging.js';
+import { recordManualOpen as recordRestrictedManualOpen } from './restricted-manual-email.js';
 export * from './schema.js';
 export * from './safe-projections.js';
 export * from './crm-mutation-projections.js';
@@ -21,7 +24,6 @@ export * from './pilot.js';
 export * from './manual-messaging.js';
 export {
   prepareManualMessage,
-  recordManualOpen,
   sendPreparedManualEmail,
   type RestrictedManualEmailDeliveryResult,
 } from './restricted-manual-email.js';
@@ -46,6 +48,45 @@ export function createDatabase(databaseUrl: string, options: { max?: number; ssl
   return { db: drizzle(client), close: () => client.end() };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
+
+type PostgresErrorLike = { code?: unknown; cause?: unknown };
+const postgresErrorCode = (error: unknown): string | undefined => {
+  const visited = new Set<object>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !visited.has(current)) {
+    visited.add(current);
+    const candidate = current as PostgresErrorLike;
+    if (typeof candidate.code === 'string') return candidate.code;
+    current = candidate.cause;
+  }
+  return undefined;
+};
+
+export async function recordManualOpen(
+  db: Database,
+  preparationId: string,
+  input: { idempotencyKey: string },
+  auth: AuthorizationContext,
+) {
+  try {
+    const preparations = await db.execute<{ channel: string }>(sql`
+      select channel
+      from public.pilot_manual_message_preparations
+      where id=${preparationId}::uuid
+      limit 1
+    `);
+    if (preparations[0]?.channel === 'EMAIL') {
+      return recordRestrictedManualOpen(db, preparationId, input, auth);
+    }
+    return recordLegacyManualOpen(db, preparationId, input, auth);
+  } catch (error) {
+    if (postgresErrorCode(error) === '42501') {
+      return recordRestrictedManualOpen(db, preparationId, input, auth);
+    }
+    throw error;
+  }
+}
+
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }

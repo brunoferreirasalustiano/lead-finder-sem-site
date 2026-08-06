@@ -4,7 +4,7 @@ CRM de prospecção em evolução para uma plataforma brasileira de inteligênci
 
 A busca de empresas com indícios de ausência de site e a oferta de landing pages constituem a primeira vertical experimental do produto. A visão futura inclui múltiplos nichos, cobertura nacional e prospecção conversacional governada.
 
-> **Estado atual:** homologação fail-closed, dados sintéticos, coleta externa desligada e nenhum envio real por e-mail, WhatsApp ou IA.
+> **Estado atual:** a homologação permanece fail-closed e sem autorização para produção comercial automática. Houve operação manual de e-mail fora do runtime; esses envios exigem reconciliação com os registros internos antes de qualquer piloto repetível.
 
 - [Estado operacional consolidado](docs/current-operational-status.md)
 - [Escopo futuro do produto](docs/FUTURE_PRODUCT_SCOPE.md)
@@ -12,6 +12,116 @@ A busca de empresas com indícios de ausência de site e a oferta de landing pag
 - [Auditoria de segurança e privacidade](docs/security-privacy-audit.md)
 - [Threat model operacional](docs/operational-threat-model.md)
 - [Roadmap estratégico](docs/PRODUCT_ROADMAP.md)
+
+## Estado operacional atual
+
+**Snapshot da auditoria:** 6 de agosto de 2026  
+**Branch oficial de produção:** `main`  
+**Branch de homologação:** `hml/render-supabase-plan-b`  
+**HEAD da HML observado no snapshot:** `66ef53e464bc8aa06ab67d2cf947087b4c2903bd`  
+**Render live verificado:** `05a2696cf03ada5bc4d71cd0a94cd9dfd6bb3dec`  
+**Estado comercial:** `REAL_MANUAL_PILOT=RECONCILIATION_REQUIRED`  
+**Produção comercial automática:** `AUTOMATED_COMMERCIAL_PRODUCTION=NO_GO`
+
+Os SHAs e as contagens abaixo são evidências históricas do snapshot de 6 de agosto de 2026. Eles não devem ser interpretados como ponteiros dinâmicos após novos commits, merges ou deploys.
+
+### Divergência Git
+
+Na revalidação de 6 de agosto de 2026, a HML estava `153` commits à frente e `1` commit atrás da `main`. As branches permanecem divergentes. O estado operacional recente não pode ser atribuído à `main` sem verificação por capacidade, branch e SHA.
+
+### Ambiente hospedado
+
+- o serviço Render `lead-finder-api-hml` existe e usa `hml/render-supabase-plan-b`;
+- o auto-deploy está desligado;
+- o health check configurado é `/health/ready`;
+- o último deploy Render verificado estava `live` no SHA `05a2696cf03ada5bc4d71cd0a94cd9dfd6bb3dec`;
+- esse SHA live é anterior ao HEAD da HML observado no snapshot e não comprova implantação da PR #209;
+- o serviço `lead-finder-email-test-runner-once` continua implantado, porém seu comando é inerte por padrão e exige ativação explícita para executar;
+- o projeto Supabase `lead-finder-brasil-homologacao` estava `ACTIVE_HEALTHY` em PostgreSQL `17.6` na última auditoria autenticada;
+- `public.schema_migrations` e `supabase_migrations.schema_migrations` coexistem e devem ser reconciliados antes de novas migrations;
+- `public.schema_migrations` continha a sequência local até `0027`;
+- migrations equivalentes a `0035`–`0040` constavam no registry nativo do Supabase;
+- `0041_email_delivery_suppression.sql` está integrada à HML, mas sua aplicação hospedada não foi revalidada após o merge;
+- `0042_restricted_manual_email_consumer.sql` permanece somente na PR #215 e não está integrada à HML.
+
+A presença de uma migration no código ou em uma PR não comprova aplicação no ambiente hospedado.
+
+### Pull requests relevantes
+
+- **PR #209 — supressão de entrega:** integrada à HML em 6 de agosto de 2026 pelo merge commit `66ef53e464bc8aa06ab67d2cf947087b4c2903bd`. A migration `0041_email_delivery_suppression.sql` está em `hml/render-supabase-plan-b`; a aplicação no Supabase e a reconciliação dos bounces continuam `NOT_VERIFIED`/pendentes.
+- **PR #215 — consumidor Gmail restrito:** aberta e Ready for Review no snapshot, HEAD `7b480fad251cfcf8c263fa3522b192e13e22105e`, `25` commits à frente e `10` atrás da HML naquele momento. O deployment smoke no HEAD passou, mas a CI permanecia falhando. O corpo da PR ainda dizia que ela deveria permanecer Draft, em contradição com o estado observado. A migration `0042` e o consumidor Gmail não estavam integrados nem hospedados.
+- **PR #216 — reconciliação documental:** permanece Draft e deve ser atualizada e validada antes de merge.
+
+### E-mail manual e runtime
+
+A auditoria somente leitura do Gmail encontrou, no intervalo iniciado em 3 de agosto de 2026:
+
+- `76` mensagens comerciais enviadas com o padrão de assunto do piloto;
+- `9` notificações agregadas de falha de entrega;
+- `0` respostas na busca específica pelo mesmo padrão de assunto.
+
+Essas contagens comprovam atividade manual na conta operacional, não envio registrado ou autorizado pelo runtime. Destinatários, assuntos completos e conteúdo não fazem parte desta documentação.
+
+Distinções obrigatórias:
+
+- **envio manual pelo operador:** ocorreu fora do runtime e precisa ser reconciliado;
+- **envio registrado pelo runtime:** não foi comprovado para essas mensagens;
+- **envio automático:** permanece desabilitado e não autorizado.
+
+### Matriz de capacidades
+
+| Capacidade | Código | HML | Main | Hospedado | Autorizado para uso real |
+|---|---|---|---|---|---|
+| Descoberta e qualificação | `IMPLEMENTED` | `IN_HML` | `IN_MAIN` | `DEPLOYED` | `DISABLED` |
+| CRM e revisão humana | `IMPLEMENTED` | `IN_HML` | `IN_MAIN` | `DEPLOYED` | `BLOCKED` |
+| Template/preparação de e-mail manual | `IMPLEMENTED` | `IN_HML` | `NOT_VERIFIED` | `NOT_VERIFIED` | `BLOCKED` |
+| Consumidor Gmail restrito | `IMPLEMENTED` | `NOT_IMPLEMENTED` | `NOT_IMPLEMENTED` | `NOT_IMPLEMENTED` | `BLOCKED` |
+| Supressão permanente de bounce/contato inválido | `IMPLEMENTED` | `IN_HML` | `NOT_IMPLEMENTED` | `NOT_VERIFIED` | `BLOCKED` |
+| WhatsApp Cloud API de HML | `IMPLEMENTED` | `IN_HML` | `NOT_VERIFIED` | `DEPLOYED` | `DISABLED` |
+| Envio comercial automático | `DISABLED` | `DISABLED` | `DISABLED` | `DISABLED` | `DISABLED` |
+
+`IMPLEMENTED` pode significar código presente em uma PR aberta. `IN_HML` exige integração na branch de homologação. `DEPLOYED` exige evidência do ambiente hospedado no SHA correspondente.
+
+### Segurança e performance
+
+A postura atual continua conservadora:
+
+```text
+COLLECTION_EGRESS_ENABLED=false
+DRY_RUN=true
+REAL_SEND_ENABLED=false
+REAL_PROVIDERS_ENABLED=false
+REAL_PROVIDER_CONFIGURED=false
+```
+
+Na última auditoria autenticada do Supabase, as `57` tabelas públicas observadas estavam com RLS habilitado. Existiam `11` policies restritas à role interna `lead_finder_api_runtime`; não foram encontrados grants de tabela para `PUBLIC`, `anon` ou `authenticated`. Portanto, a afirmação histórica de “zero policies” não é mais verdadeira, embora a Data API pública continue sem grants para essas roles.
+
+A consulta estrutural encontrou `28` foreign keys potencialmente sem índice líder. Isso é dívida de performance a revisar antes de escala; não é, isoladamente, bloqueador para um piloto pequeno.
+
+A auditoria de código e CI encontrou controles de idempotência, append-only, locks, sanitização e defaults fail-closed. Não houve evidência de secret real versionado na inspeção direcionada. Isso não substitui auditoria contínua de logs hospedados nem prova absoluta de ausência de PII em toda execução.
+
+### Gates obrigatórios
+
+Antes de declarar o primeiro piloto real controlado, auditável e repetível:
+
+1. reconciliar as `76` mensagens manuais e as `9` falhas com o CRM/runtime sem copiar PII para artefatos públicos;
+2. revalidar e, mediante autorização separada, aplicar a migration `0041` no ambiente hospedado;
+3. registrar as supressões definitivas e comprovar que os gates bloqueiam os contatos afetados;
+4. atualizar a PR #215 sobre a HML atual, corrigir a CI e alinhar seu estado Draft/Ready;
+5. aplicar a migration `0042` somente após backup, preflight, autorização separada e CI verde no SHA exato;
+6. comprovar o consumidor Gmail com privilégio mínimo, idempotência, kill switch e ausência de retry ambíguo;
+7. validar opt-out, hard bounce e contato inválido antes de cada nova preparação;
+8. executar um lote pequeno com aprovação humana individual e relatório agregado;
+9. emitir um GO/NO-GO explícito separado.
+
+Estados preservados:
+
+```text
+AUTOMATED_COMMERCIAL_PRODUCTION=NO_GO
+REAL_MANUAL_PILOT=RECONCILIATION_REQUIRED
+REAL_SEND_ENABLED=false
+REAL_PROVIDERS_ENABLED=false
+```
 
 ## Regra fundamental
 
@@ -21,7 +131,7 @@ Nenhuma abordagem comercial pode ocorrer antes de:
 
 1. validar a empresa e o indício de ausência de site;
 2. validar o contato e sua origem;
-3. confirmar ausência de bloqueio, `NAO_CONTATAR` e opt-out aplicável;
+3. confirmar ausência de duplicidade, bloqueio, bounce impeditivo, `NAO_CONTATAR` e opt-out aplicável;
 4. registrar revisão humana;
 5. usar template aprovado;
 6. reservar idempotência e limites;
@@ -34,65 +144,55 @@ Qualquer dúvida resulta em `REVISAO_HUMANA` e impede a ação.
 ### Implementado
 
 - descoberta por OpenStreetMap/Overpass, com egress desligado por padrão;
-- normalização, scoring e deduplicação;
-- qualificação conservadora e evidências;
+- normalização, scoring, deduplicação e qualificação conservadora;
 - contatos versionados e associados ao lead;
 - CRM, oportunidades, tarefas, notas, tags e timeline;
-- campanhas e templates versionados;
-- seleção elegível e revisão humana;
-- destinatários, tentativas, eventos e outbox transacionais;
-- leasing, concorrência e liderança de processadores;
-- limites diários, janela de execução e espaçamento;
-- retry limitado, dead-letter e recuperação auditável;
-- pausa, cancelamento, opt-out e bloqueios antes da execução;
-- piloto interno com revisão, contato manual e resultados;
-- gate sintético determinístico em PostgreSQL;
+- campanhas, templates, recipients, attempts, eventos e outbox;
+- leasing, concorrência, liderança, limites, dead-letter e recuperação auditável;
+- revisão humana, opt-out, bloqueios e estados de piloto;
+- supressão persistente e fail-closed de hard bounce, contato inválido, opt-out e complaint integrada à HML;
 - autenticação Bearer e matriz explícita de permissões;
 - logs e evidências sanitizados;
 - Docker Compose, imagens API/worker, smoke e CI com PostgreSQL;
 - perfis `oracle-vps` e `supabase-render`;
-- Supabase Data API em postura deny-all;
-- runbooks do piloto manual, WhatsApp, IA, backup, restore e failover.
+- runbooks de piloto, WhatsApp, IA, backup, restore e failover.
 
 ### Pendente ou bloqueado
 
+- reconciliação da operação manual de e-mail e das falhas de entrega;
+- revalidação/aplicação hospedada da migration `0041`;
+- atualização, integração e validação do consumidor Gmail da PR #215;
 - confirmação externa automatizada de ausência real de site;
-- enriquecimento externo de contatos;
-- adaptador oficial de Google Places;
-- cobertura nacional ampliada;
-- adaptador oficial de e-mail;
-- WhatsApp Business Cloud API;
-- webhooks externos assinados;
+- enriquecimento externo de contatos e adaptador oficial de Google Places;
+- WhatsApp Business Cloud API para uso real;
 - OpenAI em shadow mode;
-- sandbox Meta e OpenAI — [issue #79](https://github.com/brunoferreirasalustiano/lead-finder-sem-site/issues/79);
-- propostas comerciais e PDF;
-- dashboard operacional e comercial;
+- propostas comerciais/PDF e dashboard operacional;
 - automações completas no n8n;
-- piloto com leads reais;
 - validação do perfil Oracle em VPS real;
-- evolução gradual até a meta futura de 60 mensagens efetivamente enviadas por dia.
+- produção multi-tenant e escala comercial automática.
 
 ## Arquitetura
 
 ```text
 Descoberta -> Normalização -> Deduplicação -> Validação -> Qualificação
--> CRM -> Revisão humana -> Campanha -> Outbox simulada
--> Resultado manual/simulado -> Métricas -> Proposta futura
+-> CRM -> Revisão humana -> Preparação controlada
+-> Resultado manual/simulado -> Métricas -> Reconciliação
 ```
 
 Componentes principais:
 
 - `apps/api` — API Fastify, autenticação, autorização e rotas operacionais;
-- `apps/worker` — processamento de jobs e outbox simulada;
+- `apps/worker` — processamento de jobs e outbox;
 - `packages/database` — schema, repositórios, migrations, idempotência e filas;
 - `packages/batch-processor` — processamento limitado e coordenado;
 - `packages/overpass-client` — consultas seguras, timeout e retry;
-- `packages/lead-scoring` — regras puras de pontuação;
+- `packages/lead-scoring` — regras de pontuação;
 - `packages/shared` — contratos e schemas Zod;
 - `database/migrations` — SQL incremental e versionado;
+- `database/security` — roles e grants de privilégio mínimo;
 - `deploy` — descritores Oracle, Supabase e Caddy;
 - `scripts` — migrations, gates, backup, restore, rollback e smoke;
-- `n8n/workflows` — automações opcionais, ainda não operacionais.
+- `n8n/workflows` — automações opcionais, ainda não autorizadas para campanhas reais.
 
 ## Perfis de implantação
 
@@ -104,9 +204,9 @@ Perfil de homologação e Plano B:
 - PostgreSQL no Supabase;
 - conexão server-side por `DATABASE_URL`;
 - TLS obrigatório;
-- pool inicial reduzido;
-- Edge Function e Cron opcionais e desligados por padrão;
-- dry-run e providers externos bloqueados.
+- pool reduzido;
+- Edge Function e Cron opcionais;
+- dry-run, egress e providers externos bloqueados por padrão.
 
 Documentos:
 
@@ -117,150 +217,70 @@ Documentos:
 
 ### Oracle VPS
 
-Perfil self-hosted completo:
-
-- Ubuntu;
-- Docker Compose;
-- PostgreSQL, API e worker em redes privadas;
-- Caddy em 80/443;
-- n8n opcional;
-- backup, restore, rollback e observabilidade locais.
-
-A validação em VPS real continua pendente.
+Perfil self-hosted com PostgreSQL, API e worker em redes privadas, Caddy, backup, restore e rollback. A validação em VPS real continua pendente.
 
 Documento: [Runbook Oracle](docs/ORACLE_DEPLOY.md).
 
-## Defaults de segurança
-
-```text
-COLLECTION_EGRESS_ENABLED=false
-DRY_RUN=true
-REAL_SEND_ENABLED=false
-REAL_PROVIDERS_ENABLED=false
-REAL_PROVIDER_CONFIGURED=false
-```
-
-A homologação isolada usa `SHADOW_MODE_ENABLED=true`. O kill switch deve ser testado antes do piloto e engatado durante incidentes.
-
-Nenhuma credencial ou configuração parcial autoriza envio. A execução real futura exigirá todos os gates simultaneamente.
-
-## Supabase deny-all
-
-O backend usa conexão PostgreSQL direta. A Data API pública não é usada.
-
-Estado verificado:
-
-- 39 tabelas públicas com RLS;
-- zero policies;
-- zero grants para `PUBLIC`, `anon` e `authenticated`;
-- zero execução pública de funções;
-- `CREATE` no schema público revogado;
-- nenhum `supabase-js` ou `/rest/v1` no runtime.
-
-Não criar policies permissivas apenas para eliminar o aviso informativo `RLS Enabled No Policy`.
-
-Detalhes: [Segurança da Data API Supabase](docs/supabase-data-api-security.md).
-
 ## Piloto manual controlado
 
-O piloto documentado não é disparo automatizado.
+O piloto documentado não é disparo automatizado. Cada destinatário exige triagem e aprovação individual.
 
-Regras do primeiro lote:
+Regras mínimas:
 
-- no máximo cinco negócios;
-- uma categoria;
-- uma cidade ou região;
-- seleção individual;
-- revisão humana obrigatória;
-- WhatsApp no primeiro contato sem link até autorização explícita do destinatário;
-- e-mail empresarial público pode usar exclusivamente o link oficial de demonstrações no template aprovado `pilot-email-first-contact@v2`, depois da verificação individual da ausência de site oficial próprio;
-- opt-out imediato;
+- lote pequeno e delimitado;
+- contato empresarial público pertinente;
+- confirmação atual de ausência de site oficial próprio;
+- ausência de contato anterior incompatível;
+- ausência de bounce, complaint, opt-out ou bloqueio;
+- sem CC, BCC, anexo, pixel ou tracking;
 - nenhum follow-up automático;
-- nenhum WhatsApp Web automatizado;
-- nenhuma lista comprada ou importação em massa;
-- nenhuma métrica inferida pela abertura de link.
+- nenhum retry após falha, timeout ou resultado ambíguo;
+- opt-out aplicado imediatamente;
+- resultado reconciliado sem expor PII.
 
-O recorte regional pertence ao primeiro piloto. A visão comercial futura da vertical de landing pages é nacional, com aumento progressivo de capacidade até 60 mensagens efetivamente enviadas por dia somente após validação dos gates e dos indicadores de qualidade.
+O template `pilot-email-first-contact@v2` não autoriza envio por si só.
 
 Documentos:
 
 - [Pacote operacional](docs/pilot-manual-operations-pack.md)
-- [Template manual v1](docs/pilot-real-manual-message-v1.md)
 - [Template manual de e-mail v2](docs/pilot-real-manual-email-v2.md)
 - [Runbook do ciclo controlado](docs/pilot-real-controlled-runbook.md)
 - [Matriz de prontidão](docs/commercial-readiness-matrix.md)
 
-### Teste interno do canal de e-mail
-
-O endpoint `POST /operator-tests/email/send` existe somente para verificar o
-canal do próprio operador. Ele aceita exclusivamente o template imutável
-`operator-email-channel-test` v1 e exige que remetente, usuário SMTP e
-destinatário sejam a mesma caixa interna autorizada.
-
-O recurso inicia desligado e com kill switch ativo. As credenciais e a chave de
-fingerprint são segredos externos ao repositório. O teste registra apenas
-fingerprints e estado append-only; não persiste endereço, corpo, assunto ou
-identificador do provedor. Esse endpoint não habilita envio para leads e não
-altera `REAL_SEND_ENABLED=false` nem `REAL_PROVIDERS_ENABLED=false`.
-
 ## WhatsApp e IA
 
-Estado: arquitetura e controles documentados; integração real ausente.
+- WhatsApp Web automatizado e bibliotecas de sessão por QR Code são proibidos;
+- uso real futuro deve ocorrer pela Cloud API oficial;
+- IA pode gerar rascunho ou classificação, nunca autorizar envio;
+- sandbox usa somente ativos e destinos controlados;
+- tokens e payloads integrais não entram em logs ou Git.
 
-Princípios:
-
-- WhatsApp somente pela Cloud API oficial;
-- WhatsApp Web, QR Code, Baileys, Evolution API e equivalentes são proibidos;
-- IA gera rascunho ou classificação, nunca autoriza envio;
-- saída inválida ou incerta retorna `REVISAO_HUMANA`;
-- prompts minimizam PII;
-- OpenAI deverá usar chave server-side, Structured Outputs e `store=false`;
-- webhooks deverão validar assinatura sobre os bytes originais;
-- sandbox usará somente números próprios em allowlist;
-- tokens e payloads integrais nunca entram em logs ou Git.
-
-Documentos:
-
-- [Arquitetura WhatsApp + IA](docs/whatsapp-ai-messaging-architecture.md)
-- [Checklist de implementação](docs/whatsapp-ai-implementation-checklist.md)
-- [Registro de riscos](docs/whatsapp-ai-risk-register.md)
-
-## Requisitos locais
+## Requisitos e execução local
 
 - Node.js 22 ou superior;
 - npm;
-- Docker Engine e Docker Compose para integração local completa;
-- PostgreSQL real executado pelo Compose ou CI.
-
-O usuário atual trabalha em Windows sem Docker Desktop/WSL; por isso, integrações PostgreSQL, Compose e multiarch podem ser executadas na CI ou por ferramenta apropriada em ambiente compatível.
-
-## Configuração local
+- Docker Engine e Docker Compose para integração completa;
+- PostgreSQL real pelo Compose ou CI.
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run test:coverage
+npm run build
 ```
 
-Preencha apenas valores locais. Nunca copie secrets de homologação ou produção.
-
-Para a stack local:
+Integração completa:
 
 ```bash
 docker compose up -d postgres
 docker compose run --rm migrate
-npm run dev:api
-npm run dev:worker
+npm run test:integration
 ```
 
-Stack completa:
-
-```bash
-docker compose up --build
-```
-
-As migrations usam `schema_migrations` e devem ser reaplicáveis sem executar alteração duplicada.
-
-Variáveis: [documentação de ambiente](docs/infrastructure/environment-variables.md).
+Nunca copie secrets de homologação ou produção para arquivos locais versionados.
 
 ## API e autorização
 
@@ -270,124 +290,48 @@ Rotas públicas:
 - `GET /health`
 - `GET /health/ready`
 
-As demais rotas exigem:
-
-```text
-Authorization: Bearer <API_AUTH_TOKEN>
-```
-
-`API_AUTH_TOKEN` precisa ter pelo menos 32 caracteres. `API_AUTH_PERMISSIONS` usa allowlist CSV estrita, sem wildcards ou valores desconhecidos.
-
-Grupos de rotas:
-
-- leads, qualificação, evidências e contatos;
-- CRM, oportunidades, notas, tags, tarefas e timeline;
-- campanhas, versões, revisão e simulação;
-- recipients, attempts, failures e audit;
-- piloto interno, revisão, contato manual e resultados;
-- batch interno autenticado;
-- coleta externa bloqueada por feature flag.
-
-A API permanece single-operator. Multi-tenant exige OIDC, isolamento por tenant e autorização por objeto antes de atender clientes externos.
+As demais rotas exigem `Authorization: Bearer <API_AUTH_TOKEN>` e permissões por allowlist. A API permanece single-operator; multi-tenant exige isolamento e autorização por objeto.
 
 ## Qualidade e CI
 
-Comandos principais:
+Gates obrigatórios incluem typecheck, lint, testes, cobertura, build, audit de dependências, integração PostgreSQL, migration compatibility, RLS, restore, Docker e multiarch quando aplicável.
 
-```bash
-npm run typecheck
-npm run lint
-npm test
-npm run test:coverage
-npm run build
-npm run test:integration
-npm run test:pilot
-npm run test:pilot:restart
-npm audit --audit-level=high
-docker compose config
-```
-
-Gates:
-
-| Gate | Verificação |
-|---|---|
-| G0 | escopo, regras de negócio e risco |
-| G1 | typecheck, lint e build |
-| G2 | testes unitários e cobertura |
-| G3 | integração PostgreSQL |
-| G4 | smoke, deploy e rollback aplicáveis |
-| G5 | AMD64/ARM64 quando houver imagem |
-| G6 | validação no commit exato da `main` |
-| G7 | infraestrutura real |
-| G8 | segurança comercial, opt-out e idempotência |
-
-Nenhum gate pode ser ocultado com `continue-on-error` apenas para deixar a pipeline verde. Falha de infraestrutura deve ser `BLOCKED`, não `PASS`.
-
-## Política de execução autônoma
-
-O trabalho pode avançar automaticamente quando:
-
-- estiver no roadmap aprovado;
-- não exigir credencial, pagamento ou confirmação humana externa;
-- houver critério objetivo de teste;
-- a mudança for reversível;
-- não houver risco de contato real não autorizado.
-
-Processo:
-
-1. criar branch específica;
-2. implementar escopo mínimo;
-3. executar validações;
-4. abrir PR com riscos e evidências;
-5. corrigir findings;
-6. integrar por squash;
-7. verificar a `main`;
-8. atualizar documentação e issue.
-
-### Seleção do modelo Codex
-
-- **Luna:** documentação, investigação simples e mudanças locais de baixo risco;
-- **Terra:** implementação padrão, testes e refatorações moderadas;
-- **Sol:** segurança, migrations, restore, concorrência, autenticação, infraestrutura e mudanças de alto impacto.
-
-O modelo deve ser informado antes de cada trabalho do Codex, com justificativa de risco, complexidade e custo.
+Falha de infraestrutura ou de migration deve ser registrada como `BLOCKED`, nunca ocultada para produzir um estado verde.
 
 ## Segurança operacional
 
 - nenhum secret no Git;
-- PostgreSQL sem exposição pública desnecessária;
-- logs sem PII e payload bruto;
+- logs sem PII ou payload bruto;
 - autenticação e autorização no aplicativo;
 - opt-out global e por canal;
 - `NAO_CONTATAR` com reativação explícita e auditada;
 - idempotência antes de efeitos externos;
-- retry somente para falhas transitórias classificadas;
+- retry apenas para falhas transitórias classificadas;
 - provider real desligado por padrão;
-- backup e restore com reconciliação de supressões;
-- nenhuma automação de navegador para WhatsApp;
-- nenhuma dependência de navegador aberto para operação 24/7.
+- backup/restore com reconciliação de supressões;
+- nenhuma automação de navegador para WhatsApp.
 
 ## Limitações atuais
 
 - dados OSM podem estar incompletos ou desatualizados;
 - ausência de site na fonte não confirma ausência real;
-- não existe envio real pelo runtime;
-- não existe provider Meta, e-mail, Google Places ou OpenAI integrado;
-- não existe dashboard ou proposta em PDF;
+- os envios manuais observados não estão automaticamente auditados pelo runtime;
+- a supressão persistente está integrada à HML, mas sua aplicação hospedada ainda não foi revalidada;
+- o consumidor Gmail restrito ainda não está integrado à HML;
+- produção comercial automática permanece desabilitada;
 - não existe homologação Oracle real;
-- cron e Edge Function do Plano B não estão ativos por padrão;
-- o projeto não está pronto para multi-tenant, prospecção nacional automática ou escala de 60 mensagens diárias.
+- o projeto não está pronto para multi-tenant ou escala de 60 mensagens diárias.
 
 Dados do OpenStreetMap estão sujeitos à ODbL e exigem atribuição apropriada.
 
 ## Manutenção documental
 
-Toda PR que alterar arquitetura, flags, ambiente, provider, segurança ou estado de uma fase deve revisar:
+Toda PR que alterar arquitetura, flags, ambiente, provider, segurança ou estado operacional deve revisar:
 
 1. [estado operacional consolidado](docs/current-operational-status.md);
 2. este `README.md`;
 3. [índice de documentação](docs/README.md);
-4. runbook e registro de riscos afetados;
-5. issue e evidências de CI correspondentes.
+4. runbooks e registros de risco afetados;
+5. issue, PR e evidências de CI correspondentes.
 
 Nunca documentar publicamente tokens, senhas, connection strings, PII de leads, mensagens integrais ou payloads brutos.

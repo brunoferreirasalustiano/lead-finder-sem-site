@@ -22,6 +22,20 @@ const jsonResponse = (body: unknown, status = 200) => new Response(
   },
 );
 
+const manualConsumer = (fetchMock: OperatorEmailFetch) =>
+  createGmailApiManualEmailConsumer({
+    sender: configuration.sender,
+    googleClientId: configuration.googleClientId,
+    googleClientSecret: configuration.googleClientSecret,
+    googleRefreshToken: configuration.googleRefreshToken,
+  }, fetchMock);
+
+const manualMessage = {
+  subject: 'Ideia para Empresa',
+  body: 'Mensagem individual.',
+  recipient: 'lead@example.test',
+} as const;
+
 describe('Gmail API operator email consumer', () => {
   it('exchanges the refresh token and sends one self-addressed MIME message', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>()
@@ -131,24 +145,66 @@ describe('Gmail API operator email consumer', () => {
 });
 
 describe('Gmail API manual email consumer', () => {
-  it('binds the recipient per approved preparation and marks the MIME purpose', async () => {
+  it('binds exactly one recipient and emits no CC, BCC or attachment headers', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'synthetic-manual-message-id' }));
-    const consumer = createGmailApiManualEmailConsumer({ sender: configuration.sender, googleClientId: configuration.googleClientId, googleClientSecret: configuration.googleClientSecret, googleRefreshToken: configuration.googleRefreshToken }, fetchMock);
-    await consumer.sendManual({ subject: 'Ideia para Empresa', body: 'Mensagem individual.', recipient: 'lead@example.test' });
+    const consumer = manualConsumer(fetchMock);
+    await consumer.sendManual(manualMessage);
     const body = fetchMock.mock.calls[1]?.[1]?.body;
     const request = JSON.parse(typeof body === 'string' ? body : '{}') as { raw: string };
     const mimeMessage = Buffer.from(request.raw, 'base64url').toString('utf8');
     expect(mimeMessage).toContain('From: operator@example.test');
     expect(mimeMessage).toContain('To: lead@example.test');
     expect(mimeMessage).toContain('X-Lead-Finder-Purpose: MANUAL_PILOT');
+    expect(mimeMessage).not.toMatch(/\r\nCc:/i);
+    expect(mimeMessage).not.toMatch(/\r\nBcc:/i);
+    expect(mimeMessage).not.toMatch(/Content-Disposition:\s*attachment/i);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('rejects invalid recipients before network access', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>();
-    const consumer = createGmailApiManualEmailConsumer({ sender: configuration.sender, googleClientId: configuration.googleClientId, googleClientSecret: configuration.googleClientSecret, googleRefreshToken: configuration.googleRefreshToken }, fetchMock);
-    await expect(consumer.sendManual({ subject: 'Teste', body: 'Teste', recipient: 'not-an-email' })).rejects.toThrow();
+    const consumer = manualConsumer(fetchMock);
+    await expect(consumer.sendManual({
+      ...manualMessage,
+      recipient: 'not-an-email',
+    })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('classifies OAuth failure as deterministic before the Gmail send endpoint', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_grant' }, 400));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'TOKEN_EXCHANGE_FAILED' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies an explicit Gmail rejection as deterministic', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ error: 'forbidden' }, 403));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'DELIVERY_REJECTED' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a network interruption during Gmail send as ambiguous', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockRejectedValueOnce(new Error('connection interrupted'));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a successful status without a provider id as ambiguous', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({}, 200));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

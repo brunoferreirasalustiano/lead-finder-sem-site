@@ -1,6 +1,7 @@
 import { and, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import type { MessagingChannel } from '@lead-finder/messaging';
 import {
   normalizeAddress,
   normalizeBusinessName,
@@ -10,8 +11,14 @@ import {
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
-import { recordManualOpen as recordLegacyManualOpen } from './manual-messaging.js';
-import { recordManualOpen as recordRestrictedManualOpen } from './restricted-manual-email.js';
+import {
+  prepareManualMessage as prepareLegacyManualMessage,
+  recordManualOpen as recordLegacyManualOpen,
+} from './manual-messaging.js';
+import {
+  prepareManualMessage as prepareRestrictedManualMessage,
+  recordManualOpen as recordRestrictedManualOpen,
+} from './restricted-manual-email.js';
 export * from './schema.js';
 export * from './safe-projections.js';
 export * from './crm-mutation-projections.js';
@@ -23,7 +30,6 @@ export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
 export {
-  prepareManualMessage,
   sendPreparedManualEmail,
   type RestrictedManualEmailDeliveryResult,
 } from './restricted-manual-email.js';
@@ -49,13 +55,32 @@ export function createDatabase(databaseUrl: string, options: { max?: number; ssl
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
 
+export async function prepareManualMessage(
+  db: Database,
+  pilotRunId: string,
+  leadId: string,
+  input: {
+    contactId: string;
+    requestedChannel: MessagingChannel;
+    templateId: string;
+    templateVersion: string;
+    idempotencyKey: string;
+  },
+  auth: AuthorizationContext,
+) {
+  if (input.requestedChannel !== 'EMAIL' || !auth.permissions.has('manual-messaging:send')) {
+    return prepareLegacyManualMessage(db, pilotRunId, leadId, input, auth);
+  }
+  return prepareRestrictedManualMessage(db, pilotRunId, leadId, input, auth);
+}
+
 export async function recordManualOpen(
   db: Database,
   preparationId: string,
   input: { idempotencyKey: string },
   auth: AuthorizationContext,
 ) {
-  if (!auth.permissions.has('manual-messaging:open')) {
+  if (!auth.permissions.has('manual-messaging:send')) {
     return recordLegacyManualOpen(db, preparationId, input, auth);
   }
   return recordRestrictedManualOpen(db, preparationId, input, auth);
@@ -101,7 +126,7 @@ export async function insertLeads(
     normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
   }));
   if (values.length === 0) return 0;
-  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
+  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id, status: leads.status }))
     .length;
 }
 export interface LeadFilters {
@@ -186,7 +211,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, job.id));
+      .where(eq(collectionJobs.id, id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

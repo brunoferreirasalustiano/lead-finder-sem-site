@@ -50,6 +50,13 @@ describe('prospecting run metrics', () => {
     expect(Object.keys(result)).not.toContain('name');
   });
 
+  it('preserves aggregate ambiguity and city counters without technical-email labels', () => {
+    const result = buildProspectingRunMetrics({ ...baseMetrics, city: 'Campinas', ambiguousResults: 2 });
+    expect(result.city).toBe('Campinas');
+    expect(result.ambiguousResults).toBe(2);
+    expect(JSON.stringify(result)).not.toContain('oficina-exemplo.com.br');
+  });
+
   it('rejects invalid counts, city labels, and inconsistent distributions', () => {
     expect(() => buildProspectingRunMetrics({ ...baseMetrics, found: -1 })).toThrow(RangeError);
     expect(() => buildProspectingRunMetrics({ ...baseMetrics, city: '   ' })).toThrow(RangeError);

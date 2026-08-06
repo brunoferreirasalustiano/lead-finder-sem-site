@@ -42,9 +42,9 @@ describe('technical email external input boundary', () => {
     async (input) => {
       let calls = 0;
       const result = await evaluateTechnicalEmail(input, {
-        resolve: async () => {
+        resolve: () => {
           calls += 1;
-          return { domainExists: 'YES', mx: 'PRESENT' };
+          return Promise.resolve({ domainExists: 'YES', mx: 'PRESENT' });
         },
       });
       expect(result.reason).toBe('INVALID_INPUT');

@@ -172,7 +172,8 @@ Regras do primeiro lote:
 - uma cidade ou região;
 - seleção individual;
 - revisão humana obrigatória;
-- primeiro contato sem link, salvo autorização do destinatário;
+- WhatsApp no primeiro contato sem link até autorização explícita do destinatário;
+- e-mail empresarial público pode usar exclusivamente o link oficial de demonstrações no template aprovado `pilot-email-first-contact@v2`, depois da verificação individual da ausência de site oficial próprio;
 - opt-out imediato;
 - nenhum follow-up automático;
 - nenhum WhatsApp Web automatizado;
@@ -185,6 +186,7 @@ Documentos:
 
 - [Pacote operacional](docs/pilot-manual-operations-pack.md)
 - [Template manual v1](docs/pilot-real-manual-message-v1.md)
+- [Template manual de e-mail v2](docs/pilot-real-manual-email-v2.md)
 - [Runbook do ciclo controlado](docs/pilot-real-controlled-runbook.md)
 - [Matriz de prontidão](docs/commercial-readiness-matrix.md)
 

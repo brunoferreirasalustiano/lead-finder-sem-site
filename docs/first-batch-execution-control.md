@@ -64,8 +64,12 @@ Não registrar em issue, log ou artifact público:
 - [ ] estágio diferente de `NAO_CONTATAR`;
 - [ ] bloqueio administrativo ausente;
 - [ ] template aprovado e versão registrada;
-- [ ] primeiro contato sem link, PDF, imagem, proposta, preço ou tracking;
+- [ ] WhatsApp no primeiro contato sem link, PDF, imagem, proposta, preço ou tracking;
+- [ ] e-mail com link usa exclusivamente `pilot-email-first-contact@v2` e `https://brunoferreirasalustiano.github.io/lead-finder-demos/`, sem tracking, PDF, imagem, anexo, proposta ou preço;
+- [ ] diagnóstico individual confirmou ausência de site oficial próprio antes de aprovar o e-mail v2;
 - [ ] aprovação humana ainda não confundida com envio.
+
+A exceção do e-mail v2 é estreita: nenhum outro link, encurtador ou parâmetro de rastreamento é permitido no primeiro contato.
 
 ## Checklist de execução manual
 
@@ -136,7 +140,7 @@ Respostas livres podem ser resumidas em uma observação curta, sem copiar conte
 - mensagem para lead bloqueado;
 - opt-out não aplicado;
 - envio diferente do aprovado;
-- link ou anexo indevido no primeiro contato;
+- link ou anexo fora da exceção explícita do e-mail v2;
 - exposição de PII em log, artifact ou issue;
 - provider ou egress inesperado;
 - resultado registrado incorretamente.

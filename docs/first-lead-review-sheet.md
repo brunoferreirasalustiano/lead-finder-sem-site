@@ -17,9 +17,11 @@ Copiar esta ficha para um armazenamento privado por lead. Não preencher dados p
 - [ ] nome público confirmado;
 - [ ] categoria confirmada;
 - [ ] localização compatível com o lote;
-- [ ] não possui site funcional ou apresenta necessidade digital verificável;
+- [ ] não possui site oficial próprio ou apresenta necessidade digital verificável;
+- [ ] diagnóstico revalidado imediatamente antes da aprovação;
 - [ ] não há alegação comercial não comprovada;
-- [ ] não é duplicado de outro lead do lote.
+- [ ] não é duplicado de outro lead do lote;
+- [ ] não existe contato anterior incompatível com um novo primeiro contato.
 
 ### Evidência mínima
 
@@ -35,6 +37,7 @@ Copiar esta ficha para um armazenamento privado por lead. Não preencher dados p
 - [ ] CRM diferente de `NAO_CONTATAR`;
 - [ ] sem opt-out global;
 - [ ] sem opt-out do canal selecionado;
+- [ ] sem bounce ou complaint impeditivo;
 - [ ] sem contato anterior incompatível com o novo contato;
 
 Qualquer item desfavorável resulta em `REJECTED / DO_NOT_CONTACT`.
@@ -98,13 +101,19 @@ Justificativa objetiva:
 - [ ] identifica Lead Finder Brasil;
 - [ ] finalidade clara e breve;
 - [ ] conteúdo pertinente ao negócio;
-- [ ] origem do e-mail informada quando aplicável;
-- [ ] opt-out simples;
-- [ ] sem tracking;
-- [ ] sem anexo inesperado;
+- [ ] origem do e-mail informada de forma verdadeira;
+- [ ] opt-out simples e explícito;
+- [ ] sem tracking ou pixel;
+- [ ] sem anexo;
+- [ ] sem CC ou BCC;
 - [ ] sem alegação não comprovada;
-- [ ] sem link no primeiro contato, salvo autorização específica;
 - [ ] sem promessa de resultado garantido;
+- [ ] WhatsApp sem link antes da autorização para receber a demonstração;
+- [ ] e-mail `v2` com assunto `Posso preparar uma ideia de site para a [EMPRESA]?`;
+- [ ] e-mail `v2` contém exatamente o link `https://brunoferreirasalustiano.github.io/lead-finder-demos/`;
+- [ ] e-mail `v2` informa que não foi localizado site oficial próprio somente após verificação individual;
+- [ ] nenhum follow-up automático será criado;
+- [ ] timeout, falha ou resultado ambíguo interrompem o lote e não geram retry.
 
 ## Aprovação humana final
 
@@ -134,3 +143,4 @@ Justificativa objetiva:
   - [ ] `OPT_OUT`;
 - [ ] opt-out aplicado imediatamente quando solicitado;
 - [ ] nenhum follow-up automático criado;
+- [ ] nenhum retry executado após resultado ambíguo.

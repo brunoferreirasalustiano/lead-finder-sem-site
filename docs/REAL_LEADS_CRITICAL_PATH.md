@@ -115,7 +115,9 @@ Antes do primeiro contato:
 
 - template versionado e aprovado;
 - remetente identificado;
-- primeira mensagem curta e sem link;
+- WhatsApp curto e sem link até autorização explícita do destinatário;
+- e-mail empresarial público pode usar somente `pilot-email-first-contact@v2` com o link oficial `https://brunoferreirasalustiano.github.io/lead-finder-demos/`, depois da confirmação individual de ausência de site oficial próprio;
+- nenhum outro link, encurtador, tracking, PDF, imagem, anexo, preço ou proposta no primeiro contato;
 - finalidade clara;
 - opt-out disponível;
 - frequência limitada;
@@ -123,6 +125,8 @@ Antes do primeiro contato:
 - nenhum WhatsApp Web automatizado;
 - nenhum compromisso comercial assumido pela IA;
 - registro de envio e resultado preparado.
+
+A exceção do e-mail v2 não autoriza envio: o consumidor Gmail, o gate global #117 e a aprovação humana individual continuam obrigatórios.
 
 **Saída:** `FIRST_MANUAL_MESSAGE_PACKET_READY`.
 

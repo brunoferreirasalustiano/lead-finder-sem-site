@@ -17,6 +17,10 @@ const runtimeDescriptor = readFileSync(
   new URL('../../../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
 );
+const runtimeHmlDescriptor = readFileSync(
+  new URL('../../../database/security/create_lead_finder_api_runtime_hml.sql', import.meta.url),
+  'utf8',
+);
 
 const emailTables = [
   'operator_email_test_attempts',
@@ -34,6 +38,8 @@ const restrictedEmailFunctions = [
   'public.append_manual_email_send_event(uuid,text,text,character,text)',
 ] as const;
 
+const compact = (value: string) => value.replaceAll(' ', '').replaceAll('\n', '');
+
 describe('runtime email grants reconciliation', () => {
   it('revokes direct table access and removes every known runtime email policy', () => {
     expect(migration).toContain('REVOKE ALL ON TABLE');
@@ -48,13 +54,14 @@ describe('runtime email grants reconciliation', () => {
     ]) expect(migration).toContain(`DROP POLICY IF EXISTS ${policy}`);
   });
 
-  it('does not recreate direct email table grants or policies in the runtime descriptor', () => {
+  it('keeps the generic runtime descriptor free from HML manual email capabilities', () => {
     expect(runtimeDescriptor).not.toMatch(/GRANT\s+(?:SELECT|INSERT)[\s\S]*pilot_manual_email_send/i);
     expect(runtimeDescriptor).not.toMatch(/CREATE POLICY\s+lead_finder_api_runtime_(?:operator_email|manual_email)/i);
     expect(runtimeDescriptor).toContain('create_operator_email_test_attempt');
     expect(runtimeDescriptor).toContain('append_operator_email_test_event');
     for (const signature of restrictedEmailFunctions) {
-      expect(runtimeDescriptor.replaceAll(' ', '')).toContain(signature.replaceAll(' ', ''));
+      expect(compact(runtimeDescriptor)).not.toContain(compact(signature));
+      expect(compact(runtimeHmlDescriptor)).toContain(compact(signature));
     }
   });
 
@@ -84,8 +91,7 @@ describe('runtime email grants reconciliation', () => {
     expect(restrictedEmailMigration).not.toMatch(/CREATE POLICY/i);
     expect(restrictedEmailMigration).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
     for (const signature of restrictedEmailFunctions) {
-      const compact = restrictedEmailMigration.replaceAll(' ', '').replaceAll('\n', '');
-      expect(compact).toContain(signature.replaceAll(' ', ''));
+      expect(compact(restrictedEmailMigration)).toContain(compact(signature));
     }
   });
 });

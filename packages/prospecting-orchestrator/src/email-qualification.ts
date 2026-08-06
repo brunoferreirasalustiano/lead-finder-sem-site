@@ -108,7 +108,7 @@ const isValidLocalPart = (local: string): boolean => {
   if (local.length === 0 || local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
   for (const character of local) {
     const codePoint = character.codePointAt(0) ?? 0;
-    if (codePoint < 0x21 || codePoint > 0x7e || '()<>[]:;,@"'.includes(character)) return false;
+    if (codePoint < 0x21 || codePoint > 0x7e || '()<>[]:;,@"\\'.includes(character)) return false;
   }
   return true;
 };
@@ -141,7 +141,9 @@ export function inspectEmailSyntax(value: unknown): EmailSyntaxInspection {
   }
   const local = email.slice(0, at);
   const domain = normalizeDomain(email.slice(at + 1));
-  if (!isValidLocalPart(local) || domain === null) return { valid: false, domain, issue: 'INVALID_SYNTAX' };
+  if (!isValidLocalPart(local) || domain === null || local.length + 1 + domain.length > MAX_EMAIL_LENGTH) {
+    return { valid: false, domain, issue: 'INVALID_SYNTAX' };
+  }
   return { valid: true, domain, issue: null };
 }
 

@@ -93,4 +93,10 @@ describe('lead quality score', () => {
     });
     expect(empty.rejectionReasons).toEqual(['SCORE_BELOW_THRESHOLD', 'INSUFFICIENT_EVIDENCE']);
   });
+
+  it('fails closed when blocking reasons have an unexpected runtime shape', () => {
+    const result = evaluateLeadQualification({ evidence: completeEvidence, blockingReasons: { reason: 'OPT_OUT_FOUND' } as unknown as readonly LeadBlockingReason[] });
+    expect(result.eligible).toBe(false);
+    expect(result.blockingReasons).toEqual(['AMBIGUOUS_RESULT']);
+  });
 });

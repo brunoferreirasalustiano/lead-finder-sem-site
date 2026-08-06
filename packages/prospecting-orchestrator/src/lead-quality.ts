@@ -113,7 +113,7 @@ const normalizeTechnicalEmailResult = (value: unknown): TechnicalEmailQualificat
 
   const domain = normalizedDomainOrNull(candidate.domain);
   if (domain === undefined) return null;
-  const blockedBy = [...new Set(candidate.blockedBy as TechnicalEmailSafetySignal[])];
+  const blockedBy = [...new Set(candidate.blockedBy)];
   const state = candidate.state as TechnicalEmailQualificationResult['state'];
   const reason = candidate.reason as TechnicalEmailQualificationResult['reason'];
 

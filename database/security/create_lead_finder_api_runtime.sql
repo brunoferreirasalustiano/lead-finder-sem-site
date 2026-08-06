@@ -58,13 +58,7 @@ GRANT EXECUTE ON FUNCTION
   public.create_operator_channel_test_preparation(char, char, char, char, char, char),
   public.append_operator_channel_test_event(uuid, text, text, char, char, char),
   public.create_operator_email_test_attempt(char, char, char, char, char, char),
-  public.append_operator_email_test_event(uuid, text, char, char, char),
-  public.resolve_manual_email_contact_context(uuid, uuid, uuid, text),
-  public.create_manual_email_preparation(uuid, uuid, uuid, text, text, text, character, text, character, jsonb),
-  public.resolve_manual_email_preparation_context(uuid, text, boolean),
-  public.append_manual_email_open_event(uuid, text, character, text),
-  public.create_manual_email_send_attempt(uuid, text, character, character, character),
-  public.append_manual_email_send_event(uuid, text, text, character, text)
+  public.append_operator_email_test_event(uuid, text, char, char, char)
 TO lead_finder_api_runtime;
 
 -- Prospecting access is installed here, after migrations have established the

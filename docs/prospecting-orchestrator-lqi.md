@@ -71,3 +71,37 @@ Quando o denominador é zero, a taxa é `0`. A distribuição precisa somar exat
 5. API interna;
 6. dashboard;
 7. integração Gmail/Supabase sob feature flags e gates de segurança.
+
+## Qualificacao tecnica de e-mail
+
+O contrato `email-qualification.ts` adiciona uma avaliacao tecnica separada do
+score LQI. A avaliacao normaliza o dominio sem devolver o endereco completo,
+valida a sintaxe, recebe a existencia do dominio e o resultado MX por meio de um
+adapter injetavel e considera a proveniencia empresarial publica e os sinais de
+supressao. O adapter recebe somente o dominio normalizado e um timeout explicito;
+os testes usam fakes deterministicas e nao fazem DNS real.
+
+Os estados tem precedencia de seguranca: `BLOCKED` (hard bounce, opt-out,
+reclamacao, `DO_NOT_CONTACT`, `NAO_CONTATAR` ou bloqueio operacional), depois
+`INVALID` (sintaxe, dominio ou ausencia deterministica de MX), `UNCERTAIN`
+(timeout, erro/malformacao do resolver, evidencia empresarial ausente ou sinal
+desconhecido) e, por ultimo, `VALID`. Assim, qualquer bloqueio ou ambiguidade
+falha fechado mesmo quando o score seria 100. MX presente sozinho nao prova que
+uma caixa postal individual exista.
+
+O resultado tecnico nao cria um segundo score e nao adiciona pontos ao LQI. No
+fluxo existente, `INVALID` reutiliza `BUSINESS_EMAIL_NOT_CONFIRMED`,
+`UNCERTAIN` reutiliza `AMBIGUOUS_RESULT` e sinais de seguranca sao mapeados para
+os motivos de bloqueio ja existentes. A ausencia do campo tecnico preserva a
+compatibilidade com chamadas antigas; quando ele e informado, um resultado
+malformado tambem falha fechado.
+
+Nenhum endereco completo, resposta DNS bruta, payload de provider ou credencial
+e persistido em metricas, logs, fixtures ou mensagens de erro. As metricas de
+cidade continuam somente agregadas e usam apenas contadores existentes. Nao ha
+migration nem alteracao de schema nesta etapa. O rollback operacional consiste
+em remover a chamada do adapter e o campo opcional do input, sem mudanca de
+banco hospedado.
+
+Timeouts fora do intervalo permitido, resolver ausente e erros externos sao
+`UNCERTAIN`; nao existe SMTP probing, envio de teste, retry ou follow-up.

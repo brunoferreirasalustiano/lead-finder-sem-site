@@ -19,7 +19,6 @@ import {
 
 const provider = new DeterministicFakeMessagingProvider();
 const EMAIL_TEMPLATE_ID = 'pilot-email-first-contact' as const;
-const ACTIVE_EMAIL_TEMPLATE_VERSION = 'v2' as const;
 const IN_FLIGHT_GRACE_MS = 30_000;
 
 type PrepareInput = Readonly<{
@@ -83,6 +82,15 @@ type TerminalRow = Readonly<{
   replayed: boolean;
 }>;
 
+type PreparedEmail = Readonly<{
+  channel: 'EMAIL';
+  templateId: string;
+  templateVersion: string;
+  subject: string;
+  body: string;
+  fingerprint: string;
+}>;
+
 export type RestrictedManualEmailDeliveryResult = Readonly<{
   state: TerminalEvent | 'IN_PROGRESS';
   provider: 'GMAIL_API';
@@ -115,11 +123,11 @@ const record = (value: unknown): Record<string, unknown> =>
 
 const templateForEmail = (id: string, version: string): MessageTemplate => {
   if (id !== EMAIL_TEMPLATE_ID) {
-    throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
+    throw new ManualMessagingError('Template is not approved', 'INVALID_STATE');
   }
   if (version === approvedTemplates.emailV1.version) return approvedTemplates.emailV1;
   if (version === approvedTemplates.emailV2.version) return approvedTemplates.emailV2;
-  throw new ManualMessagingError('Template is not approved', 'INELIGIBLE');
+  throw new ManualMessagingError('Template is not approved', 'INVALID_STATE');
 };
 
 const variablesFor = (leadName: string, contactSource: string) => ({
@@ -175,7 +183,7 @@ const validateSnapshot = (
   context: Pick<PreparationContextRow,
     'template_id' | 'template_version' | 'result_snapshot' | 'result_fingerprint'
     | 'contact_fingerprint' | 'contact_source' | 'lead_name'>,
-) => {
+): PreparedEmail => {
   const snapshot = record(context.result_snapshot);
   if (digest(snapshot) !== String(context.result_fingerprint).trim()) {
     throw new ManualMessagingError('Persisted preparation fingerprint changed', 'INVALID_STATE');
@@ -189,6 +197,9 @@ const validateSnapshot = (
   const template = templateForEmail(context.template_id, context.template_version);
   const variables = variablesFor(context.lead_name, context.contact_source);
   const prepared = provider.prepare(template, variables);
+  if (prepared.channel !== 'EMAIL' || !prepared.subject) {
+    throw new ManualMessagingError('Approved email template has no subject', 'INVALID_STATE');
+  }
 
   if (snapshot['schemaVersion'] === 2) {
     if (snapshot['renderedInputsFingerprint'] !== digest(variables)
@@ -196,7 +207,7 @@ const validateSnapshot = (
       || JSON.stringify(snapshot['variables']) !== '{}') {
       throw new ManualMessagingError('Persisted preparation cannot be reconstructed', 'INVALID_STATE');
     }
-    return prepared;
+    return { ...prepared, channel: 'EMAIL', subject: prepared.subject };
   }
 
   const historicalVariables = record(snapshot['variables']);
@@ -204,7 +215,7 @@ const validateSnapshot = (
     || snapshot['messageFingerprint'] !== prepared.fingerprint) {
     throw new ManualMessagingError('Historical preparation cannot be reconstructed', 'INVALID_STATE');
   }
-  return prepared;
+  return { ...prepared, channel: 'EMAIL', subject: prepared.subject };
 };
 
 export async function prepareManualMessage(
@@ -226,66 +237,79 @@ export async function prepareManualMessage(
     principalId: auth.principalId,
   });
 
-  return withDatabaseErrorMapping(() => db.transaction(async (tx) => {
-    const contextRows = await tx.execute<ContactContextRow>(sql`
-      select * from public.resolve_manual_email_contact_context(
-        ${pilotRunId}::uuid,
-        ${leadId}::uuid,
-        ${input.contactId}::uuid,
-        ${auth.principalId}
-      )
-    `);
-    const context = contextRows[0];
-    if (!context) throw new ManualMessagingError('Requested contact is ineligible', 'INELIGIBLE');
+  try {
+    return await db.transaction(async (tx) => {
+      const contextRows = await tx.execute<ContactContextRow>(sql`
+        select * from public.resolve_manual_email_contact_context(
+          ${pilotRunId}::uuid,
+          ${leadId}::uuid,
+          ${input.contactId}::uuid,
+          ${auth.principalId}
+        )
+      `);
+      const context = contextRows[0];
+      if (!context) throw new ManualMessagingError('Requested contact is ineligible', 'INELIGIBLE');
 
-    const variables = variablesFor(context.lead_name, context.contact_source);
-    const prepared = provider.prepare(template, variables);
-    const snapshot: PreparedSnapshot = {
-      schemaVersion: 2,
-      channel: 'EMAIL',
-      templateId: template.id,
-      templateVersion: template.version,
-      variables: {},
-      renderedInputsFingerprint: digest(variables),
-      contactFingerprint: String(context.contact_fingerprint).trim(),
-      messageFingerprint: prepared.fingerprint,
-    };
-    const resultFingerprint = digest(snapshot);
-    const rows = await tx.execute<{
-      id: string;
-      prepared_at: Date;
-      expires_at: Date;
-      replayed: boolean;
-    }>(sql`
-      select id,prepared_at,expires_at,replayed
-      from public.create_manual_email_preparation(
-        ${pilotRunId}::uuid,
-        ${leadId}::uuid,
-        ${input.contactId}::uuid,
-        ${template.id},
-        ${template.version},
-        ${auth.principalId},
-        ${payloadFingerprint}::char(64),
-        ${input.idempotencyKey},
-        ${resultFingerprint}::char(64),
-        ${JSON.stringify(snapshot)}::jsonb
-      )
-    `);
-    const saved = rows[0];
-    if (!saved) throw new Error('MANUAL_EMAIL_PREPARATION_RESULT_MISSING');
-    return {
-      preparationId: saved.id,
-      state: 'PREPARED' as const,
-      channel: 'EMAIL' as const,
-      templateId: template.id,
-      templateVersion: template.version,
-      contactFingerprint: String(context.contact_fingerprint).trim(),
-      messageFingerprint: prepared.fingerprint,
-      preparedAt: saved.prepared_at,
-      expiresAt: saved.expires_at,
-      replayed: saved.replayed,
-    };
-  }));
+      const variables = variablesFor(context.lead_name, context.contact_source);
+      const prepared = provider.prepare(template, variables);
+      const snapshot: PreparedSnapshot = {
+        schemaVersion: 2,
+        channel: 'EMAIL',
+        templateId: template.id,
+        templateVersion: template.version,
+        variables: {},
+        renderedInputsFingerprint: digest(variables),
+        contactFingerprint: String(context.contact_fingerprint).trim(),
+        messageFingerprint: prepared.fingerprint,
+      };
+      const resultFingerprint = digest(snapshot);
+      const rows = await tx.execute<{
+        id: string;
+        prepared_at: Date;
+        expires_at: Date;
+        replayed: boolean;
+      }>(sql`
+        select id,prepared_at,expires_at,replayed
+        from public.create_manual_email_preparation(
+          ${pilotRunId}::uuid,
+          ${leadId}::uuid,
+          ${input.contactId}::uuid,
+          ${template.id},
+          ${template.version},
+          ${auth.principalId},
+          ${payloadFingerprint}::char(64),
+          ${input.idempotencyKey},
+          ${resultFingerprint}::char(64),
+          ${JSON.stringify(snapshot)}::jsonb
+        )
+      `);
+      const saved = rows[0];
+      if (!saved) throw new Error('MANUAL_EMAIL_PREPARATION_RESULT_MISSING');
+      return {
+        preparationId: saved.id,
+        state: 'PREPARED' as const,
+        channel: 'EMAIL' as const,
+        templateId: template.id,
+        templateVersion: template.version,
+        contactFingerprint: String(context.contact_fingerprint).trim(),
+        messageFingerprint: prepared.fingerprint,
+        preparedAt: saved.prepared_at,
+        expiresAt: saved.expires_at,
+        replayed: saved.replayed,
+      };
+    });
+  } catch (error) {
+    if (input.templateVersion === approvedTemplates.emailV1.version
+      && postgresCode(error) === '42501') {
+      throw new ManualMessagingError(
+        'New manual email preparations require template v2',
+        'EMAIL_CONSUMER_UNAVAILABLE',
+      );
+    }
+    const mapped = mapDatabaseError(error);
+    if (mapped) throw mapped;
+    throw error;
+  }
 }
 
 export async function recordManualOpen(
@@ -534,7 +558,10 @@ export async function sendPreparedManualEmail(
         attemptId: reserved.attempt.id,
       };
     } catch (terminalError) {
-      if (postgresCode(terminalError) !== '23505') throw terminalError;
+      const isTerminalConflict = postgresCode(terminalError) === '23505'
+        || (terminalError instanceof ManualMessagingError
+          && terminalError.code === 'IDEMPOTENCY_CONFLICT');
+      if (!isTerminalConflict) throw terminalError;
       const replay = await sendPreparedManualEmail(db, preparationId, auth, runtime);
       return { ...replay, replayed: true };
     }

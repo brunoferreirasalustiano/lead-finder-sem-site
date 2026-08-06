@@ -1,0 +1,152 @@
+name: Temporary PR215 CI contract fixes
+
+on:
+  push:
+    branches:
+      - feature/restricted-gmail-consumer
+
+permissions:
+  contents: write
+
+jobs:
+  apply-exact-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/restricted-gmail-consumer
+          fetch-depth: 1
+
+      - name: Apply exact CI-proven fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime_path = Path('scripts/restricted-manual-email-runtime.integration.ts')
+          runtime = runtime_path.read_text(encoding='utf-8')
+          runtime_old = "const owner = postgres(sourceUrl, { max: 4 });"
+          runtime_new = "const owner = postgres(sourceUrl, { max: 1 });"
+          if runtime.count(runtime_old) != 1:
+              raise SystemExit(
+                  f'expected one transactional owner pool declaration, found {runtime.count(runtime_old)}'
+              )
+          runtime_path.write_text(runtime.replace(runtime_old, runtime_new), encoding='utf-8')
+
+          index_path = Path('packages/database/src/index.ts')
+          index = index_path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  """import {
+            normalizeAddress,
+            normalizeBusinessName,
+            type LeadStatus,
+            type NormalizedLead,
+          } from '@lead-finder/shared';""",
+                  """import {
+            normalizeAddress,
+            normalizeBusinessName,
+            type AuthorizationContext,
+            type LeadStatus,
+            type NormalizedLead,
+          } from '@lead-finder/shared';""",
+              ),
+              (
+                  """import { safeLeadSelection } from './safe-projections.js';
+          export * from './schema.js';""",
+                  """import { safeLeadSelection } from './safe-projections.js';
+          import { recordManualOpen as recordLegacyManualOpen } from './manual-messaging.js';
+          import { recordManualOpen as recordRestrictedManualOpen } from './restricted-manual-email.js';
+          export * from './schema.js';""",
+              ),
+              (
+                  """export {
+            prepareManualMessage,
+            recordManualOpen,
+            sendPreparedManualEmail,
+            type RestrictedManualEmailDeliveryResult,
+          } from './restricted-manual-email.js';""",
+                  """export {
+            prepareManualMessage,
+            sendPreparedManualEmail,
+            type RestrictedManualEmailDeliveryResult,
+          } from './restricted-manual-email.js';""",
+              ),
+              (
+                  """export type Database = ReturnType<typeof createDatabase>['db'];
+          export async function checkDatabase(db: Database): Promise<void> {""",
+                  """export type Database = ReturnType<typeof createDatabase>['db'];
+
+          type PostgresErrorLike = { code?: unknown; cause?: unknown };
+          const postgresErrorCode = (error: unknown): string | undefined => {
+            const visited = new Set<object>();
+            let current: unknown = error;
+            while (current && typeof current === 'object' && !visited.has(current)) {
+              visited.add(current);
+              const candidate = current as PostgresErrorLike;
+              if (typeof candidate.code === 'string') return candidate.code;
+              current = candidate.cause;
+            }
+            return undefined;
+          };
+
+          export async function recordManualOpen(
+            db: Database,
+            preparationId: string,
+            input: { idempotencyKey: string },
+            auth: AuthorizationContext,
+          ) {
+            try {
+              const preparations = await db.execute<{ channel: string }>(sql`
+                select channel
+                from public.pilot_manual_message_preparations
+                where id=${preparationId}::uuid
+                limit 1
+              `);
+              if (preparations[0]?.channel === 'EMAIL') {
+                return recordRestrictedManualOpen(db, preparationId, input, auth);
+              }
+              return recordLegacyManualOpen(db, preparationId, input, auth);
+            } catch (error) {
+              if (postgresErrorCode(error) === '42501') {
+                return recordRestrictedManualOpen(db, preparationId, input, auth);
+              }
+              throw error;
+            }
+          }
+
+          export async function checkDatabase(db: Database): Promise<void> {""",
+              ),
+          ]
+          for old, new in replacements:
+              if index.count(old) != 1:
+                  raise SystemExit(
+                      f'expected exactly one index contract fragment, found {index.count(old)}: {old[:80]!r}'
+                  )
+              index = index.replace(old, new)
+          index_path.write_text(index, encoding='utf-8')
+          PY
+
+      - name: Verify focused diff
+        shell: bash
+        run: |
+          git diff --check
+          actual="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            packages/database/src/index.ts \
+            scripts/restricted-manual-email-runtime.integration.ts | sort)"
+          test "$actual" = "$expected"
+          git diff -- packages/database/src/index.ts scripts/restricted-manual-email-runtime.integration.ts
+
+      - name: Commit exact fix and remove temporary workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/temp-fix-pr215-ci-contracts.yml
+          git add packages/database/src/index.ts scripts/restricted-manual-email-runtime.integration.ts
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: preserve manual messaging runtime contracts"
+          git push origin HEAD:feature/restricted-gmail-consumer

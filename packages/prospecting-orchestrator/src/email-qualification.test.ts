@@ -45,6 +45,12 @@ describe('technical email qualification', () => {
     expect(JSON.stringify(result)).not.toContain('not-an-address');
   });
 
+  it('rejects a backslash in an unquoted local part', () => {
+    const result = classifyTechnicalEmail({ ...validInput, email: 'sales\\team@example.com' });
+    expect(result.state).toBe('INVALID');
+    expect(result.reason).toBe('INVALID_SYNTAX');
+  });
+
   it('normalizes the domain before resolution', async () => {
     const { resolver, resolve } = resolverFor({ domainExists: 'YES', mx: 'PRESENT' });
     const result = await evaluateTechnicalEmail(validInput, resolver);
@@ -55,6 +61,14 @@ describe('technical email qualification', () => {
 
   it('accepts IDN domains after deterministic ASCII normalization', () => {
     expect(inspectEmailSyntax('contato@exämple.com')).toMatchObject({ valid: true, domain: 'xn--exmple-cua.com' });
+  });
+
+  it('rechecks the complete address length after IDN normalization', () => {
+    const idnLabel = 'é'.repeat(20);
+    const idnDomain = `${Array(7).fill(idnLabel).join('.')}.com`;
+    const result = inspectEmailSyntax(`${'a'.repeat(64)}@${idnDomain}`);
+    expect(result.valid).toBe(false);
+    expect(result.issue).toBe('INVALID_SYNTAX');
   });
 
   it.each([
@@ -138,6 +152,15 @@ describe('technical email integration with LQI', () => {
     expect(result.rejectionReasons).toEqual([]);
   });
 
+  it('rebuilds a safe allowlisted technical result instead of preserving extra properties', () => {
+    const technicalEmail = { ...classifyTechnicalEmail(validInput), email: 'person@example.com', providerPayload: { raw: true } };
+    const result = evaluateLeadQualification({ evidence: completeEvidence, technicalEmail });
+    expect(result.eligible).toBe(true);
+    expect(result.technicalEmail).not.toHaveProperty('email');
+    expect(result.technicalEmail).not.toHaveProperty('providerPayload');
+    expect(JSON.stringify(result.technicalEmail)).not.toContain('person@example.com');
+  });
+
   it('maps INVALID and UNCERTAIN to existing fail-closed gates', () => {
     const invalid = evaluateLeadQualification({
       evidence: completeEvidence,
@@ -161,6 +184,27 @@ describe('technical email integration with LQI', () => {
     expect(result.score.total).toBe(100);
     expect(result.eligible).toBe(false);
     expect(result.blockingReasons).toContain('BOUNCE_FOUND');
+  });
+
+  it('fails closed for safety signals paired with a non-BLOCKED state', () => {
+    const malformed = {
+      ...classifyTechnicalEmail({ ...validInput, domainResolution: { domainExists: 'NO', mx: 'UNKNOWN' } }),
+      blockedBy: ['HARD_BOUNCE'],
+    };
+    const result = evaluateLeadQualification({ evidence: completeEvidence, technicalEmail: malformed });
+    expect(result.eligible).toBe(false);
+    expect(result.blockingReasons).toContain('AMBIGUOUS_RESULT');
+    expect(result.technicalEmail?.state).toBe('UNCERTAIN');
+  });
+
+  it('fails closed when any state carries a malformed normalized domain', () => {
+    const malformed = {
+      ...classifyTechnicalEmail({ ...validInput, publicBusinessProvenance: 'UNKNOWN' }),
+      domain: 'bad_domain.example',
+    };
+    const result = evaluateLeadQualification({ evidence: completeEvidence, technicalEmail: malformed });
+    expect(result.eligible).toBe(false);
+    expect(result.blockingReasons).toContain('AMBIGUOUS_RESULT');
   });
 
   it('fails closed for a malformed technical result supplied at runtime', () => {

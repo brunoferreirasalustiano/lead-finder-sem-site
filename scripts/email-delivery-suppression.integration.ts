@@ -9,24 +9,6 @@ const sql = postgres(databaseUrl, { max: 1 });
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const suffix = randomUUID();
 let transactionOpen = false;
-let integrationPassed = false;
-let currentStage = 'INITIALIZE';
-
-function markStage(stage: string) {
-  currentStage = stage;
-  console.log(JSON.stringify({
-    diagnostic: 'EMAIL_DELIVERY_SUPPRESSION_INTEGRATION',
-    stage,
-  }));
-}
-
-function sanitizedErrorCode(error: unknown) {
-  if (typeof error !== 'object' || error === null || !('code' in error)) {
-    return undefined;
-  }
-  const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
-}
 
 async function expectRejectedInSavepoint(
   name: string,
@@ -42,11 +24,9 @@ async function expectRejectedInSavepoint(
 }
 
 try {
-  markStage('BEGIN_TRANSACTION');
   await sql`begin`;
   transactionOpen = true;
 
-  markStage('HARD_BOUNCE_FIXTURE');
   const hardBounceLeadId = randomUUID();
   const hardBounceContactId = randomUUID();
   const hardBounceFingerprint = digest(`hard-bounce:${suffix}`);
@@ -69,7 +49,23 @@ try {
       'PUBLIC_BUSINESS_SOURCE',1,now(),true,false
     )`;
 
-  markStage('HARD_BOUNCE_INSERT');
+  const hardBounceBindingFingerprint = (await sql<{ fingerprint: string }[]>`
+    select contact_resolution_fingerprint fingerprint
+    from lead_contacts
+    where id=${hardBounceContactId}::uuid`)[0]?.fingerprint;
+  assert.match(hardBounceBindingFingerprint ?? '', /^[0-9a-f]{64}$/);
+
+  await expectRejectedInSavepoint('suppression_binding_mismatch', () => sql`
+    select * from public.record_email_delivery_suppression(
+      ${hardBounceContactId}::uuid,
+      ${hardBounceLeadId}::uuid,
+      ${'0'.repeat(64)}::char(64),
+      'HARD_BOUNCE',
+      'GMAIL_DSN',
+      ${digest(`binding-mismatch:${suffix}`)}::char(64),
+      ${hardBounceOccurredAt}::timestamptz
+    )`);
+
   const firstHardBounce = (await sql<{
     suppression_id: string;
     replayed: boolean;
@@ -79,13 +75,13 @@ try {
     select * from public.record_email_delivery_suppression(
       ${hardBounceContactId}::uuid,
       ${hardBounceLeadId}::uuid,
+      ${hardBounceBindingFingerprint}::char(64),
       'HARD_BOUNCE',
       'GMAIL_DSN',
       ${hardBounceFingerprint}::char(64),
       ${hardBounceOccurredAt}::timestamptz
     )`)[0]!;
 
-  markStage('CONTACT_INVALIDATION');
   assert.equal(firstHardBounce.replayed, false);
   assert.equal(firstHardBounce.contact_invalidated, true);
   assert.equal(firstHardBounce.lead_email_suppressed, false);
@@ -96,7 +92,6 @@ try {
     false,
   );
 
-  markStage('IDEMPOTENT_REPLAY');
   const replayedHardBounce = (await sql<{
     suppression_id: string;
     replayed: boolean;
@@ -105,6 +100,7 @@ try {
     select * from public.record_email_delivery_suppression(
       ${hardBounceContactId}::uuid,
       ${hardBounceLeadId}::uuid,
+      ${hardBounceBindingFingerprint}::char(64),
       'HARD_BOUNCE',
       'GMAIL_DSN',
       ${hardBounceFingerprint}::char(64),
@@ -119,18 +115,17 @@ try {
     1,
   );
 
-  markStage('DIVERGENT_REPLAY_REJECTION');
   await expectRejectedInSavepoint('suppression_conflict', () => sql`
     select * from public.record_email_delivery_suppression(
       ${hardBounceContactId}::uuid,
       ${hardBounceLeadId}::uuid,
+      ${hardBounceBindingFingerprint}::char(64),
       'INVALID_CONTACT',
       'GMAIL_DSN',
       ${hardBounceFingerprint}::char(64),
       ${hardBounceOccurredAt}::timestamptz
     )`);
 
-  markStage('OPT_OUT_FIXTURE');
   const optOutLeadId = randomUUID();
   const optOutContactId = randomUUID();
   const optOutFingerprint = digest(`opt-out:${suffix}`);
@@ -153,7 +148,12 @@ try {
       'PUBLIC_BUSINESS_SOURCE',1,now(),true,false
     )`;
 
-  markStage('OPT_OUT_INSERT');
+  const optOutBindingFingerprint = (await sql<{ fingerprint: string }[]>`
+    select contact_resolution_fingerprint fingerprint
+    from lead_contacts
+    where id=${optOutContactId}::uuid`)[0]?.fingerprint;
+  assert.match(optOutBindingFingerprint ?? '', /^[0-9a-f]{64}$/);
+
   const optOut = (await sql<{
     replayed: boolean;
     contact_invalidated: boolean;
@@ -162,13 +162,13 @@ try {
     select * from public.record_email_delivery_suppression(
       ${optOutContactId}::uuid,
       ${optOutLeadId}::uuid,
+      ${optOutBindingFingerprint}::char(64),
       'OPT_OUT',
       'OPERATOR_CONFIRMED',
       ${optOutFingerprint}::char(64),
       ${optOutOccurredAt}::timestamptz
     )`)[0]!;
 
-  markStage('OPT_OUT_ASSERTIONS');
   assert.equal(optOut.replayed, false);
   assert.equal(optOut.contact_invalidated, false);
   assert.equal(optOut.lead_email_suppressed, true);
@@ -185,18 +185,15 @@ try {
     1,
   );
 
-  markStage('APPEND_ONLY_UPDATE_REJECTION');
   await expectRejectedInSavepoint('suppression_update', () => sql`
     update contact_delivery_suppressions
     set source='ALTERED'
     where event_fingerprint=${optOutFingerprint}::char(64)`);
 
-  markStage('APPEND_ONLY_DELETE_REJECTION');
   await expectRejectedInSavepoint('suppression_delete', () => sql`
     delete from contact_delivery_suppressions
     where event_fingerprint=${optOutFingerprint}::char(64)`);
 
-  integrationPassed = true;
   console.log(JSON.stringify({
     result: 'EMAIL_DELIVERY_SUPPRESSION_INTEGRATION_PASS',
     hardBounceInvalidated: true,
@@ -204,17 +201,8 @@ try {
     idempotency: 'PASS',
     appendOnly: 'PASS',
   }));
-} catch (error) {
-  console.error(JSON.stringify({
-    result: 'EMAIL_DELIVERY_SUPPRESSION_INTEGRATION_FAIL',
-    stage: currentStage,
-    errorName: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
-    errorCode: sanitizedErrorCode(error),
-  }));
-  throw error;
 } finally {
   if (transactionOpen) {
-    if (integrationPassed) markStage('TRANSACTION_ROLLBACK');
     await sql`rollback`.catch(() => undefined);
   }
   await sql.end();

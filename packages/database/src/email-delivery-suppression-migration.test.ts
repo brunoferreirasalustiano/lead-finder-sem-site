@@ -33,8 +33,8 @@ describe('email delivery suppression migration', () => {
     expect(sql).toContain(
       'REVOKE ALL ON TABLE public.contact_delivery_suppressions FROM PUBLIC;',
     );
-    expect(sql).toContain(
-      'REVOKE ALL ON TABLE public.contact_delivery_suppressions\n      FROM lead_finder_api_runtime;',
+    expect(sql).toMatch(
+      /REVOKE ALL ON TABLE public\.contact_delivery_suppressions\s+FROM lead_finder_api_runtime;/,
     );
     expect(sql).not.toContain(
       'GRANT INSERT ON TABLE public.contact_delivery_suppressions TO service_role',
@@ -52,7 +52,9 @@ describe('email delivery suppression migration', () => {
     expect(sql).toContain("normalized_reason IN ('OPT_OUT','COMPLAINT')");
     expect(sql).toContain("p_lead_id,'EMAIL','EMAIL_' || normalized_reason,normalized_source");
     expect(sql).toContain("RAISE EXCEPTION 'suppression target is not an email contact'");
+    expect(sql).toContain("RAISE EXCEPTION 'suppression contact binding has changed'");
     expect(sql).toContain("RAISE EXCEPTION 'suppression fingerprint conflicts with persisted event'");
+    expect(sql).toContain('p_contact_resolution_fingerprint char(64)');
     expect(sql).toContain('hashtextextended(\'manual-messaging:\' || p_lead_id::text,0)');
   });
 });

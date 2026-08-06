@@ -55,8 +55,8 @@ async function main() {
   const eventFingerprint = canonicalFingerprint(fingerprintKey, parsed.data);
   const sql = postgres(databaseUrl, { max: 1 });
   try {
-    const contacts = await sql<{ contact_id: string; lead_id: string }[]>`
-      select id contact_id,lead_id
+    const contacts = await sql<{ contact_id: string; lead_id: string; fingerprint: string }[]>`
+      select id contact_id,lead_id,contact_resolution_fingerprint fingerprint
       from public.lead_contacts
       where upper(type)='EMAIL'
         and lower(normalized_value)=${parsed.data.recipient}
@@ -75,6 +75,7 @@ async function main() {
       from public.record_email_delivery_suppression(
         ${contact.contact_id}::uuid,
         ${contact.lead_id}::uuid,
+        ${contact.fingerprint}::char(64),
         ${parsed.data.reason},
         ${parsed.data.source},
         ${eventFingerprint}::char(64),

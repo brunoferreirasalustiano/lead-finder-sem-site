@@ -42,9 +42,14 @@ EXECUTE FUNCTION public.reject_manual_messaging_history_mutation();
 ALTER TABLE public.contact_delivery_suppressions ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.contact_delivery_suppressions FROM PUBLIC;
 
+DROP FUNCTION IF EXISTS public.record_email_delivery_suppression(
+  uuid,uuid,text,text,char,timestamptz
+);
+
 CREATE OR REPLACE FUNCTION public.record_email_delivery_suppression(
   p_contact_id uuid,
   p_lead_id uuid,
+  p_contact_resolution_fingerprint char(64),
   p_reason text,
   p_source text,
   p_event_fingerprint char(64),
@@ -72,6 +77,9 @@ BEGIN
   IF p_contact_id IS NULL OR p_lead_id IS NULL THEN
     RAISE EXCEPTION 'suppression target is required' USING ERRCODE='22023';
   END IF;
+  IF btrim(p_contact_resolution_fingerprint::text) !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'suppression contact binding is invalid' USING ERRCODE='22023';
+  END IF;
   IF normalized_reason NOT IN (
     'HARD_BOUNCE','INVALID_CONTACT','OPT_OUT','COMPLAINT'
   ) THEN
@@ -95,7 +103,7 @@ BEGIN
     hashtextextended('email-delivery-suppression:' || p_contact_id::text,0)
   );
 
-  SELECT c.id,c.lead_id,c.type,c.is_valid
+  SELECT c.id,c.lead_id,c.type,c.is_valid,c.contact_resolution_fingerprint
   INTO target_contact
   FROM public.lead_contacts c
   WHERE c.id=p_contact_id AND c.lead_id=p_lead_id
@@ -104,6 +112,12 @@ BEGIN
   IF NOT FOUND OR upper(target_contact.type) <> 'EMAIL' THEN
     RAISE EXCEPTION 'suppression target is not an email contact'
       USING ERRCODE='22023';
+  END IF;
+  IF target_contact.contact_resolution_fingerprint IS DISTINCT FROM
+    lower(btrim(p_contact_resolution_fingerprint::text))
+  THEN
+    RAISE EXCEPTION 'suppression contact binding has changed'
+      USING ERRCODE='40001';
   END IF;
 
   SELECT *
@@ -179,7 +193,7 @@ END
 $function$;
 
 REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
-  uuid,uuid,text,text,char,timestamptz
+  uuid,uuid,char,text,text,char,timestamptz
 ) FROM PUBLIC;
 
 DO $roles$
@@ -187,14 +201,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
     REVOKE ALL ON TABLE public.contact_delivery_suppressions FROM anon;
     REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
-      uuid,uuid,text,text,char,timestamptz
+      uuid,uuid,char,text,text,char,timestamptz
     ) FROM anon;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
     REVOKE ALL ON TABLE public.contact_delivery_suppressions FROM authenticated;
     REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
-      uuid,uuid,text,text,char,timestamptz
+      uuid,uuid,char,text,text,char,timestamptz
     ) FROM authenticated;
   END IF;
 
@@ -202,7 +216,7 @@ BEGIN
     REVOKE ALL ON TABLE public.contact_delivery_suppressions
       FROM lead_finder_api_runtime;
     REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
-      uuid,uuid,text,text,char,timestamptz
+      uuid,uuid,char,text,text,char,timestamptz
     ) FROM lead_finder_api_runtime;
   END IF;
 
@@ -210,7 +224,7 @@ BEGIN
     REVOKE ALL ON TABLE public.contact_delivery_suppressions FROM service_role;
     GRANT SELECT ON TABLE public.contact_delivery_suppressions TO service_role;
     GRANT EXECUTE ON FUNCTION public.record_email_delivery_suppression(
-      uuid,uuid,text,text,char,timestamptz
+      uuid,uuid,char,text,text,char,timestamptz
     ) TO service_role;
   END IF;
 END

@@ -15,7 +15,7 @@ if (!sourceUrl) throw new Error('DATABASE_URL is required');
 
 const roleName = 'lead_finder_api_runtime';
 const rolePassword = 'synthetic-restricted-email-role-password-0001';
-const owner = postgres(sourceUrl, { max: 4 });
+const owner = postgres(sourceUrl, { max: 1 });
 const createSql = await readFile(
   new URL('../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',

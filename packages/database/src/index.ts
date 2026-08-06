@@ -4,11 +4,14 @@ import postgres from 'postgres';
 import {
   normalizeAddress,
   normalizeBusinessName,
+  type AuthorizationContext,
   type LeadStatus,
   type NormalizedLead,
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
+import { recordManualOpen as recordLegacyManualOpen } from './manual-messaging.js';
+import { recordManualOpen as recordRestrictedManualOpen } from './restricted-manual-email.js';
 export * from './schema.js';
 export * from './safe-projections.js';
 export * from './crm-mutation-projections.js';
@@ -19,6 +22,11 @@ export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
+export {
+  prepareManualMessage,
+  sendPreparedManualEmail,
+  type RestrictedManualEmailDeliveryResult,
+} from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';
 export * from './deployment-processing.js';
@@ -40,6 +48,19 @@ export function createDatabase(databaseUrl: string, options: { max?: number; ssl
   return { db: drizzle(client), close: () => client.end() };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
+
+export async function recordManualOpen(
+  db: Database,
+  preparationId: string,
+  input: { idempotencyKey: string },
+  auth: AuthorizationContext,
+) {
+  if (!auth.permissions.has('manual-messaging:open')) {
+    return recordLegacyManualOpen(db, preparationId, input, auth);
+  }
+  return recordRestrictedManualOpen(db, preparationId, input, auth);
+}
+
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }

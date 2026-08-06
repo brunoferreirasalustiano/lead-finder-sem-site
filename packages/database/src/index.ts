@@ -126,7 +126,7 @@ export async function insertLeads(
     normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
   }));
   if (values.length === 0) return 0;
-  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id, status: leads.status }))
+  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
     .length;
 }
 export interface LeadFilters {
@@ -211,7 +211,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, id));
+      .where(eq(collectionJobs.id, job.id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

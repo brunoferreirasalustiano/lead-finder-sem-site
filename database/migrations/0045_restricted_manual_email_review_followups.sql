@@ -28,7 +28,6 @@ DECLARE
   resolved record;
   legacy_contact_fingerprint text;
   effective_contact_fingerprint char(64);
-  replay_contact_value text;
   replay_contact_source text;
   replay_lead_name text;
 BEGIN
@@ -61,19 +60,19 @@ BEGIN
 
   -- OPENED is append-only historical state. A retry must be able to recover the
   -- persisted transition even after the preparation expires or current contact
-  -- eligibility changes. Only static ownership/channel identity is rechecked.
+  -- eligibility changes. This replay does not expose the raw contact value.
   IF NOT p_require_open AND EXISTS (
     SELECT 1 FROM public.pilot_manual_message_events event
     WHERE event.preparation_id=p_preparation_id AND event.event_type='OPENED'
   ) THEN
-    SELECT contact.normalized_value,contact.source,coalesce(lead.name,'empresa')
-    INTO replay_contact_value,replay_contact_source,replay_lead_name
+    SELECT contact.source,coalesce(lead.name,'empresa')
+    INTO replay_contact_source,replay_lead_name
     FROM public.lead_contacts contact
     JOIN public.leads lead ON lead.id=contact.lead_id
     WHERE contact.id=preparation.contact_id
       AND contact.lead_id=preparation.lead_id;
 
-    IF replay_contact_value IS NULL OR replay_contact_source IS NULL OR replay_lead_name IS NULL THEN
+    IF replay_contact_source IS NULL OR replay_lead_name IS NULL THEN
       RAISE EXCEPTION 'manual email preparation context is missing' USING ERRCODE='P0002';
     END IF;
 
@@ -82,7 +81,7 @@ BEGIN
 
     RETURN QUERY SELECT preparation.pilot_run_id,preparation.lead_id,preparation.contact_id,
       preparation.template_id,preparation.template_version,preparation.result_fingerprint,
-      preparation.result_snapshot,replay_contact_value,effective_contact_fingerprint,
+      preparation.result_snapshot,''::text,effective_contact_fingerprint,
       replay_contact_source,replay_lead_name,preparation.expires_at;
     RETURN;
   END IF;

@@ -232,10 +232,25 @@ try {
   assert.equal(replayedOpen.replayed, true);
   assert.equal(replayedOpen.eventId, firstOpen.eventId);
 
+  await raw`
+    update pilot_manual_message_preparations
+    set expires_at=clock_timestamp()-interval '1 second'
+    where id=${replayPrepared.preparationId}::uuid`;
+
+  const replayedExpiredOpen = await recordManualOpen(
+    db,
+    replayPrepared.preparationId,
+    { idempotencyKey: randomUUID() },
+    auth,
+  );
+  assert.equal(replayedExpiredOpen.replayed, true);
+  assert.equal(replayedExpiredOpen.eventId, firstOpen.eventId);
+
   console.log(JSON.stringify({
     result: 'RESTRICTED_MANUAL_EMAIL_REVIEW_REGRESSIONS_PASS',
     legacyPre0025ReplayOpenSend: true,
     openedReplayAfterOptOut: true,
+    openedReplayAfterExpiry: true,
     providerCalls,
     realRecipients: 0,
     messagesSent: 0,

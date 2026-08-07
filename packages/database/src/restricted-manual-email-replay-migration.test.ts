@@ -5,6 +5,10 @@ const migration = readFileSync(
   new URL('../../../database/migrations/0045_restricted_manual_email_review_followups.sql', import.meta.url),
   'utf8',
 );
+const openOrderMigration = readFileSync(
+  new URL('../../../database/migrations/0046_restricted_manual_email_open_order.sql', import.meta.url),
+  'utf8',
+);
 
 describe('restricted manual email replay hardening migration', () => {
   it('recognizes only the historical V1 fingerprint shape', () => {
@@ -24,5 +28,19 @@ describe('restricted manual email replay hardening migration', () => {
     );
     expect(existingEventLookup).toBeGreaterThan(-1);
     expect(liveResolution).toBeGreaterThan(existingEventLookup);
+  });
+
+  it('inserts a first OPENED before live validation and validates it with require_open', () => {
+    const firstInsert = openOrderMigration.indexOf(
+      'INSERT INTO public.pilot_manual_message_events(',
+    );
+    const liveResolution = openOrderMigration.indexOf(
+      'PERFORM 1 FROM public.resolve_manual_email_preparation_context(',
+    );
+    expect(firstInsert).toBeGreaterThanOrEqual(0);
+    expect(liveResolution).toBeGreaterThan(firstInsert);
+    expect(openOrderMigration.slice(liveResolution, liveResolution + 220)).toContain(
+      'p_preparation_id,p_operator_principal_id,true',
+    );
   });
 });

@@ -24,6 +24,7 @@ const conflicts = {
 };
 
 // Keep this HML principal intentionally limited to the manual email permission boundary.
+// Revalidate this boundary whenever the HML runtime baseline changes.
 describe('HML email authentication configuration', () => {
   it('is disabled by default and rejects partial hidden configuration', () => {
     expect(parseHmlEmailAuthentication({}, conflicts)).toBeUndefined();

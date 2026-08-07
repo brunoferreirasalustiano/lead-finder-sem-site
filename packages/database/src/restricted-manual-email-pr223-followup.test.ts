@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizationContext } from '@lead-finder/shared';
-import type { Database } from './index.js';
+import { recordManualOpen, type Database } from './index.js';
 import { sendPreparedManualEmail } from './restricted-manual-email.js';
 
 const databaseIndex = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const apiSource = readFileSync(
   new URL('../../../apps/api/src/app.ts', import.meta.url),
+  'utf8',
+);
+const restrictedEmailSource = readFileSync(
+  new URL('./restricted-manual-email.ts', import.meta.url),
   'utf8',
 );
 const auth = createAuthorizationContext({
@@ -28,6 +32,44 @@ describe('PR 223 restricted manual email follow-ups', () => {
     const section = databaseIndex.slice(start, end);
     expect(section).toContain("auth.permissions.has('manual-messaging:open')");
     expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
+    expect(section).not.toContain('recordLegacyManualOpen');
+  });
+
+  it.each([false, true])(
+    'fails closed before database dispatch when OPEN permission is absent (send=%s)',
+    async (sendEnabled) => {
+      const execute = vi.fn();
+      const transaction = vi.fn();
+      const db = { execute, transaction } as unknown as Database;
+      const unauthorized = createAuthorizationContext({
+        principalId: `restricted-email-pr223-${sendEnabled ? 'send' : 'no-send'}`,
+        permissions: new Set(sendEnabled ? ['manual-messaging:send'] : []),
+        authenticationMethod: 'unit-test',
+      });
+
+      await expect(recordManualOpen(
+        db,
+        '00000000-0000-4000-8000-000000000206',
+        { idempotencyKey: `pr223-open-permission-denied-${sendEnabled}` },
+        unauthorized,
+      )).rejects.toThrow('MANUAL_MESSAGING_OPEN_PERMISSION_REQUIRED');
+      expect(execute).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it('authorizes OPEN independently and keeps the channel fallback behind that boundary', () => {
+    const start = restrictedEmailSource.indexOf('export async function recordManualOpen(');
+    const end = restrictedEmailSource.indexOf('const terminalResult', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const section = restrictedEmailSource.slice(start, end);
+    const permissionOffset = section.indexOf("requirePermission(auth, 'manual-messaging:open')");
+    const fallbackOffset = section.indexOf("postgresCode(error) === '42809'");
+    expect(permissionOffset).toBeGreaterThanOrEqual(0);
+    expect(fallbackOffset).toBeGreaterThan(permissionOffset);
+    expect(section).toContain('recordLegacyManualOpen(db, preparationId, input, auth)');
   });
 
   it.each([

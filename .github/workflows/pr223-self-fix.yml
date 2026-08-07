@@ -39,6 +39,13 @@ jobs:
                   raise SystemExit(f'{path}: expected one match, found {count}: {old[:100]!r}')
               p.write_text(text.replace(old, new, 1))
 
+          def replace_first(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'{path}: expected at least one match: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1))
+
           replace_once(
               'packages/database/src/index.ts',
               "  if (!auth.permissions.has('manual-messaging:send')) {\n    return recordLegacyManualOpen(db, preparationId, input, auth);\n  }\n  return recordRestrictedManualOpen(db, preparationId, input, auth);",
@@ -62,7 +69,7 @@ jobs:
           )
 
           old_v1_exact = """        AND (\n          result_snapshot - ARRAY[\n            'schemaVersion',\n            'channel',\n            'templateId',\n            'templateVersion',\n            'variables',\n            'renderedInputsFingerprint',\n            'contactFingerprint',\n            'messageFingerprint'\n          ]::text[]\n        ) = '{}'::jsonb\n"""
-          replace_once(
+          replace_first(
               'database/migrations/0044_manual_email_historical_snapshot_compatibility.sql',
               old_v1_exact,
               '',

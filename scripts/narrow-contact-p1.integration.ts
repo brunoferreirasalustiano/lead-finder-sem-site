@@ -36,7 +36,7 @@ const provider = new DeterministicFakeMessagingProvider();
 const principalId = 'narrow-contact-p1-test';
 const auth = createAuthorizationContext({
   principalId,
-  permissions: new Set(['manual-messaging:prepare']),
+  permissions: new Set(['manual-messaging:prepare', 'manual-messaging:open']),
   authenticationMethod: 'integration-test',
 });
 const phone = '+12025550100';
@@ -319,7 +319,7 @@ try {
     authentication: {
       token,
       principalId,
-      principalPermissions: ['manual-messaging:prepare'],
+      principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open'],
     },
   });
   try {

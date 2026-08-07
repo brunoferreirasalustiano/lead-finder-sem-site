@@ -264,7 +264,7 @@ try {
   );
   assert.equal(replay.preparationId, prepared.preparationId);
   assert.equal(replay.replayed, true);
-  assert.equal(await tableCount('pilot_manual_message_preparations'), 1);
+  assert.equal(await tableCount('pilot_manual_message_preparations'), 2);
 
   const newV1 = await fixture();
   await expectCode(

@@ -190,10 +190,21 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build
+      - name: Apply migrations through the pre-consumer baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r file; do
+            MIGRATION_ONLY_VERSION="${file%.sql}" npm run db:migrate
+          done < <(find database/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | awk '$0 <= "0041_email_delivery_suppression.sql"')
+      - name: Pre-provision existing runtime role before consumer migrations
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_api_runtime.sql
       - name: Apply migrations twice to verify version control
         run: npm run db:migrate && npm run db:migrate
       - name: Verify split migration registry compatibility
         run: npm run test:migration-registry
+      - name: Reapply and verify HML runtime grants after migrations
+        run: npm run test:runtime-grants-after-migrations
       - name: Verify Supabase Data API deny-all defaults on PostgreSQL
         run: npm run test:supabase-data-api-security
       - name: Verify manual assisted messaging on PostgreSQL 16
@@ -266,6 +277,15 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build
+      - name: Apply migrations through the pre-consumer baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r file; do
+            MIGRATION_ONLY_VERSION="${file%.sql}" npm run db:migrate
+          done < <(find database/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | awk '$0 <= "0041_email_delivery_suppression.sql"')
+      - name: Pre-provision existing runtime role before consumer migrations
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_api_runtime.sql
       - name: Confirm PostgreSQL 17 server
         run: |
           set -Eeuo pipefail
@@ -279,8 +299,8 @@ jobs:
           npm run test:migration-registry
       - name: Exercise atomic runtime role provisioning
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_api_runtime.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/security/create_lead_finder_contact_resolver_runtime.sql
+          npm run test:runtime-grants-after-migrations
       - name: Verify narrow role and migration behavior on PostgreSQL 17
         run: |
           npm run test:narrow-contact-resolution

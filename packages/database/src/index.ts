@@ -12,8 +12,8 @@ import {
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 import {
-  ManualMessagingError,
   prepareManualMessage as prepareLegacyManualMessage,
+  recordManualOpen as recordLegacyManualOpen,
 } from './manual-messaging.js';
 import {
   prepareManualMessage as prepareRestrictedManualMessage,
@@ -81,7 +81,7 @@ export async function recordManualOpen(
   auth: AuthorizationContext,
 ) {
   if (!auth.permissions.has('manual-messaging:open')) {
-    throw new ManualMessagingError('Manual message open is not authorized', 'INELIGIBLE');
+    return recordLegacyManualOpen(db, preparationId, input, auth);
   }
   return recordRestrictedManualOpen(db, preparationId, input, auth);
 }

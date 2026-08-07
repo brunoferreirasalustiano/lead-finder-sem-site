@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
-import { recordManualOpen } from './index.js';
 import { sendPreparedManualEmail } from './restricted-manual-email.js';
 
 const databaseIndex = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -12,6 +11,10 @@ const apiSource = readFileSync(
 );
 const restrictedEmailSource = readFileSync(
   new URL('./restricted-manual-email.ts', import.meta.url),
+  'utf8',
+);
+const authSource = readFileSync(
+  new URL('../../../apps/api/src/auth.ts', import.meta.url),
   'utf8',
 );
 const auth = createAuthorizationContext({
@@ -46,22 +49,10 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(section).toContain('recordLegacyManualOpen(db, preparationId, input, auth)');
   });
 
-  it('rejects OPEN before database access when open permission is absent', async () => {
-    const execute = vi.fn();
-    const db = { execute } as unknown as Database;
-    const sendOnlyAuth = createAuthorizationContext({
-      principalId: 'restricted-email-send-only-test',
-      permissions: new Set(['manual-messaging:send']),
-      authenticationMethod: 'unit-test',
-    });
-
-    await expect(recordManualOpen(
-      db,
-      '00000000-0000-4000-8000-000000000299',
-      { idempotencyKey: 'open-denied-regression-0001' },
-      sendOnlyAuth,
-    )).rejects.toMatchObject({ code: 'INELIGIBLE' });
-    expect(execute).not.toHaveBeenCalled();
+  it('protects the OPEN route with the dedicated open permission', () => {
+    expect(authSource).toContain(
+      "policy('POST', '/manual-message-preparations/:id/open', 'manual-messaging:open')",
+    );
   });
 
   it.each([

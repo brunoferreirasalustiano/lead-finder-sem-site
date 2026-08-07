@@ -39,23 +39,28 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(section).not.toContain('recordLegacyManualOpen');
   });
 
-  it('fails closed before database dispatch when OPEN permission is absent', async () => {
+  it.each([false, true])(
+    'fails closed before database dispatch when OPEN permission is absent (send=%s)',
+    async (sendEnabled) => {
     const execute = vi.fn();
-    const db = { execute } as unknown as Database;
-    const sendOnlyAuth = createAuthorizationContext({
-      principalId: 'restricted-email-pr223-send-only',
-      permissions: new Set(['manual-messaging:send']),
+    const transaction = vi.fn();
+    const db = { execute, transaction } as unknown as Database;
+    const unauthorized = createAuthorizationContext({
+      principalId: `restricted-email-pr223-${sendEnabled ? 'send' : 'no-send'}`,
+      permissions: new Set(sendEnabled ? ['manual-messaging:send'] : []),
       authenticationMethod: 'unit-test',
     });
 
     await expect(recordManualOpen(
       db,
       '00000000-0000-4000-8000-000000000206',
-      { idempotencyKey: 'pr223-open-permission-denied' },
-      sendOnlyAuth,
+      { idempotencyKey: `pr223-open-permission-denied-${sendEnabled}` },
+      unauthorized,
     )).rejects.toThrow('MANUAL_MESSAGING_OPEN_PERMISSION_REQUIRED');
     expect(execute).not.toHaveBeenCalled();
-  });
+    expect(transaction).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps non-email OPEN on the legacy channel path', () => {
     const start = restrictedEmailSource.indexOf('export async function recordManualOpen(');

@@ -222,6 +222,39 @@ try {
   assert.equal(persisted.result_text.includes('Posso preparar'), false);
   assert.equal(persisted.result_text.includes('lead-finder-demos'), false);
 
+  const crossPrincipalFixture = await fixture();
+  const crossPrincipalPrepared = await prepareManualMessage(
+    db,
+    crossPrincipalFixture.pilotId,
+    crossPrincipalFixture.leadId,
+    emailInput(crossPrincipalFixture.emailId),
+    primaryActor,
+  );
+  await expectCode(
+    open(crossPrincipalPrepared.preparationId, secondaryActor),
+    'INELIGIBLE',
+  );
+  assert.equal(
+    await tableCount('pilot_manual_message_events'),
+    0,
+    'cross-principal OPEN must not persist an event',
+  );
+  const crossPrincipalOpenKey = randomUUID();
+  const crossPrincipalOwnerOpen = await recordManualOpen(
+    db,
+    crossPrincipalPrepared.preparationId,
+    { idempotencyKey: crossPrincipalOpenKey },
+    primaryActor,
+  );
+  assert.equal(crossPrincipalOwnerOpen.replayed, false);
+  const crossPrincipalReplay = await recordManualOpen(
+    db,
+    crossPrincipalPrepared.preparationId,
+    { idempotencyKey: crossPrincipalOpenKey },
+    primaryActor,
+  );
+  assert.equal(crossPrincipalReplay.replayed, true);
+
   const replay = await prepareManualMessage(
     db,
     eligible.pilotId,

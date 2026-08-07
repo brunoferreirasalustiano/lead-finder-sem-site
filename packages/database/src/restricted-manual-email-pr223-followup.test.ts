@@ -10,6 +10,10 @@ const apiSource = readFileSync(
   new URL('../../../apps/api/src/app.ts', import.meta.url),
   'utf8',
 );
+const restrictedEmailSource = readFileSync(
+  new URL('./restricted-manual-email.ts', import.meta.url),
+  'utf8',
+);
 const auth = createAuthorizationContext({
   principalId: 'restricted-email-pr223-test',
   permissions: new Set([
@@ -29,6 +33,17 @@ describe('PR 223 restricted manual email follow-ups', () => {
     const section = databaseIndex.slice(start, end);
     expect(section).toContain("auth.permissions.has('manual-messaging:open')");
     expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
+  });
+
+  it('keeps non-email OPEN on the legacy channel path', () => {
+    const start = restrictedEmailSource.indexOf('export async function recordManualOpen(');
+    const end = restrictedEmailSource.indexOf('const terminalResult', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const section = restrictedEmailSource.slice(start, end);
+    expect(section).toContain("postgresCode(error) === '42809'");
+    expect(section).toContain('recordLegacyManualOpen(db, preparationId, input, auth)');
   });
 
   it('rejects OPEN before database access when open permission is absent', async () => {

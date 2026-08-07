@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json tsconfig*.json eslint.config.js ./
 COPY apps ./apps
@@ -10,9 +10,22 @@ RUN npm ci && npm run build
 # One-shot operational tools keep the TypeScript runner and other dev tooling.
 FROM build AS tools
 
-# Runtime images receive only production dependencies.
+# JavaScript dependencies and compiled output are architecture-independent. Build and
+# validate them on BUILDPLATFORM so multiarch images do not execute Node/npm under QEMU.
 FROM build AS production-deps
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+  && test ! -d node_modules/glob \
+  && test ! -d node_modules/tsx \
+  && test ! -d node_modules/typescript \
+  && test -f packages/shared/dist/index.js \
+  && test -f packages/database/dist/index.js \
+  && test -f packages/prospecting-orchestrator/dist/index.js \
+  && test -f packages/messaging/dist/index.js \
+  && test -f packages/email/dist/index.js \
+  && test -f packages/whatsapp/dist/index.js \
+  && test -f packages/batch-processor/dist/index.js \
+  && test -f database/migrations/0001_initial.sql \
+  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor')"
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
@@ -38,5 +51,4 @@ COPY --from=build --chown=node:node /app/packages/whatsapp/package.json ./packag
 COPY --from=build --chown=node:node /app/packages/whatsapp/dist ./packages/whatsapp/dist
 COPY --from=build --chown=node:node /app/packages/batch-processor/package.json ./packages/batch-processor/package.json
 COPY --from=build --chown=node:node /app/packages/batch-processor/dist ./packages/batch-processor/dist
-RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/prospecting-orchestrator/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/email/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f database/migrations/0001_initial.sql && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor')"
 CMD ["node","apps/api/dist/index.js"]

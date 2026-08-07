@@ -19,7 +19,6 @@ import {
 
 const provider = new DeterministicFakeMessagingProvider();
 const EMAIL_TEMPLATE_ID = 'pilot-email-first-contact' as const;
-const IN_FLIGHT_GRACE_MS = 30_000;
 
 type PrepareInput = Readonly<{
   contactId: string;
@@ -384,6 +383,20 @@ const terminalResult = (
   };
 };
 
+const readExistingAttempt = async (
+  db: Database,
+  preparationId: string,
+  auth: AuthorizationContext,
+): Promise<AttemptRow | undefined> => withDatabaseErrorMapping(async () => {
+  const rows = await db.execute<AttemptRow>(sql`
+    select * from public.get_manual_email_send_attempt(
+      ${preparationId}::uuid,
+      ${auth.principalId}
+    )
+  `);
+  return rows[0];
+});
+
 const appendTerminal = async (
   db: Database,
   attemptId: string,
@@ -445,6 +458,13 @@ export async function sendPreparedManualEmail(
   },
 ): Promise<RestrictedManualEmailDeliveryResult> {
   requirePermission(auth, 'manual-messaging:send');
+
+  const existingAttempt = await readExistingAttempt(db, preparationId, auth);
+  if (existingAttempt) {
+    const persistedTerminal = terminalResult(existingAttempt, true);
+    if (persistedTerminal) return persistedTerminal;
+  }
+
   if (!runtime.sendEnabled || runtime.killSwitchEnabled) {
     throw new ManualMessagingError('Manual email delivery is unavailable', 'EMAIL_CONSUMER_UNAVAILABLE');
   }
@@ -482,27 +502,9 @@ export async function sendPreparedManualEmail(
   if (priorTerminal) return priorTerminal;
 
   if (reserved.attempt.replayed) {
-    const ageMs = Date.now() - new Date(reserved.attempt.reserved_at).getTime();
-    if (ageMs < IN_FLIGHT_GRACE_MS) {
-      return {
-        state: 'IN_PROGRESS',
-        provider: 'GMAIL_API',
-        replayed: true,
-        attemptId: reserved.attempt.id,
-      };
-    }
-    const terminal = await appendTerminal(
-      db,
-      reserved.attempt.id,
-      auth,
-      'AMBIGUOUS',
-      undefined,
-      'RESERVATION_WITHOUT_TERMINAL_EVENT',
-    );
     return {
-      state: terminal.event_type,
+      state: 'IN_PROGRESS',
       provider: 'GMAIL_API',
-      errorCode: terminal.error_code ?? 'RESERVATION_WITHOUT_TERMINAL_EVENT',
       replayed: true,
       attemptId: reserved.attempt.id,
     };

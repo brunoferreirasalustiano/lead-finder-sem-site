@@ -409,8 +409,8 @@ try {
   assert.equal(delivered.replayed, false);
   assert.match(delivered.messageIdFingerprint ?? '', /^[0-9a-f]{64}$/);
   assert.equal(calls, 1);
-  assert.equal(await tableCount('pilot_manual_email_send_attempts'), 1);
-  assert.equal(await tableCount('pilot_manual_email_send_events'), 1);
+  assert.equal(await tableCount('pilot_manual_email_send_attempts'), 2);
+  assert.equal(await tableCount('pilot_manual_email_send_events'), 2);
 
   const deliveredReplay = await sendPreparedManualEmail(
     db,

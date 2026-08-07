@@ -14,7 +14,6 @@ import { safeLeadSelection } from './safe-projections.js';
 import {
   ManualMessagingError,
   prepareManualMessage as prepareLegacyManualMessage,
-  recordManualOpen as recordLegacyManualOpen,
 } from './manual-messaging.js';
 import {
   prepareManualMessage as prepareRestrictedManualMessage,

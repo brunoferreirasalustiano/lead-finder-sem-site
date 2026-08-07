@@ -37,6 +37,8 @@ describe('post-migration HML runtime grant provisioning', () => {
     expect(provisioner).toContain('HML_RUNTIME_FUNCTION_ALLOWLIST_INCOMPLETE');
     expect(provisioner).toContain('HML_RUNTIME_PUBLIC_EXECUTE');
     expect(provisioner).toContain('HML_RUNTIME_PUBLIC_ROLE_EXECUTE');
+    expect(provisioner).toContain('HML_RUNTIME_RESTRICTED_TABLE_ALLOWLIST_INCOMPLETE');
+    expect(provisioner).toContain('directTablePrivileges.length !== restrictedTables.length');
     expect(provisioner).not.toContain('|| true');
     expect(provisioner).not.toContain('.catch(');
     for (const name of hmlFunctions) expect(provisioner).toContain(`'${name}'`);

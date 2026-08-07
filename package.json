@@ -52,7 +52,7 @@
     "test:migration-registry": "tsx scripts/migration-registry-compatibility.integration.ts"
   },
   "overrides": {
-    "nanoid": "5.1.6"
+    "nanoid": "5.1.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -7,6 +7,7 @@ export const hmlEmailAuthPermissions = Object.freeze([
   'manual-messaging:open',
   'manual-messaging:send',
   'manual-messaging:cancel',
+  'operator-email-test:send',
 ] as const) satisfies TemporaryAuthentication['principalPermissions'];
 
 export type HmlEmailAuthEnvironment = Readonly<Record<string, string | undefined>>;

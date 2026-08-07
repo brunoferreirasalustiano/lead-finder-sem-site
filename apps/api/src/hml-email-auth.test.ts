@@ -23,8 +23,8 @@ const conflicts = {
   now,
 };
 
-// Keep this HML principal intentionally limited to the manual email permission boundary.
-// Revalidate this boundary whenever the HML runtime baseline changes.
+// Keep this HML principal limited to manual email plus the sender==recipient
+// operator Gmail self-test. It grants no campaign, collection or WhatsApp send.
 describe('HML email authentication configuration', () => {
   it('is disabled by default and rejects partial hidden configuration', () => {
     expect(parseHmlEmailAuthentication({}, conflicts)).toBeUndefined();
@@ -35,7 +35,7 @@ describe('HML email authentication configuration', () => {
       .toThrow('must be true or false');
   });
 
-  it('returns only the fixed manual email permissions for a valid principal', () => {
+  it('returns only the fixed email permissions for a valid principal', () => {
     const parsed = parseHmlEmailAuthentication(validEnvironment, conflicts);
     expect(parsed).toEqual({
       tokenHash,
@@ -49,6 +49,7 @@ describe('HML email authentication configuration', () => {
       'manual-messaging:open',
       'manual-messaging:send',
       'manual-messaging:cancel',
+      'operator-email-test:send',
     ]);
     expect(parsed?.principalPermissions).not.toContain('manual-messaging:cloud-send');
     expect(parsed?.principalPermissions).not.toContain('campaigns:write');

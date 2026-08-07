@@ -145,4 +145,16 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(section).not.toContain("code:'MANUAL_EMAIL_DISABLED'");
   });
 
+  it('maps unavailable email delivery to HTTP 503 after replay lookup', () => {
+    const start = apiSource.indexOf('const manualMessagingRoute=');
+    const end = apiSource.indexOf(
+      "app.post('/pilots/:id/leads/:leadId/manual-messages/prepare'",
+      start,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const section = apiSource.slice(start, end).replace(/\s+/g, '');
+    expect(section).toContain("error.code==='EMAIL_CONSUMER_UNAVAILABLE'?503:422");
+  });
 });

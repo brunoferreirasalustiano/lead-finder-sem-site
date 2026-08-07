@@ -370,7 +370,7 @@ try {
     payload: { contactId: companyDomain.emailId, requestedChannel: 'EMAIL', templateId: 'pilot-email-first-contact', templateVersion: 'v1' },
     headers: { ...headers, 'idempotency-key': randomUUID() },
   });
-  assert.equal(eligibleEmailResponse.statusCode, 422);
+  assert.equal(eligibleEmailResponse.statusCode, 503);
   assert.equal(eligibleEmailResponse.json().code, 'EMAIL_CONSUMER_UNAVAILABLE');
   const ineligibleUrl = `/pilots/${noOptIn.pilotId}/leads/${noOptIn.leadId}/manual-messages/prepare`;
   assert.equal((await app.inject({ method: 'POST', url: ineligibleUrl, payload: { ...payload, contactId: noOptIn.phoneId }, headers: { ...headers, 'idempotency-key': randomUUID() } })).statusCode, 422);

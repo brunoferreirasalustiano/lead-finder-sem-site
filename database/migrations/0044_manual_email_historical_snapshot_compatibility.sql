@@ -26,6 +26,18 @@ ALTER TABLE public.pilot_manual_message_preparations
       (
         template_version = 'v1'
         AND (
+          result_snapshot - ARRAY[
+            'schemaVersion',
+            'channel',
+            'templateId',
+            'templateVersion',
+            'variables',
+            'renderedInputsFingerprint',
+            'contactFingerprint',
+            'messageFingerprint'
+          ]::text[]
+        ) = '{}'::jsonb
+        AND (
           NOT (result_snapshot ? 'schemaVersion')
           OR result_snapshot->'schemaVersion' = '2'::jsonb
         )

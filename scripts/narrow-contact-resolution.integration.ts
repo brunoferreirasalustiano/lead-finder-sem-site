@@ -33,7 +33,7 @@ const passed: string[] = [];
 const pass = (name: string) => passed.push(name);
 const actor = createAuthorizationContext({
   principalId: 'narrow-contact-test',
-  permissions: new Set(['manual-messaging:prepare']),
+  permissions: new Set(['manual-messaging:prepare', 'manual-messaging:open']),
   authenticationMethod: 'integration-test',
 });
 
@@ -630,7 +630,7 @@ try {
     authentication: {
       token,
       principalId: 'http-narrow-operator',
-      principalPermissions: ['manual-messaging:prepare'],
+      principalPermissions: ['manual-messaging:prepare', 'manual-messaging:open'],
     },
   });
   let httpText = '';

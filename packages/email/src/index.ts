@@ -6,19 +6,20 @@ const printableSecret = (name: string, maximum: number) => z
   .min(16)
   .max(maximum)
   .regex(/^[\x21-\x7e]+$/, `${name} must contain printable non-space ASCII characters only`);
+const googleClientId = z
+  .string()
+  .trim()
+  .min(16)
+  .max(512)
+  .regex(
+    /^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$/,
+    'Google OAuth client ID is invalid',
+  );
 const operatorEmailConfigurationSchema = z
   .object({
     sender: normalizedEmail,
     recipient: normalizedEmail,
-    googleClientId: z
-      .string()
-      .trim()
-      .min(16)
-      .max(512)
-      .regex(
-        /^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$/,
-        'Google OAuth client ID is invalid',
-      ),
+    googleClientId,
     googleClientSecret: printableSecret('Google OAuth client secret', 512),
     googleRefreshToken: printableSecret('Google OAuth refresh token', 1_024),
   })
@@ -39,6 +40,12 @@ const operatorEmailConfigurationSchema = z
       });
     }
   });
+const manualEmailConfigurationSchema = z.object({
+  sender: normalizedEmail,
+  googleClientId,
+  googleClientSecret: printableSecret('Google OAuth client secret', 512),
+  googleRefreshToken: printableSecret('Google OAuth refresh token', 1_024),
+}).strict();
 
 const subjectSchema = z
   .string()
@@ -73,7 +80,11 @@ export type OperatorEmailDeliveryReceipt = Readonly<{
   messageId: string;
   response: string;
 }>;
-export type ManualEmailMessage = Readonly<{ subject: string; body: string; recipient: string }>;
+export type ManualEmailMessage = Readonly<{
+  subject: string;
+  body: string;
+  recipient: string;
+}>;
 
 export type OperatorEmailFetch = (
   input: string | URL | Request,
@@ -88,7 +99,8 @@ export class OperatorEmailDeliveryError extends Error {
     readonly code:
       | 'INVALID_CONFIGURATION'
       | 'TOKEN_EXCHANGE_FAILED'
-      | 'DELIVERY_REJECTED',
+      | 'DELIVERY_REJECTED'
+      | 'DELIVERY_AMBIGUOUS',
   ) {
     super(message);
   }
@@ -129,6 +141,53 @@ const parseJson = async (response: Response): Promise<unknown> => {
   }
 };
 
+const exchangeRefreshToken = async (
+  configuration: Readonly<{
+    googleClientId: string;
+    googleClientSecret: string;
+    googleRefreshToken: string;
+  }>,
+  fetchImpl: OperatorEmailFetch,
+) => {
+  const tokenBody = new URLSearchParams({
+    client_id: configuration.googleClientId,
+    client_secret: configuration.googleClientSecret,
+    refresh_token: configuration.googleRefreshToken,
+    grant_type: 'refresh_token',
+  });
+  let tokenResponse: Response;
+  try {
+    tokenResponse = await fetchImpl('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: tokenBody,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new OperatorEmailDeliveryError(
+      'Google OAuth token exchange failed',
+      'TOKEN_EXCHANGE_FAILED',
+    );
+  }
+  const token = tokenResponse.ok
+    ? tokenResponseSchema.safeParse(await parseJson(tokenResponse))
+    : undefined;
+  if (!token?.success) {
+    throw new OperatorEmailDeliveryError(
+      'Google OAuth token exchange failed',
+      'TOKEN_EXCHANGE_FAILED',
+    );
+  }
+  return token.data.access_token;
+};
+
+const manualDeliveryOutcomeCode = (status: number) =>
+  status < 400
+    || status >= 500
+    || status === 408 || status === 409 || status === 425 || status === 429
+    ? 'DELIVERY_AMBIGUOUS' as const
+    : 'DELIVERY_REJECTED' as const;
+
 export function createGmailApiOperatorEmailConsumer(
   input: {
     sender: string;
@@ -151,38 +210,7 @@ export function createGmailApiOperatorEmailConsumer(
   return {
     async sendInternalTest(message: OperatorEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
       const raw = createRawMessage(configuration, message, 'OPERATOR_TEST');
-      const tokenBody = new URLSearchParams({
-        client_id: configuration.googleClientId,
-        client_secret: configuration.googleClientSecret,
-        refresh_token: configuration.googleRefreshToken,
-        grant_type: 'refresh_token',
-      });
-
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetchImpl('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/x-www-form-urlencoded',
-          },
-          body: tokenBody,
-          signal: AbortSignal.timeout(10_000),
-        });
-      } catch {
-        throw new OperatorEmailDeliveryError(
-          'Google OAuth token exchange failed',
-          'TOKEN_EXCHANGE_FAILED',
-        );
-      }
-      const token = tokenResponse.ok
-        ? tokenResponseSchema.safeParse(await parseJson(tokenResponse))
-        : undefined;
-      if (!token?.success) {
-        throw new OperatorEmailDeliveryError(
-          'Google OAuth token exchange failed',
-          'TOKEN_EXCHANGE_FAILED',
-        );
-      }
+      const accessToken = await exchangeRefreshToken(configuration, fetchImpl);
 
       let deliveryResponse: Response;
       try {
@@ -191,7 +219,7 @@ export function createGmailApiOperatorEmailConsumer(
           {
             method: 'POST',
             headers: {
-              authorization: `Bearer ${token.data.access_token}`,
+              authorization: `Bearer ${accessToken}`,
               'content-type': 'application/json',
             },
             body: JSON.stringify({ raw }),
@@ -231,30 +259,73 @@ export function createGmailApiManualEmailConsumer(
   },
   fetchImpl: OperatorEmailFetch = defaultFetch,
 ) {
-  const parsed = z.object({
-    sender: normalizedEmail,
-    googleClientId: z.string().trim().min(16).max(512),
-    googleClientSecret: printableSecret('Google OAuth client secret', 512),
-    googleRefreshToken: printableSecret('Google OAuth refresh token', 1_024),
-  }).strict().safeParse(input);
-  if (!parsed.success) throw new OperatorEmailDeliveryError('Manual email configuration is invalid', 'INVALID_CONFIGURATION');
+  const parsed = manualEmailConfigurationSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new OperatorEmailDeliveryError(
+      'Manual email configuration is invalid',
+      'INVALID_CONFIGURATION',
+    );
+  }
   const configuration = parsed.data;
   return {
     async sendManual(message: ManualEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
       const recipient = normalizedEmail.parse(message.recipient);
-      const raw = createRawMessage(configuration, { ...message, recipient }, 'MANUAL_PILOT');
-      const tokenBody = new URLSearchParams({ client_id: configuration.googleClientId, client_secret: configuration.googleClientSecret, refresh_token: configuration.googleRefreshToken, grant_type: 'refresh_token' });
-      let tokenResponse: Response;
-      try { tokenResponse = await fetchImpl('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: tokenBody, signal: AbortSignal.timeout(10_000) }); }
-      catch { throw new OperatorEmailDeliveryError('Google OAuth token exchange failed', 'TOKEN_EXCHANGE_FAILED'); }
-      const token = tokenResponse.ok ? tokenResponseSchema.safeParse(await parseJson(tokenResponse)) : undefined;
-      if (!token?.success) throw new OperatorEmailDeliveryError('Google OAuth token exchange failed', 'TOKEN_EXCHANGE_FAILED');
+      const raw = createRawMessage(
+        configuration,
+        { ...message, recipient },
+        'MANUAL_PILOT',
+      );
+      const accessToken = await exchangeRefreshToken(configuration, fetchImpl);
+
       let deliveryResponse: Response;
-      try { deliveryResponse = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { authorization: `Bearer ${token.data.access_token}`, 'content-type': 'application/json' }, body: JSON.stringify({ raw }), signal: AbortSignal.timeout(15_000) }); }
-      catch { throw new OperatorEmailDeliveryError('Manual email delivery was rejected', 'DELIVERY_REJECTED'); }
-      const delivery = deliveryResponse.ok ? gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse)) : undefined;
-      if (!delivery?.success) throw new OperatorEmailDeliveryError('Manual email delivery was rejected', 'DELIVERY_REJECTED');
-      return { provider: 'GMAIL_API', messageId: delivery.data.id, response: `HTTP ${deliveryResponse.status}` };
+      try {
+        deliveryResponse = await fetchImpl(
+          'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${accessToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ raw }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+      } catch {
+        throw new OperatorEmailDeliveryError(
+          'Manual email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
+        );
+      }
+      if (!deliveryResponse.ok) {
+        const code = manualDeliveryOutcomeCode(deliveryResponse.status);
+        throw new OperatorEmailDeliveryError(
+          code === 'DELIVERY_AMBIGUOUS'
+            ? 'Manual email provider outcome is unknown'
+            : 'Manual email delivery was rejected',
+          code,
+        );
+      }
+      if (!deliveryResponse.ok) {
+        throw new OperatorEmailDeliveryError(
+          'Manual email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
+        );
+      }
+      const delivery = gmailSendResponseSchema.safeParse(
+        await parseJson(deliveryResponse),
+      );
+      if (!delivery.success) {
+        throw new OperatorEmailDeliveryError(
+          'Manual email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
+        );
+      }
+      return {
+        provider: 'GMAIL_API',
+        messageId: delivery.data.id,
+        response: `HTTP ${deliveryResponse.status}`,
+      };
     },
   } as const;
 }

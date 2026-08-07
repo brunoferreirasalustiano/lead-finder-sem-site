@@ -1,14 +1,24 @@
 import { and, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import type { MessagingChannel } from '@lead-finder/messaging';
 import {
   normalizeAddress,
   normalizeBusinessName,
+  type AuthorizationContext,
   type LeadStatus,
   type NormalizedLead,
 } from '@lead-finder/shared';
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
+import {
+  prepareManualMessage as prepareLegacyManualMessage,
+  recordManualOpen as recordLegacyManualOpen,
+} from './manual-messaging.js';
+import {
+  prepareManualMessage as prepareRestrictedManualMessage,
+  recordManualOpen as recordRestrictedManualOpen,
+} from './restricted-manual-email.js';
 export * from './schema.js';
 export * from './safe-projections.js';
 export * from './crm-mutation-projections.js';
@@ -19,6 +29,10 @@ export * from './campaign-outbox.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';
+export {
+  sendPreparedManualEmail,
+  type RestrictedManualEmailDeliveryResult,
+} from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';
 export * from './deployment-processing.js';
@@ -40,6 +54,38 @@ export function createDatabase(databaseUrl: string, options: { max?: number; ssl
   return { db: drizzle(client), close: () => client.end() };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
+
+export async function prepareManualMessage(
+  db: Database,
+  pilotRunId: string,
+  leadId: string,
+  input: {
+    contactId: string;
+    requestedChannel: MessagingChannel;
+    templateId: string;
+    templateVersion: string;
+    idempotencyKey: string;
+  },
+  auth: AuthorizationContext,
+) {
+  if (input.requestedChannel !== 'EMAIL' || !auth.permissions.has('manual-messaging:send')) {
+    return prepareLegacyManualMessage(db, pilotRunId, leadId, input, auth);
+  }
+  return prepareRestrictedManualMessage(db, pilotRunId, leadId, input, auth);
+}
+
+export async function recordManualOpen(
+  db: Database,
+  preparationId: string,
+  input: { idempotencyKey: string },
+  auth: AuthorizationContext,
+) {
+  if (!auth.permissions.has('manual-messaging:send')) {
+    return recordLegacyManualOpen(db, preparationId, input, auth);
+  }
+  return recordRestrictedManualOpen(db, preparationId, input, auth);
+}
+
 export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }

@@ -118,6 +118,11 @@ const verify = async () => {
     where namespace_record.nspname='public'
       and table_record.relname in ${sql(restrictedTables)}
   `;
+  if (directTablePrivileges.length !== restrictedTables.length) {
+    throw new Error(
+      `HML_RUNTIME_RESTRICTED_TABLE_ALLOWLIST_INCOMPLETE:${directTablePrivileges.length}/${restrictedTables.length}`,
+    );
+  }
   if (directTablePrivileges.some((row) => row.privileged)) {
     throw new Error('RUNTIME_ROLE_DIRECT_RESTRICTED_TABLE_ACCESS');
   }
@@ -125,7 +130,7 @@ const verify = async () => {
   return {
     role: runtimeRole,
     hmlFunctions: executable.length,
-    restrictedTablesWithoutDirectAccess: restrictedTables.length,
+    restrictedTablesWithoutDirectAccess: directTablePrivileges.length,
   };
 };
 

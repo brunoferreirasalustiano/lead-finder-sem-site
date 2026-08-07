@@ -181,6 +181,11 @@ const exchangeRefreshToken = async (
   return token.data.access_token;
 };
 
+const manualDeliveryOutcomeCode = (status: number) =>
+  status >= 500 || status === 408 || status === 409 || status === 425 || status === 429
+    ? 'DELIVERY_AMBIGUOUS' as const
+    : 'DELIVERY_REJECTED' as const;
+
 export function createGmailApiOperatorEmailConsumer(
   input: {
     sender: string;
@@ -291,9 +296,12 @@ export function createGmailApiManualEmailConsumer(
         );
       }
       if (!deliveryResponse.ok) {
+        const code = manualDeliveryOutcomeCode(deliveryResponse.status);
         throw new OperatorEmailDeliveryError(
-          'Manual email delivery was rejected',
-          'DELIVERY_REJECTED',
+          code === 'DELIVERY_AMBIGUOUS'
+            ? 'Manual email provider outcome is unknown'
+            : 'Manual email delivery was rejected',
+          code,
         );
       }
       const delivery = gmailSendResponseSchema.safeParse(

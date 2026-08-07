@@ -232,8 +232,8 @@ try {
   assert.equal(replayedOpen.replayed, true);
   assert.equal(replayedOpen.eventId, firstOpen.eventId);
 
-  // Build an immutable synthetic history that is already expired but has a
-  // durable OPENED event. This proves replay without bypassing append-only ACLs.
+  // Build immutable synthetic history with a valid short TTL. OPENED is created
+  // while the preparation is live, then replayed only after natural expiry.
   const expiredFixture = await fixture();
   const expiredContact = (await raw<{
     contact_resolution_fingerprint: string;
@@ -272,17 +272,18 @@ try {
       ${approvedTemplates.emailV2.id},${approvedTemplates.emailV2.version},
       ${auth.principalId},${digest({ expiredPreparationId })},${expiredPreparationKey},
       ${digest(expiredSnapshot)},${raw.json(expiredSnapshot)},
-      clock_timestamp()-interval '1 second'
+      clock_timestamp()+interval '3 seconds'
     )`;
-  const expiredOpenId = randomUUID();
-  await raw`
-    insert into pilot_manual_message_events(
-      id,preparation_id,event_type,result,operator_principal_id,observation,
-      payload_fingerprint,idempotency_key
-    ) values(
-      ${expiredOpenId}::uuid,${expiredPreparationId}::uuid,'OPENED',null,
-      ${auth.principalId},null,${digest({ expiredOpenId })},${randomUUID()}
-    )`;
+
+  const openedBeforeExpiry = await recordManualOpen(
+    db,
+    expiredPreparationId,
+    { idempotencyKey: randomUUID() },
+    auth,
+  );
+  assert.equal(openedBeforeExpiry.replayed, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 3_500));
 
   const replayedExpiredOpen = await recordManualOpen(
     db,
@@ -291,7 +292,7 @@ try {
     auth,
   );
   assert.equal(replayedExpiredOpen.replayed, true);
-  assert.equal(replayedExpiredOpen.eventId, expiredOpenId);
+  assert.equal(replayedExpiredOpen.eventId, openedBeforeExpiry.eventId);
 
   console.log(JSON.stringify({
     result: 'RESTRICTED_MANUAL_EMAIL_REVIEW_REGRESSIONS_PASS',

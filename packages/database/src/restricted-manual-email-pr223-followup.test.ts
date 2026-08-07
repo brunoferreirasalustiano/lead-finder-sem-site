@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizationContext } from '@lead-finder/shared';
-import type { Database } from './index.js';
+import { recordManualOpen, type Database } from './index.js';
 import { sendPreparedManualEmail } from './restricted-manual-email.js';
 
 const databaseIndex = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -36,6 +36,25 @@ describe('PR 223 restricted manual email follow-ups', () => {
     const section = databaseIndex.slice(start, end);
     expect(section).toContain("auth.permissions.has('manual-messaging:open')");
     expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
+    expect(section).not.toContain('recordLegacyManualOpen');
+  });
+
+  it('fails closed before database dispatch when OPEN permission is absent', async () => {
+    const execute = vi.fn();
+    const db = { execute } as unknown as Database;
+    const sendOnlyAuth = createAuthorizationContext({
+      principalId: 'restricted-email-pr223-send-only',
+      permissions: new Set(['manual-messaging:send']),
+      authenticationMethod: 'unit-test',
+    });
+
+    await expect(recordManualOpen(
+      db,
+      '00000000-0000-4000-8000-000000000206',
+      { idempotencyKey: 'pr223-open-permission-denied' },
+      sendOnlyAuth,
+    )).rejects.toThrow('MANUAL_MESSAGING_OPEN_PERMISSION_REQUIRED');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('keeps non-email OPEN on the legacy channel path', () => {

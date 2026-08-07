@@ -93,9 +93,14 @@ describe('HML email authentication configuration', () => {
       ...validEnvironment,
       HML_EMAIL_AUTH_TOKEN_HASH: conflicts.metricsTokenHash,
     }, conflicts)).toThrow('must differ from existing authentication tokens');
+
+    const collidingPrincipal = 'hml-email-shared-test';
     expect(() => parseHmlEmailAuthentication({
       ...validEnvironment,
-      HML_EMAIL_AUTH_PRINCIPAL_ID: conflicts.operatorPrincipalId,
-    }, conflicts)).toThrow('must differ from existing principals');
+      HML_EMAIL_AUTH_PRINCIPAL_ID: collidingPrincipal,
+    }, {
+      ...conflicts,
+      operatorPrincipalId: collidingPrincipal,
+    })).toThrow('must differ from existing principals');
   });
 });

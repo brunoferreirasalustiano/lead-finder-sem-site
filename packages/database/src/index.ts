@@ -12,6 +12,7 @@ import {
 import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 import {
+  ManualMessagingError,
   prepareManualMessage as prepareLegacyManualMessage,
   recordManualOpen as recordLegacyManualOpen,
 } from './manual-messaging.js';
@@ -81,7 +82,7 @@ export async function recordManualOpen(
   auth: AuthorizationContext,
 ) {
   if (!auth.permissions.has('manual-messaging:open')) {
-    return recordLegacyManualOpen(db, preparationId, input, auth);
+    throw new ManualMessagingError('Manual message open is not authorized', 'INELIGIBLE');
   }
   return recordRestrictedManualOpen(db, preparationId, input, auth);
 }
@@ -211,7 +212,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, job.id));
+      .where(eq(collectionJobs.id, id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

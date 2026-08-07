@@ -20,21 +20,15 @@ const auth = createAuthorizationContext({
 });
 
 describe('PR 223 restricted manual email follow-ups', () => {
-  it('requires OPEN permission before choosing legacy or restricted dispatch', () => {
+  it('dispatches OPEN by open permission instead of send permission', () => {
     const start = databaseIndex.indexOf('export async function recordManualOpen(');
     const end = databaseIndex.indexOf('export async function checkDatabase', start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
 
     const section = databaseIndex.slice(start, end);
-    const openGuard = section.indexOf("auth.permissions.has('manual-messaging:open')");
-    const sendDispatch = section.indexOf("auth.permissions.has('manual-messaging:send')");
-    const legacyDispatch = section.indexOf('recordLegacyManualOpen');
-    const restrictedDispatch = section.indexOf('recordRestrictedManualOpen');
-    expect(openGuard).toBeGreaterThanOrEqual(0);
-    expect(sendDispatch).toBeGreaterThan(openGuard);
-    expect(legacyDispatch).toBeGreaterThan(sendDispatch);
-    expect(restrictedDispatch).toBeGreaterThan(legacyDispatch);
+    expect(section).toContain("auth.permissions.has('manual-messaging:open')");
+    expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
   });
 
   it('rejects OPEN before database access when open permission is absent', async () => {

@@ -284,7 +284,7 @@ try {
       ${historical.leadId}::uuid,${historical.emailId}::uuid,'EMAIL',
       ${approvedTemplates.emailV1.id},${approvedTemplates.emailV1.version},
       ${primaryActor.principalId},${historicalPayloadFingerprint},${historicalKey},
-      ${digest(historicalSnapshot)},${JSON.stringify(historicalSnapshot)}::jsonb,
+      ${digest(historicalSnapshot)},${raw.json(historicalSnapshot)},
       now()+interval '24 hours'
     )`;
   const historicalReplay = await prepareManualMessage(

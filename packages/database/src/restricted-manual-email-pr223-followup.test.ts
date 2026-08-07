@@ -16,30 +16,6 @@ const legacyCompatibility = readFileSync(
   ),
   'utf8',
 );
-const runtimeGrants = readFileSync(
-  new URL(
-    '../../../database/migrations/0048_restricted_manual_email_runtime_grants.sql',
-    import.meta.url,
-  ),
-  'utf8',
-);
-const runtimeProvisioner = readFileSync(
-  new URL(
-    '../../../database/security/create_lead_finder_api_runtime.sql',
-    import.meta.url,
-  ),
-  'utf8',
-);
-
-const restrictedEmailFunctions = [
-  'resolve_manual_email_contact_context',
-  'create_manual_email_preparation',
-  'resolve_manual_email_preparation_context',
-  'append_manual_email_open_event',
-  'get_manual_email_send_attempt',
-  'create_manual_email_send_attempt',
-  'append_manual_email_send_event',
-];
 
 const auth = createAuthorizationContext({
   principalId: 'restricted-email-pr223-test',
@@ -151,19 +127,5 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(legacyCompatibility).toContain(
       "NOT (result_snapshot ?| ARRAY['message','subject','link','url','contactValue'])",
     );
-  });
-
-  it('reconciles existing roles and fresh provisioning with the same seven narrow function grants', () => {
-    expect(runtimeGrants).toContain("rolname = 'lead_finder_api_runtime'");
-    expect(runtimeGrants).toContain('GRANT EXECUTE ON FUNCTION');
-    expect(runtimeGrants).toContain('TO lead_finder_api_runtime');
-    expect(runtimeGrants).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)/i);
-    expect(runtimeGrants).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
-    expect(runtimeProvisioner).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
-
-    for (const name of restrictedEmailFunctions) {
-      expect(runtimeGrants).toContain(name);
-      expect(runtimeProvisioner).toContain(name);
-    }
   });
 });

@@ -25,10 +25,8 @@ ALTER TABLE public.pilot_manual_message_preparations
     AND (
       (
         template_version = 'v1'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM jsonb_object_keys(result_snapshot) AS snapshot_key(key)
-          WHERE snapshot_key.key NOT IN (
+        AND (
+          result_snapshot - ARRAY[
             'schemaVersion',
             'channel',
             'templateId',
@@ -37,8 +35,8 @@ ALTER TABLE public.pilot_manual_message_preparations
             'renderedInputsFingerprint',
             'contactFingerprint',
             'messageFingerprint'
-          )
-        )
+          ]::text[]
+        ) = '{}'::jsonb
         AND (
           NOT (result_snapshot ? 'schemaVersion')
           OR result_snapshot->'schemaVersion' = '2'::jsonb
@@ -51,10 +49,28 @@ ALTER TABLE public.pilot_manual_message_preparations
       OR
       (
         template_version = 'v2'
+        AND result_snapshot ?& ARRAY[
+          'schemaVersion',
+          'channel',
+          'templateId',
+          'templateVersion',
+          'variables',
+          'renderedInputsFingerprint',
+          'contactFingerprint',
+          'messageFingerprint'
+        ]
         AND (
-          SELECT count(*)
-          FROM jsonb_object_keys(result_snapshot)
-        ) = 8
+          result_snapshot - ARRAY[
+            'schemaVersion',
+            'channel',
+            'templateId',
+            'templateVersion',
+            'variables',
+            'renderedInputsFingerprint',
+            'contactFingerprint',
+            'messageFingerprint'
+          ]::text[]
+        ) = '{}'::jsonb
         AND result_snapshot->'schemaVersion' = '2'::jsonb
         AND result_snapshot->'variables' = '{}'::jsonb
         AND coalesce(result_snapshot->>'renderedInputsFingerprint','') ~ '^[0-9a-f]{64}$'

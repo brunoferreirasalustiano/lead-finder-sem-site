@@ -13,6 +13,10 @@ const restrictedEmailMigration = readFileSync(
   new URL('../../../database/migrations/0042_restricted_manual_email_consumer.sql', import.meta.url),
   'utf8',
 );
+const restrictedEmailHardeningMigration = readFileSync(
+  new URL('../../../database/migrations/0043_restricted_manual_email_hardening.sql', import.meta.url),
+  'utf8',
+);
 const runtimeDescriptor = readFileSync(
   new URL('../../../database/security/create_lead_finder_api_runtime.sql', import.meta.url),
   'utf8',
@@ -34,6 +38,7 @@ const restrictedEmailFunctions = [
   'public.create_manual_email_preparation(uuid,uuid,uuid,text,text,text,character,text,character,jsonb)',
   'public.resolve_manual_email_preparation_context(uuid,text,boolean)',
   'public.append_manual_email_open_event(uuid,text,character,text)',
+  'public.get_manual_email_send_attempt(uuid,text)',
   'public.create_manual_email_send_attempt(uuid,text,character,character,character)',
   'public.append_manual_email_send_event(uuid,text,text,character,text)',
 ] as const;
@@ -81,7 +86,7 @@ describe('runtime email grants reconciliation', () => {
     expect(executeMigration).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
   });
 
-  it('uses six narrow functions and never restores direct table access for manual email', () => {
+  it('keeps the original six narrow functions without restoring direct table access', () => {
     expect(restrictedEmailMigration).toContain('SECURITY DEFINER');
     expect(restrictedEmailMigration).toContain("p_event_type NOT IN ('DELIVERED','FAILED','AMBIGUOUS')");
     expect(restrictedEmailMigration).toContain("p_template_version <> 'v2'");
@@ -90,8 +95,21 @@ describe('runtime email grants reconciliation', () => {
     expect(restrictedEmailMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+(?:TABLE\s+)?public\.pilot_manual_email/i);
     expect(restrictedEmailMigration).not.toMatch(/CREATE POLICY/i);
     expect(restrictedEmailMigration).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
+  });
+
+  it('hardens snapshots, principals, replay and leases at the SQL boundary', () => {
+    expect(restrictedEmailHardeningMigration).toContain('lease_expires_at');
+    expect(restrictedEmailHardeningMigration).toContain('snapshot_key_count <> 8');
+    expect(restrictedEmailHardeningMigration).toContain("p_result_snapshot->'variables' IS DISTINCT FROM '{}'::jsonb");
+    expect(restrictedEmailHardeningMigration).toContain('extensions.digest');
+    expect(restrictedEmailHardeningMigration).toContain("existing.template_version <> 'v1'");
+    expect(restrictedEmailHardeningMigration).toContain('p_operator_principal_id IS NULL');
+    expect(restrictedEmailHardeningMigration).toContain('RESERVATION_WITHOUT_TERMINAL_EVENT');
+    expect(restrictedEmailHardeningMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+(?:TABLE\s+)?public\.pilot_manual_email/i);
+    expect(restrictedEmailHardeningMigration).not.toMatch(/CREATE POLICY/i);
+    expect(restrictedEmailHardeningMigration).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
     for (const signature of restrictedEmailFunctions) {
-      expect(compact(restrictedEmailMigration)).toContain(compact(signature));
+      expect(compact(runtimeHmlDescriptor)).toContain(compact(signature));
     }
   });
 });

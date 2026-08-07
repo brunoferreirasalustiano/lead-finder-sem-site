@@ -4,6 +4,7 @@ import { checkExpectedMigration } from './index.js';
 
 const version = '0047_restricted_manual_email_final_review';
 
+// HML readiness must fail closed until the restricted manual email schema is present.
 describe('migration readiness', () => {
   it('accepts migration 0047 from the local registry', async () => {
     const execute = vi.fn().mockResolvedValue([{ version }]);

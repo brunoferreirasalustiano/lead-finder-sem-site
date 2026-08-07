@@ -1,0 +1,66 @@
+name: PR223 preconsumer OPEN compatibility fix once
+
+on:
+  push:
+    branches:
+      - fix/pr215-final-review-followups-20260807
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr215-final-review-followups-20260807
+          fetch-depth: 0
+
+      - name: Apply narrow compatibility hardening
+        shell: python
+        run: |
+          from pathlib import Path
+
+          legacy_path = Path('packages/database/src/manual-messaging.ts')
+          legacy = legacy_path.read_text()
+          old_owner = """    if (eventType === 'CANCELLED' && p.operator_principal_id !== auth.principalId)\n      throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');\n    if (eventType !== 'CANCELLED') {"""
+          new_owner = """    if ((eventType === 'CANCELLED' || eventType === 'OPENED')\n      && p.operator_principal_id !== auth.principalId)\n      throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');\n    if (eventType === 'OPENED' && p.channel === 'EMAIL')\n      throw new ManualMessagingError(\n        'Restricted local email consumer is unavailable',\n        'EMAIL_CONSUMER_UNAVAILABLE',\n      );\n    if (eventType !== 'CANCELLED') {"""
+          if legacy.count(old_owner) != 1:
+              raise SystemExit('legacy OPEN owner guard anchor mismatch')
+          legacy = legacy.replace(old_owner, new_owner, 1)
+          legacy_path.write_text(legacy)
+
+          restricted_path = Path('packages/database/src/restricted-manual-email.ts')
+          restricted = restricted_path.read_text()
+          old_fallback = """    if (postgresCode(error) === '42809') {\n      return recordLegacyManualOpen(db, preparationId, input, auth);\n    }"""
+          new_fallback = """    const code = postgresCode(error);\n    if (code === '42809' || code === '42883') {\n      return recordLegacyManualOpen(db, preparationId, input, auth);\n    }"""
+          if restricted.count(old_fallback) != 1:
+              raise SystemExit('restricted OPEN fallback anchor mismatch')
+          restricted = restricted.replace(old_fallback, new_fallback, 1)
+          restricted_path.write_text(restricted)
+
+          # Fail the one-shot patch if either safety invariant is missing.
+          final_legacy = legacy_path.read_text()
+          final_restricted = restricted_path.read_text()
+          assert "eventType === 'OPENED')\n      && p.operator_principal_id !== auth.principalId" in final_legacy
+          assert "eventType === 'OPENED' && p.channel === 'EMAIL'" in final_legacy
+          assert "code === '42809' || code === '42883'" in final_restricted
+
+      - name: Verify patch shape
+        run: |
+          git diff --check
+          git diff -- packages/database/src/manual-messaging.ts packages/database/src/restricted-manual-email.ts
+
+      - name: Commit compatibility hardening
+        run: |
+          if git diff --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/database/src/manual-messaging.ts packages/database/src/restricted-manual-email.ts
+          git commit -m "fix: keep preconsumer WhatsApp OPEN fail-closed"
+          git push origin HEAD:fix/pr215-final-review-followups-20260807

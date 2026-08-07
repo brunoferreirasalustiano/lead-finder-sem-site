@@ -288,9 +288,10 @@ export async function prepareManualMessage(
         id: string;
         prepared_at: Date;
         expires_at: Date;
+        result_snapshot: unknown;
         replayed: boolean;
       }>(sql`
-        select id,prepared_at,expires_at,replayed
+        select id,prepared_at,expires_at,result_snapshot,replayed
         from public.create_manual_email_preparation(
           ${pilotRunId}::uuid,
           ${leadId}::uuid,
@@ -306,14 +307,23 @@ export async function prepareManualMessage(
       `);
       const saved = rows[0];
       if (!saved) throw new Error('MANUAL_EMAIL_PREPARATION_RESULT_MISSING');
+      const persistedSnapshot = record(saved.result_snapshot);
+      const persistedContactFingerprint = persistedSnapshot['contactFingerprint'];
+      const persistedMessageFingerprint = persistedSnapshot['messageFingerprint'];
+      if (typeof persistedContactFingerprint !== 'string'
+        || !/^[0-9a-f]{64}$/.test(persistedContactFingerprint)
+        || typeof persistedMessageFingerprint !== 'string'
+        || !/^[0-9a-f]{64}$/.test(persistedMessageFingerprint)) {
+        throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+      }
       return {
         preparationId: saved.id,
         state: 'PREPARED' as const,
         channel: 'EMAIL' as const,
         templateId: template.id,
         templateVersion: template.version,
-        contactFingerprint: String(context.contact_fingerprint).trim(),
-        messageFingerprint: prepared.fingerprint,
+        contactFingerprint: persistedContactFingerprint,
+        messageFingerprint: persistedMessageFingerprint,
         preparedAt: saved.prepared_at,
         expiresAt: saved.expires_at,
         replayed: saved.replayed,

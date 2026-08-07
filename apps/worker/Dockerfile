@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json tsconfig*.json eslint.config.js ./
 COPY apps ./apps
@@ -6,9 +6,22 @@ COPY packages ./packages
 COPY scripts ./scripts
 RUN npm ci && npm run build
 
-# Runtime images receive only production dependencies.
+# JavaScript dependencies and compiled output are architecture-independent. Build and
+# validate them on BUILDPLATFORM so multiarch images do not execute Node/npm under QEMU.
 FROM build AS production-deps
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+  && test ! -d node_modules/glob \
+  && test ! -d node_modules/tsx \
+  && test ! -d node_modules/typescript \
+  && test -f packages/shared/dist/index.js \
+  && test -f packages/database/dist/index.js \
+  && test -f packages/prospecting-orchestrator/dist/index.js \
+  && test -f packages/messaging/dist/index.js \
+  && test -f packages/whatsapp/dist/index.js \
+  && test -f packages/batch-processor/dist/index.js \
+  && test -f packages/lead-scoring/dist/index.js \
+  && test -f packages/overpass-client/dist/index.js \
+  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
@@ -33,5 +46,4 @@ COPY --from=build --chown=node:node /app/packages/lead-scoring/package.json ./pa
 COPY --from=build --chown=node:node /app/packages/lead-scoring/dist ./packages/lead-scoring/dist
 COPY --from=build --chown=node:node /app/packages/overpass-client/package.json ./packages/overpass-client/package.json
 COPY --from=build --chown=node:node /app/packages/overpass-client/dist ./packages/overpass-client/dist
-RUN test ! -d node_modules/glob && test ! -d node_modules/tsx && test ! -d node_modules/typescript && test -f packages/shared/dist/index.js && test -f packages/database/dist/index.js && test -f packages/prospecting-orchestrator/dist/index.js && test -f packages/messaging/dist/index.js && test -f packages/whatsapp/dist/index.js && test -f packages/batch-processor/dist/index.js && test -f packages/lead-scoring/dist/index.js && test -f packages/overpass-client/dist/index.js && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
 CMD ["node","apps/worker/dist/index.js"]

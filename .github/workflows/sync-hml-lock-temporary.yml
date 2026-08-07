@@ -1,10 +1,9 @@
 name: Sync HML dependency baseline (temporary)
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
     branches:
-      - hml/render-supabase-plan-b
+      - fix/pr215-final-review-followups-20260807
 
 permissions:
   contents: write
@@ -17,7 +16,7 @@ jobs:
       - name: Checkout PR head branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: fix/pr215-final-review-followups-20260807
           fetch-depth: 0
 
       - name: Fetch current HML base
@@ -38,4 +37,4 @@ jobs:
           git add package.json package-lock.json .github/workflows/sync-hml-lock-temporary.yml
           git diff --cached --check
           git commit -m "chore: sync HML dependency baseline" || exit 0
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:fix/pr215-final-review-followups-20260807

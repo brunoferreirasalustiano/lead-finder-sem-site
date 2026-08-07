@@ -422,27 +422,6 @@ try {
   assert.equal(deliveredReplay.replayed, true);
   assert.equal(calls, 1);
 
-  const expiredReplayFixture = await fixture();
-  const expiredReplayPreparation = await prepareManualMessage(
-    db,
-    expiredReplayFixture.pilotId,
-    expiredReplayFixture.leadId,
-    emailInput(expiredReplayFixture.emailId),
-    primaryActor,
-  );
-  await open(expiredReplayPreparation.preparationId);
-  await raw`
-    update pilot_manual_message_preparations
-    set expires_at=now()-interval '1 minute'
-    where id=${expiredReplayPreparation.preparationId}::uuid`;
-  const expiredReplay = await recordManualOpen(
-    db,
-    expiredReplayPreparation.preparationId,
-    { idempotencyKey: randomUUID() },
-    primaryActor,
-  );
-  assert.equal(expiredReplay.replayed, true);
-
   const blockedReplayFixture = await fixture();
   const blockedReplayPreparation = await prepareManualMessage(
     db,

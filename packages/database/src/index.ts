@@ -91,7 +91,7 @@ export async function checkDatabase(db: Database): Promise<void> {
 }
 export async function checkExpectedMigration(
   db: Database,
-  version = '0028_prospecting_runtime_deny_all_reconciliation',
+  version = '0047_restricted_manual_email_final_review',
 ): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version

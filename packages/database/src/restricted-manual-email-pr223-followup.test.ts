@@ -26,6 +26,7 @@ const auth = createAuthorizationContext({
   authenticationMethod: 'unit-test',
 });
 
+// Revalidate P2-A/P2-B against the current HML email principal and runtime baseline.
 describe('PR 223 restricted manual email follow-ups', () => {
   it('dispatches OPEN by open permission instead of send permission', () => {
     const start = databaseIndex.indexOf('export async function recordManualOpen(');

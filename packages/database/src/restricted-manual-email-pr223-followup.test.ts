@@ -70,6 +70,9 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(permissionOffset).toBeGreaterThanOrEqual(0);
     expect(fallbackOffset).toBeGreaterThan(permissionOffset);
     expect(section).toContain("postgresCode(error) === '42883'");
+    expect(section).toContain(
+      "postgresCode(error) === '42809' || postgresCode(error) === '42883'",
+    );
     expect(section).toContain('recordLegacyManualOpen(db, preparationId, input, auth)');
   });
 

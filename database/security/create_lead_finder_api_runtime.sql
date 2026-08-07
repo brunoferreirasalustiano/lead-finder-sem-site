@@ -61,6 +61,21 @@ GRANT EXECUTE ON FUNCTION
   public.append_operator_email_test_event(uuid, text, char, char, char)
 TO lead_finder_api_runtime;
 
+-- The restricted manual-email consumer is part of the generic API runtime
+-- contract once migrations 0042+ exist. Grant only the seven SECURITY DEFINER
+-- entry points: the role still has no direct access to the underlying manual
+-- messaging/send-attempt tables. This also makes fresh/atomic provisioning
+-- equivalent to the 0048 reconciliation used when the role already exists.
+GRANT EXECUTE ON FUNCTION
+  public.resolve_manual_email_contact_context(uuid, uuid, uuid, text),
+  public.create_manual_email_preparation(uuid, uuid, uuid, text, text, text, character, text, character, jsonb),
+  public.resolve_manual_email_preparation_context(uuid, text, boolean),
+  public.append_manual_email_open_event(uuid, text, character, text),
+  public.get_manual_email_send_attempt(uuid, text),
+  public.create_manual_email_send_attempt(uuid, text, character, character, character),
+  public.append_manual_email_send_event(uuid, text, text, character, text)
+TO lead_finder_api_runtime;
+
 -- Prospecting access is installed here, after migrations have established the
 -- deny-all baseline. Direct transition writes remain unavailable; city
 -- advancement goes through the SECURITY DEFINER function below.

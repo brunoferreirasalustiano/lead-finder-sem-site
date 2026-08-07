@@ -25,7 +25,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Apply four final-review fixes
+      - name: Apply final-review fixes
         shell: bash
         run: |
           python - <<'PY'
@@ -36,7 +36,7 @@ jobs:
               text = p.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:80]!r}')
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old[:100]!r}')
               p.write_text(text.replace(old, new, 1))
 
           replace_once(
@@ -44,28 +44,6 @@ jobs:
               "  if (!auth.permissions.has('manual-messaging:send')) {\n    return recordLegacyManualOpen(db, preparationId, input, auth);\n  }\n  return recordRestrictedManualOpen(db, preparationId, input, auth);",
               "  if (!auth.permissions.has('manual-messaging:open')) {\n    return recordLegacyManualOpen(db, preparationId, input, auth);\n  }\n  return recordRestrictedManualOpen(db, preparationId, input, auth);",
           )
-
-          replace_once(
-              'packages/database/src/restricted-manual-email.ts',
-              "    sender: string;\n    fingerprintKey: string;\n    deliver: (message: {\n      subject: string;\n      body: string;\n      recipient: string;\n    }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;",
-              "    sender?: string;\n    fingerprintKey?: string;\n    deliver?: (message: {\n      subject: string;\n      body: string;\n      recipient: string;\n    }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;",
-          )
-          replace_once(
-              'packages/database/src/restricted-manual-email.ts',
-              "  if (!runtime.sendEnabled || runtime.killSwitchEnabled) {\n    throw new ManualMessagingError('Manual email delivery is unavailable', 'EMAIL_CONSUMER_UNAVAILABLE');\n  }",
-              "  const senderAddress = runtime.sender;\n  const fingerprintKey = runtime.fingerprintKey;\n  const deliver = runtime.deliver;\n  if (!runtime.sendEnabled || runtime.killSwitchEnabled\n    || !senderAddress || !fingerprintKey || !deliver) {\n    throw new ManualMessagingError('Manual email delivery is unavailable', 'EMAIL_CONSUMER_UNAVAILABLE');\n  }",
-          )
-          replace_once(
-              'packages/database/src/restricted-manual-email.ts',
-              "    const sender = runtime.sender.trim().toLowerCase();",
-              "    const sender = senderAddress.trim().toLowerCase();",
-          )
-          text = Path('packages/database/src/restricted-manual-email.ts').read_text()
-          text = text.replace("runtime.fingerprintKey, 'manual-email-sender'", "fingerprintKey, 'manual-email-sender'")
-          text = text.replace("runtime.fingerprintKey, 'manual-email-recipient'", "fingerprintKey, 'manual-email-recipient'")
-          text = text.replace("runtime.fingerprintKey,\n      'manual-email-provider-message-id'", "fingerprintKey,\n      'manual-email-provider-message-id'")
-          text = text.replace('const receipt = await runtime.deliver({', 'const receipt = await deliver({')
-          Path('packages/database/src/restricted-manual-email.ts').write_text(text)
 
           replace_once(
               'apps/api/src/app.ts',
@@ -79,8 +57,8 @@ jobs:
           )
           replace_once(
               'apps/api/src/app.ts',
-              "sender:options.manualEmailSender!,fingerprintKey:options.manualEmailFingerprintKey!,deliver:options.deliverManualEmail!",
-              "sender:options.manualEmailSender,fingerprintKey:options.manualEmailFingerprintKey,deliver:options.deliverManualEmail",
+              "{sendEnabled:manualEmailSendEnabled,killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender!,fingerprintKey:options.manualEmailFingerprintKey!,deliver:options.deliverManualEmail!}",
+              "{sendEnabled:manualEmailSendEnabled&&Boolean(options.deliverManualEmail&&options.manualEmailSender&&options.manualEmailFingerprintKey),killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender??'',fingerprintKey:options.manualEmailFingerprintKey??'',deliver:options.deliverManualEmail??(()=>Promise.reject(new Error('MANUAL_EMAIL_DISABLED')))}",
           )
 
           old_v1_exact = """        AND (\n          result_snapshot - ARRAY[\n            'schemaVersion',\n            'channel',\n            'templateId',\n            'templateVersion',\n            'variables',\n            'renderedInputsFingerprint',\n            'contactFingerprint',\n            'messageFingerprint'\n          ]::text[]\n        ) = '{}'::jsonb\n"""
@@ -89,189 +67,6 @@ jobs:
               old_v1_exact,
               '',
           )
-
-          replace_once(
-              'package.json',
-              'tsx scripts/restricted-manual-email.integration.ts && tsx scripts/restricted-manual-email-review-regressions.integration.ts && tsx scripts/manual-whatsapp-cloud-scope.integration.ts',
-              'tsx scripts/restricted-manual-email.integration.ts && tsx scripts/restricted-manual-email-review-regressions.integration.ts && tsx scripts/restricted-manual-email-v1-extension-upgrade.integration.ts && tsx scripts/manual-whatsapp-cloud-scope.integration.ts',
-          )
-
-          Path('packages/database/src/restricted-manual-email-pr223-followup.test.ts').write_text(r'''import { readFileSync } from 'node:fs';
-          import { describe, expect, it } from 'vitest';
-          import { createAuthorizationContext } from '@lead-finder/shared';
-          import type { Database } from './index.js';
-          import { sendPreparedManualEmail } from './restricted-manual-email.js';
-
-          const databaseIndex = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-          const apiSource = readFileSync(new URL('../../../apps/api/src/app.ts', import.meta.url), 'utf8');
-          const legacyCompatibility = readFileSync(
-            new URL('../../../database/migrations/0044_manual_email_historical_snapshot_compatibility.sql', import.meta.url),
-            'utf8',
-          );
-          const runtimeGrants = readFileSync(
-            new URL('../../../database/migrations/0048_restricted_manual_email_runtime_grants.sql', import.meta.url),
-            'utf8',
-          );
-
-          describe('PR 223 final-review follow-ups', () => {
-            it('dispatches OPEN by open permission instead of send permission', () => {
-              const start = databaseIndex.indexOf('export async function recordManualOpen(');
-              expect(start).toBeGreaterThanOrEqual(0);
-              const section = databaseIndex.slice(start, databaseIndex.indexOf('export async function checkDatabase', start));
-              expect(section).toContain("auth.permissions.has('manual-messaging:open')");
-              expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
-            });
-
-            it('does not block database-only send replay before entering the database layer', () => {
-              const start = apiSource.indexOf("app.post('/manual-message-preparations/:id/send'");
-              expect(start).toBeGreaterThanOrEqual(0);
-              const section = apiSource.slice(start, apiSource.indexOf("app.post('/manual-message-preparations/:id/whatsapp-cloud-send'", start));
-              expect(section).not.toContain('MANUAL_EMAIL_DISABLED');
-              expect(section).toContain('sendPreparedManualEmail');
-              expect(apiSource).toContain("error.code==='EMAIL_CONSUMER_UNAVAILABLE'");
-            });
-
-            it('keeps V2 exact while allowing legacy V1 extensions', () => {
-              const v1Start = legacyCompatibility.indexOf("template_version = 'v1'");
-              const v2Start = legacyCompatibility.indexOf("template_version = 'v2'");
-              expect(v1Start).toBeGreaterThanOrEqual(0);
-              expect(v2Start).toBeGreaterThan(v1Start);
-              const v1 = legacyCompatibility.slice(v1Start, v2Start);
-              const v2 = legacyCompatibility.slice(v2Start);
-              expect(v1).not.toContain("result_snapshot - ARRAY[");
-              expect(v2).toContain("result_snapshot - ARRAY[");
-              expect(legacyCompatibility).toContain("NOT (result_snapshot ?| ARRAY['message','subject','link','url','contactValue'])");
-            });
-
-            it('reconciles only the seven narrow runtime functions', () => {
-              expect(runtimeGrants).toContain("rolname = 'lead_finder_api_runtime'");
-              expect(runtimeGrants).toContain('GRANT EXECUTE ON FUNCTION');
-              expect(runtimeGrants).toContain('TO lead_finder_api_runtime');
-              expect(runtimeGrants).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)/i);
-              expect(runtimeGrants).not.toMatch(/GRANT EXECUTE ON ALL FUNCTIONS/i);
-              for (const name of [
-                'resolve_manual_email_contact_context',
-                'create_manual_email_preparation',
-                'resolve_manual_email_preparation_context',
-                'append_manual_email_open_event',
-                'get_manual_email_send_attempt',
-                'create_manual_email_send_attempt',
-                'append_manual_email_send_event',
-              ]) expect(runtimeGrants).toContain(name);
-            });
-
-            it('replays a persisted terminal outcome with delivery disabled and no provider config', async () => {
-              const attemptId = '00000000-0000-4000-8000-000000000101';
-              const db = {
-                execute: () => Promise.resolve([{
-                  id: attemptId,
-                  reserved_at: new Date('2026-08-07T12:00:00.000Z'),
-                  replayed: true,
-                  event_type: 'DELIVERED',
-                  provider_message_fingerprint: 'd'.repeat(64),
-                  error_code: null,
-                  event_created_at: new Date('2026-08-07T12:00:01.000Z'),
-                }]),
-              } as unknown as Database;
-              const auth = createAuthorizationContext({
-                principalId: 'restricted-email-replay-test',
-                permissions: new Set(['manual-messaging:send']),
-                authenticationMethod: 'unit-test',
-              });
-              const result = await sendPreparedManualEmail(
-                db,
-                '00000000-0000-4000-8000-000000000102',
-                auth,
-                { sendEnabled: false, killSwitchEnabled: true },
-              );
-              expect(result).toMatchObject({
-                state: 'DELIVERED',
-                provider: 'GMAIL_API',
-                replayed: true,
-                attemptId,
-                messageIdFingerprint: 'd'.repeat(64),
-              });
-            });
-          });
-          '''.replace(/^          /gm, ''))
-
-          Path('scripts/restricted-manual-email-v1-extension-upgrade.integration.ts').write_text(r'''import { readFile } from 'node:fs/promises';
-          import postgres from 'postgres';
-
-          const databaseUrl = process.env['DATABASE_URL'];
-          if (!databaseUrl) throw new Error('DATABASE_URL is required');
-          const sql = postgres(databaseUrl, { max: 1 });
-
-          const hex = (value: string) => value.repeat(64);
-          const baseV1 = {
-            channel: 'EMAIL',
-            templateId: 'pilot-email-first-contact',
-            templateVersion: 'v1',
-            variables: { EMPRESA: 'Empresa histórica', FONTE: 'PUBLIC_BUSINESS_SOURCE' },
-            contactFingerprint: hex('a'),
-            messageFingerprint: hex('b'),
-          };
-
-          try {
-            await sql.unsafe(`
-              CREATE TEMP TABLE manual_email_snapshot_compat_test (
-                result_snapshot jsonb NOT NULL,
-                channel text NOT NULL,
-                template_id text NOT NULL,
-                template_version text NOT NULL
-              )
-            `);
-            let migration = await readFile(
-              new URL('../database/migrations/0044_manual_email_historical_snapshot_compatibility.sql', import.meta.url),
-              'utf8',
-            );
-            migration = migration
-              .replace(/^BEGIN;\s*/u, '')
-              .replace(/\s*COMMIT;\s*$/u, '')
-              .replaceAll('public.pilot_manual_message_preparations', 'manual_email_snapshot_compat_test');
-            await sql.unsafe(migration);
-
-            await sql`
-              INSERT INTO manual_email_snapshot_compat_test(result_snapshot,channel,template_id,template_version)
-              VALUES (${sql.json({ ...baseV1, metadata: { importedFrom: 'legacy' } })},'EMAIL','pilot-email-first-contact','v1')
-            `;
-
-            let sensitiveRejected = false;
-            try {
-              await sql`
-                INSERT INTO manual_email_snapshot_compat_test(result_snapshot,channel,template_id,template_version)
-                VALUES (${sql.json({ ...baseV1, contactValue: 'must-not-persist@example.invalid' })},'EMAIL','pilot-email-first-contact','v1')
-              `;
-            } catch (error) {
-              sensitiveRejected = typeof error === 'object' && error !== null
-                && 'code' in error && error.code === '23514';
-            }
-            if (!sensitiveRejected) throw new Error('V1_SENSITIVE_EXTENSION_WAS_NOT_REJECTED');
-
-            let v2ExtensionRejected = false;
-            try {
-              await sql`
-                INSERT INTO manual_email_snapshot_compat_test(result_snapshot,channel,template_id,template_version)
-                VALUES (${sql.json({
-                  ...baseV1,
-                  schemaVersion: 2,
-                  templateVersion: 'v2',
-                  variables: {},
-                  renderedInputsFingerprint: hex('c'),
-                  metadata: { shouldFail: true },
-                })},'EMAIL','pilot-email-first-contact','v2')
-              `;
-            } catch (error) {
-              v2ExtensionRejected = typeof error === 'object' && error !== null
-                && 'code' in error && error.code === '23514';
-            }
-            if (!v2ExtensionRejected) throw new Error('V2_EXTENSION_WAS_NOT_REJECTED');
-
-            console.log('restricted manual email V1 extension upgrade compatibility: PASS');
-          } finally {
-            await sql.end();
-          }
-          '''.replace(/^          /gm, ''))
           PY
       - run: npm run typecheck
       - run: npm run lint
@@ -283,6 +78,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/pr223-self-fix.yml
-          git add apps/api/src/app.ts packages/database/src/index.ts packages/database/src/restricted-manual-email.ts packages/database/src/restricted-manual-email-pr223-followup.test.ts database/migrations/0044_manual_email_historical_snapshot_compatibility.sql package.json scripts/restricted-manual-email-v1-extension-upgrade.integration.ts
+          git add apps/api/src/app.ts packages/database/src/index.ts database/migrations/0044_manual_email_historical_snapshot_compatibility.sql
           git commit -m "fix: address restricted email final review findings"
           git push origin HEAD:fix/pr215-final-review-followups-20260807

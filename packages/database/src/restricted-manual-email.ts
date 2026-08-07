@@ -377,10 +377,10 @@ export async function recordManualOpen(
 
       const contexts = await tx.execute<PreparationContextRow>(sql`
         select * from public.resolve_manual_email_preparation_context(
-          ${preparationId}::uuid,
-          ${auth.principalId},
-          false
-        )
+           ${preparationId}::uuid,
+           ${auth.principalId},
+           true
+         )
       `);
       const context = contexts[0];
       if (!context) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');

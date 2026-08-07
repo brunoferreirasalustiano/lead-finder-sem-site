@@ -69,7 +69,8 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(end).toBeGreaterThan(start);
 
     const section = restrictedEmailSource.slice(start, end);
-    expect(section).toContain("postgresCode(error) === '42809'");
+    expect(section).toContain('const code = postgresCode(error);');
+    expect(section).toContain("code === '42809' || code === '42883'");
     expect(section).toContain('recordLegacyManualOpen(db, preparationId, input, auth)');
   });
 

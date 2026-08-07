@@ -7,15 +7,17 @@ on:
       - hml/render-supabase-plan-b
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   refresh-lock:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout PR head
+      - name: Checkout PR head branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -29,13 +31,16 @@ jobs:
       - name: Verify patched NanoID resolution
         run: node -e "const l=require('./package-lock.json'); const p=l.packages['node_modules/nanoid']; if (!p || p.version !== '5.1.16') { console.error('Unexpected nanoid lock resolution'); process.exit(1) }"
 
-      - name: Upload generated lock only
-        uses: actions/upload-artifact@v4
-        with:
-          name: patched-nanoid-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Audit high severity dependencies
         run: npm audit --audit-level=high
+
+      - name: Commit generated lock and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/refresh-nanoid-lock-temporary.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json .github/workflows/refresh-nanoid-lock-temporary.yml
+          git diff --cached --check
+          git commit -m "security: refresh nanoid lockfile" || exit 0
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}

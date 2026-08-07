@@ -27,10 +27,7 @@ jobs:
         run: npm install --package-lock-only --ignore-scripts
 
       - name: Verify patched NanoID resolution
-        run: node -e "const l=require('./package-lock.json'); const p=l.packages['node_modules/nanoid']; if (!p || p.version !== '5.1.6') { console.error('Unexpected nanoid lock resolution'); process.exit(1) }"
-
-      - name: Audit high severity dependencies
-        run: npm audit --audit-level=high
+        run: node -e "const l=require('./package-lock.json'); const p=l.packages['node_modules/nanoid']; if (!p || p.version !== '5.1.16') { console.error('Unexpected nanoid lock resolution'); process.exit(1) }"
 
       - name: Upload generated lock only
         uses: actions/upload-artifact@v4
@@ -39,3 +36,6 @@ jobs:
           path: package-lock.json
           if-no-files-found: error
           retention-days: 1
+
+      - name: Audit high severity dependencies
+        run: npm audit --audit-level=high

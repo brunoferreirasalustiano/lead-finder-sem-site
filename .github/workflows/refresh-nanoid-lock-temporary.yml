@@ -1,22 +1,21 @@
 name: Refresh NanoID lock (temporary)
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize, reopened]
     branches:
-      - security/nanoid-ghsa-2v37-7h3g-55p8
+      - hml/render-supabase-plan-b
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   refresh-lock:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact branch
+      - name: Checkout PR head
         uses: actions/checkout@v4
-        with:
-          ref: security/nanoid-ghsa-2v37-7h3g-55p8
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -33,17 +32,10 @@ jobs:
       - name: Audit high severity dependencies
         run: npm audit --audit-level=high
 
-      - name: Remove temporary workflow and commit generated lock
-        shell: bash
-        run: |
-          set -euo pipefail
-          git rm .github/workflows/refresh-nanoid-lock-temporary.yml
-          git add package-lock.json package.json
-          if git diff --cached --quiet; then
-            echo "No generated changes to commit"
-            exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "security: refresh lock for patched nanoid"
-          git push origin HEAD:security/nanoid-ghsa-2v37-7h3g-55p8
+      - name: Upload generated lock only
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-nanoid-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1

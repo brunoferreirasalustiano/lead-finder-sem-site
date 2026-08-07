@@ -67,10 +67,10 @@ describe('restricted manual email preparation replay', () => {
       }],
     ];
     const tx = {
-      execute: async () => responses.shift() ?? [],
+      execute: () => Promise.resolve(responses.shift() ?? []),
     };
     const db = {
-      transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
+      transaction: <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
     } as unknown as Database;
     const auth = createAuthorizationContext({
       principalId: 'restricted-email-operator-test',

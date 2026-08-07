@@ -1,0 +1,46 @@
+name: PR 215 manual messaging diagnostics
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: pr215-manual-messaging-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  manual-messaging-diagnostics:
+    if: github.event.pull_request.number == 215
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: leadfinder
+          POSTGRES_USER: leadfinder
+          POSTGRES_PASSWORD: diagnostics-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U leadfinder -d leadfinder"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://leadfinder:diagnostics-only@127.0.0.1:5432/leadfinder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: Apply migrations twice
+        run: npm run db:migrate && npm run db:migrate
+      - name: Manual messaging baseline
+        run: npx tsx scripts/manual-messaging.integration.ts
+      - name: Manual messaging concurrency
+        run: npx tsx scripts/manual-messaging-concurrency.integration.ts
+      - name: Restricted manual email
+        run: npx tsx scripts/restricted-manual-email.integration.ts
+      - name: Manual WhatsApp Cloud scope
+        run: npx tsx scripts/manual-whatsapp-cloud-scope.integration.ts
+      - name: Operator channel test
+        run: npx tsx scripts/operator-channel-test.integration.ts

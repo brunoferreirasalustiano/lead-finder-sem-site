@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import type { Database } from './index.js';
+import { recordManualOpen } from './index.js';
 import { sendPreparedManualEmail } from './restricted-manual-email.js';
 
 const databaseIndex = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -28,6 +29,24 @@ describe('PR 223 restricted manual email follow-ups', () => {
     const section = databaseIndex.slice(start, end);
     expect(section).toContain("auth.permissions.has('manual-messaging:open')");
     expect(section).not.toContain("auth.permissions.has('manual-messaging:send')");
+  });
+
+  it('rejects OPEN before database access when open permission is absent', async () => {
+    const execute = vi.fn();
+    const db = { execute } as unknown as Database;
+    const sendOnlyAuth = createAuthorizationContext({
+      principalId: 'restricted-email-send-only-test',
+      permissions: new Set(['manual-messaging:send']),
+      authenticationMethod: 'unit-test',
+    });
+
+    await expect(recordManualOpen(
+      db,
+      '00000000-0000-4000-8000-000000000299',
+      { idempotencyKey: 'open-denied-regression-0001' },
+      sendOnlyAuth,
+    )).rejects.toMatchObject({ code: 'INELIGIBLE' });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -144,5 +163,4 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(section).toContain('manualMessagingRoute');
     expect(section).not.toContain("code:'MANUAL_EMAIL_DISABLED'");
   });
-
 });

@@ -128,7 +128,7 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
-  it('does not reject the send route before database replay and maps unavailable delivery to 503', () => {
+  it('does not reject the send route before database replay and keeps unavailable delivery fail-closed', () => {
     const start = apiSource.indexOf(
       "app.post('/manual-message-preparations/:id/send'",
     );
@@ -141,8 +141,8 @@ describe('PR 223 restricted manual email follow-ups', () => {
 
     const section = apiSource.slice(start, end);
     expect(section).toContain('sendPreparedManualEmail');
+    expect(section).toContain('manualMessagingRoute');
     expect(section).not.toContain("code:'MANUAL_EMAIL_DISABLED'");
-    expect(apiSource).toContain("error.code==='EMAIL_CONSUMER_UNAVAILABLE'");
   });
 
 });

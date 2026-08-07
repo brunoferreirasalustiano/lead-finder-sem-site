@@ -404,7 +404,7 @@ export async function recordManualOpen(
       };
     }));
   } catch (error) {
-    if (postgresCode(error) === '42809') {
+    if (postgresCode(error) === '42809' || postgresCode(error) === '42883') {
       return recordLegacyManualOpen(db, preparationId, input, auth);
     }
     throw error;

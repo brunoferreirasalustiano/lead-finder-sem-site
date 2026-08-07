@@ -54,7 +54,7 @@
     "@types/node": "^22.15.0",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.0",
-    "eslint-config-prettier": "^3.5.3",
+    "eslint-config-prettier": "^10.1.5",
     "prettier": "^3.5.3",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",

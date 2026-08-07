@@ -232,19 +232,66 @@ try {
   assert.equal(replayedOpen.replayed, true);
   assert.equal(replayedOpen.eventId, firstOpen.eventId);
 
+  // Build an immutable synthetic history that is already expired but has a
+  // durable OPENED event. This proves replay without bypassing append-only ACLs.
+  const expiredFixture = await fixture();
+  const expiredContact = (await raw<{
+    contact_resolution_fingerprint: string;
+  }[]>`
+    select contact_resolution_fingerprint
+    from lead_contacts where id=${expiredFixture.emailId}::uuid`)[0];
+  assert.ok(expiredContact);
+  const expiredVariables = {
+    EMPRESA: expiredFixture.leadName,
+    FONTE: expiredFixture.source,
+  };
+  const expiredPreparedMessage = provider.prepare(
+    approvedTemplates.emailV2,
+    expiredVariables,
+  );
+  const expiredSnapshot = {
+    schemaVersion: 2,
+    channel: 'EMAIL',
+    templateId: approvedTemplates.emailV2.id,
+    templateVersion: approvedTemplates.emailV2.version,
+    variables: {},
+    renderedInputsFingerprint: digest(expiredVariables),
+    contactFingerprint: expiredContact.contact_resolution_fingerprint,
+    messageFingerprint: expiredPreparedMessage.fingerprint,
+  };
+  const expiredPreparationId = randomUUID();
+  const expiredPreparationKey = randomUUID();
   await raw`
-    update pilot_manual_message_preparations
-    set expires_at=clock_timestamp()-interval '1 second'
-    where id=${replayPrepared.preparationId}::uuid`;
+    insert into pilot_manual_message_preparations(
+      id,pilot_run_id,lead_id,contact_id,channel,template_id,template_version,
+      operator_principal_id,payload_fingerprint,idempotency_key,
+      result_fingerprint,result_snapshot,expires_at
+    ) values(
+      ${expiredPreparationId}::uuid,${expiredFixture.pilotId}::uuid,
+      ${expiredFixture.leadId}::uuid,${expiredFixture.emailId}::uuid,'EMAIL',
+      ${approvedTemplates.emailV2.id},${approvedTemplates.emailV2.version},
+      ${auth.principalId},${digest({ expiredPreparationId })},${expiredPreparationKey},
+      ${digest(expiredSnapshot)},${raw.json(expiredSnapshot)},
+      clock_timestamp()-interval '1 second'
+    )`;
+  const expiredOpenId = randomUUID();
+  await raw`
+    insert into pilot_manual_message_events(
+      id,preparation_id,event_type,result,operator_principal_id,observation,
+      payload_fingerprint,idempotency_key
+    ) values(
+      ${expiredOpenId}::uuid,${expiredPreparationId}::uuid,'OPENED',null,
+      ${auth.principalId},null,${digest({ expiredOpenId })},${randomUUID()}
+    )`;
 
   const replayedExpiredOpen = await recordManualOpen(
     db,
-    replayPrepared.preparationId,
+    expiredPreparationId,
     { idempotencyKey: randomUUID() },
     auth,
   );
   assert.equal(replayedExpiredOpen.replayed, true);
-  assert.equal(replayedExpiredOpen.eventId, firstOpen.eventId);
+  assert.equal(replayedExpiredOpen.eventId, expiredOpenId);
 
   console.log(JSON.stringify({
     result: 'RESTRICTED_MANUAL_EMAIL_REVIEW_REGRESSIONS_PASS',

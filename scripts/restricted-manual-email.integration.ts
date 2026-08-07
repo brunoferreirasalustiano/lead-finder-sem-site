@@ -34,6 +34,11 @@ const canonical = (value: unknown): unknown => {
 const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
+const legacyV1ContactFingerprint = (contactId: string, contactValue: string) =>
+  createHash('sha256')
+    .update(JSON.stringify({ channel: 'EMAIL', contactId, value: contactValue }))
+    .digest('hex');
+
 const actor = (principalId: string) => createAuthorizationContext({
   principalId,
   permissions: new Set([
@@ -257,15 +262,18 @@ try {
     historicalVariables,
   );
   const historicalSnapshot = {
-    schemaVersion: 2,
     channel: 'EMAIL',
     templateId: approvedTemplates.emailV1.id,
     templateVersion: approvedTemplates.emailV1.version,
-    variables: {},
-    renderedInputsFingerprint: digest(historicalVariables),
-    contactFingerprint: historicalContact.contact_resolution_fingerprint,
+    variables: historicalVariables,
+    contactFingerprint: legacyV1ContactFingerprint(historical.emailId, historical.email),
     messageFingerprint: historicalPrepared.fingerprint,
   };
+  assert.notEqual(
+    historicalSnapshot.contactFingerprint,
+    historicalContact.contact_resolution_fingerprint,
+    'the fixture simulates a pre-0025 snapshot replayed after opaque fingerprints were introduced',
+  );
   const historicalInput = emailInput(historical.emailId, 'v1', historicalKey);
   const historicalPayloadFingerprint = digest({
     pilotRunId: historical.pilotId,
@@ -297,6 +305,51 @@ try {
   assert.equal(historicalReplay.preparationId, historicalPreparationId);
   assert.equal(historicalReplay.templateVersion, 'v1');
   assert.equal(historicalReplay.replayed, true);
+
+  const historicalOpen = await open(historicalPreparationId);
+  assert.equal(historicalOpen.replayed, false);
+  let historicalCalls = 0;
+  const historicalDelivery = await sendPreparedManualEmail(
+    db,
+    historicalPreparationId,
+    primaryActor,
+    runtime(async () => {
+      historicalCalls += 1;
+      return { provider: 'GMAIL_API' as const, messageId: 'synthetic-historical-v1-message' };
+    }),
+  );
+  assert.equal(historicalDelivery.state, 'DELIVERED');
+  assert.equal(historicalCalls, 1);
+
+  const incompatibleHistorical = await fixture();
+  const incompatibleHistoricalKey = randomUUID();
+  const incompatibleInput = emailInput(incompatibleHistorical.emailId, 'v1', incompatibleHistoricalKey);
+  const incompatibleSnapshot = {
+    ...historicalSnapshot,
+    contactFingerprint: 'f'.repeat(64),
+  };
+  await raw`
+    insert into pilot_manual_message_preparations(
+      id,pilot_run_id,lead_id,contact_id,channel,template_id,template_version,
+      operator_principal_id,payload_fingerprint,idempotency_key,
+      result_fingerprint,result_snapshot,expires_at
+    ) values(
+      ${randomUUID()}::uuid,${incompatibleHistorical.pilotId}::uuid,
+      ${incompatibleHistorical.leadId}::uuid,${incompatibleHistorical.emailId}::uuid,'EMAIL',
+      ${approvedTemplates.emailV1.id},${approvedTemplates.emailV1.version},
+      ${primaryActor.principalId},${digest({
+        pilotRunId: incompatibleHistorical.pilotId,
+        leadId: incompatibleHistorical.leadId,
+        ...incompatibleInput,
+        principalId: primaryActor.principalId,
+      })},${incompatibleHistoricalKey},${digest(incompatibleSnapshot)}::char(64),
+      ${raw.json(incompatibleSnapshot)},now()+interval '24 hours'
+    )`;
+  const incompatiblePreparationId = (await raw<{ id: string }[]>`
+    select id from pilot_manual_message_preparations
+    where pilot_run_id=${incompatibleHistorical.pilotId}::uuid`)[0]?.id;
+  assert.ok(incompatiblePreparationId);
+  await expectCode(open(incompatiblePreparationId), 'INVALID_STATE');
 
   let calls = 0;
   const successfulDelivery = async (message: {
@@ -368,6 +421,134 @@ try {
   assert.equal(deliveredReplay.state, 'DELIVERED');
   assert.equal(deliveredReplay.replayed, true);
   assert.equal(calls, 1);
+
+  const expiredReplayFixture = await fixture();
+  const expiredReplayPreparation = await prepareManualMessage(
+    db,
+    expiredReplayFixture.pilotId,
+    expiredReplayFixture.leadId,
+    emailInput(expiredReplayFixture.emailId),
+    primaryActor,
+  );
+  await open(expiredReplayPreparation.preparationId);
+  await raw`
+    update pilot_manual_message_preparations
+    set expires_at=now()-interval '1 minute'
+    where id=${expiredReplayPreparation.preparationId}::uuid`;
+  const expiredReplay = await recordManualOpen(
+    db,
+    expiredReplayPreparation.preparationId,
+    { idempotencyKey: randomUUID() },
+    primaryActor,
+  );
+  assert.equal(expiredReplay.replayed, true);
+
+  const blockedReplayFixture = await fixture();
+  const blockedReplayPreparation = await prepareManualMessage(
+    db,
+    blockedReplayFixture.pilotId,
+    blockedReplayFixture.leadId,
+    emailInput(blockedReplayFixture.emailId),
+    primaryActor,
+  );
+  await open(blockedReplayPreparation.preparationId);
+  await raw`update leads set is_blocked=true where id=${blockedReplayFixture.leadId}::uuid`;
+  const blockedReplay = await recordManualOpen(
+    db,
+    blockedReplayPreparation.preparationId,
+    { idempotencyKey: randomUUID() },
+    primaryActor,
+  );
+  assert.equal(blockedReplay.replayed, true);
+
+  const completedReplayFixture = await fixture();
+  const completedReplayPreparation = await prepareManualMessage(
+    db,
+    completedReplayFixture.pilotId,
+    completedReplayFixture.leadId,
+    emailInput(completedReplayFixture.emailId),
+    primaryActor,
+  );
+  await open(completedReplayPreparation.preparationId);
+  await raw`update pilot_runs set status='COMPLETED' where id=${completedReplayFixture.pilotId}::uuid`;
+  const completedReplay = await recordManualOpen(
+    db,
+    completedReplayPreparation.preparationId,
+    { idempotencyKey: randomUUID() },
+    primaryActor,
+  );
+  assert.equal(completedReplay.replayed, true);
+
+  await expectCode(
+    recordManualOpen(
+      db,
+      expiredReplayPreparation.preparationId,
+      { idempotencyKey: randomUUID() },
+      secondaryActor,
+    ),
+    'INELIGIBLE',
+  );
+
+  const liveGateFixture = await fixture();
+  const liveGatePreparation = await prepareManualMessage(
+    db,
+    liveGateFixture.pilotId,
+    liveGateFixture.leadId,
+    emailInput(liveGateFixture.emailId),
+    primaryActor,
+  );
+  await raw`update leads set is_blocked=true where id=${liveGateFixture.leadId}::uuid`;
+  await expectCode(open(liveGatePreparation.preparationId), 'INELIGIBLE');
+  const liveGateEvents = await raw<{ count: number }[]>`
+    select count(*)::int as count from pilot_manual_message_events
+    where preparation_id=${liveGatePreparation.preparationId}::uuid and event_type='OPENED'`;
+  assert.equal(Number(liveGateEvents[0]?.count), 0);
+
+  const v2ChangedFixture = await fixture();
+  const v2ChangedPreparation = await prepareManualMessage(
+    db,
+    v2ChangedFixture.pilotId,
+    v2ChangedFixture.leadId,
+    emailInput(v2ChangedFixture.emailId),
+    primaryActor,
+  );
+  await raw`
+    update lead_contacts
+    set original_value='changed-original-value'
+    where id=${v2ChangedFixture.emailId}::uuid`;
+  await expectCode(open(v2ChangedPreparation.preparationId), 'INVALID_STATE');
+
+  const concurrentOpenFixture = await fixture();
+  const concurrentOpenPreparation = await prepareManualMessage(
+    db,
+    concurrentOpenFixture.pilotId,
+    concurrentOpenFixture.leadId,
+    emailInput(concurrentOpenFixture.emailId),
+    primaryActor,
+  );
+  const concurrentOpenResults = await Promise.all([
+    open(concurrentOpenPreparation.preparationId),
+    open(concurrentOpenPreparation.preparationId),
+  ]);
+  assert.equal(concurrentOpenResults.filter((item) => !item.replayed).length, 1);
+  assert.equal(concurrentOpenResults.filter((item) => item.replayed).length, 1);
+  assert.equal(
+    Number((await raw<{ count: number }[]>`
+      select count(*)::int as count from pilot_manual_message_events
+      where preparation_id=${concurrentOpenPreparation.preparationId}::uuid and event_type='OPENED'`)[0]?.count),
+    1,
+  );
+
+  const differentPreparation = await fixture();
+  const differentPreparationResult = await prepareManualMessage(
+    db,
+    differentPreparation.pilotId,
+    differentPreparation.leadId,
+    emailInput(differentPreparation.emailId),
+    primaryActor,
+  );
+  await raw`update leads set is_blocked=true where id=${differentPreparation.leadId}::uuid`;
+  await expectCode(open(differentPreparationResult.preparationId), 'INELIGIBLE');
 
   const deterministicFixture = await fixture();
   const deterministicPreparation = await prepareManualMessage(
@@ -521,14 +702,17 @@ try {
        where table_schema='public'
          and table_name in ('pilot_manual_email_send_attempts','pilot_manual_email_send_events')
          and column_name in ('recipient','email','subject','body','payload')) as raw_recipient_columns`;
-  assert.equal(auditRows[0]?.attempts, 4);
-  assert.equal(auditRows[0]?.terminal_events, 4);
+  assert.equal(auditRows[0]?.attempts, 5);
+  assert.equal(auditRows[0]?.terminal_events, 5);
   assert.equal(auditRows[0]?.raw_recipient_columns, 0);
 
   console.log(JSON.stringify({
     result: 'RESTRICTED_MANUAL_EMAIL_PASS',
     templateV2: true,
     historicalV1Replay: true,
+    historicalV1Send: true,
+    historicalV1IncompatibleRejected: true,
+    openedReplayBeforeLiveState: true,
     oneRecipientPerAction: true,
     ccBccAttachments: 0,
     providerCallsOnReplay: 0,

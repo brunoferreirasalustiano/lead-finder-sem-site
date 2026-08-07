@@ -182,7 +182,9 @@ const exchangeRefreshToken = async (
 };
 
 const manualDeliveryOutcomeCode = (status: number) =>
-  status >= 500 || status === 408 || status === 409 || status === 425 || status === 429
+  status < 400
+    || status >= 500
+    || status === 408 || status === 409 || status === 425 || status === 429
     ? 'DELIVERY_AMBIGUOUS' as const
     : 'DELIVERY_REJECTED' as const;
 
@@ -302,6 +304,12 @@ export function createGmailApiManualEmailConsumer(
             ? 'Manual email provider outcome is unknown'
             : 'Manual email delivery was rejected',
           code,
+        );
+      }
+      if (!deliveryResponse.ok) {
+        throw new OperatorEmailDeliveryError(
+          'Manual email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
         );
       }
       const delivery = gmailSendResponseSchema.safeParse(

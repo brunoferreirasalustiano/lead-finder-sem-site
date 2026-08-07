@@ -114,6 +114,16 @@ const canonical = (value: unknown): unknown => {
 const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
+/**
+ * V1 preparations persisted this exact pre-0025 JSON representation.  Keep
+ * this narrowly scoped to the historical email snapshot shape; V2 snapshots
+ * must continue to bind to the opaque contact-resolution fingerprint.
+ */
+const legacyV1ContactFingerprint = (contactId: string, contactValue: string) =>
+  createHash('sha256')
+    .update(JSON.stringify({ channel: 'EMAIL', contactId, value: contactValue }))
+    .digest('hex');
+
 const keyedFingerprint = (key: string, domain: string, value: string) =>
   createHmac('sha256', key).update(domain).update('\u0000').update(value).digest('hex');
 
@@ -181,7 +191,7 @@ const withDatabaseErrorMapping = async <T>(operation: () => Promise<T>): Promise
 const validateSnapshot = (
   context: Pick<PreparationContextRow,
     'template_id' | 'template_version' | 'result_snapshot' | 'result_fingerprint'
-    | 'contact_fingerprint' | 'contact_source' | 'lead_name'>,
+    | 'contact_id' | 'contact_value' | 'contact_fingerprint' | 'contact_source' | 'lead_name'>,
 ): PreparedEmail => {
   const snapshot = record(context.result_snapshot);
   if (digest(snapshot) !== String(context.result_fingerprint).trim()) {
@@ -189,7 +199,19 @@ const validateSnapshot = (
   }
   if (snapshot['channel'] !== 'EMAIL'
     || snapshot['templateId'] !== context.template_id
-    || snapshot['templateVersion'] !== context.template_version
+    || snapshot['templateVersion'] !== context.template_version) {
+    throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
+  }
+  const isHistoricalV1 = context.template_version === approvedTemplates.emailV1.version
+    && snapshot['schemaVersion'] === undefined;
+  if (isHistoricalV1) {
+    if (snapshot['contactFingerprint'] !== legacyV1ContactFingerprint(
+      String(context.contact_id),
+      String(context.contact_value),
+    )) {
+      throw new ManualMessagingError('Prepared contact changed', 'INVALID_STATE');
+    }
+  } else if (snapshot['schemaVersion'] !== 2
     || snapshot['contactFingerprint'] !== String(context.contact_fingerprint).trim()) {
     throw new ManualMessagingError('Persisted preparation snapshot is invalid', 'INVALID_STATE');
   }
@@ -320,22 +342,15 @@ export async function recordManualOpen(
   requirePermission(auth, 'manual-messaging:open');
   try {
     return await withDatabaseErrorMapping(() => db.transaction(async (tx) => {
-      const contexts = await tx.execute<PreparationContextRow>(sql`
-        select * from public.resolve_manual_email_preparation_context(
-          ${preparationId}::uuid,
-          ${auth.principalId},
-          false
-        )
-      `);
-      const context = contexts[0];
-      if (!context) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
-      validateSnapshot(context);
       const payloadFingerprint = digest({
         preparationId,
         eventType: 'OPENED',
         idempotencyKey: input.idempotencyKey,
         principalId: auth.principalId,
       });
+      // PostgreSQL checks for the persisted OPENED fact before consulting live
+      // expiry, pilot, or contact eligibility.  This is the only historical
+      // replay exception; a first open still performs all live gates in SQL.
       const events = await tx.execute<{
         id: string;
         created_at: Date;
@@ -350,12 +365,32 @@ export async function recordManualOpen(
       `);
       const event = events[0];
       if (!event) throw new Error('MANUAL_EMAIL_OPEN_RESULT_MISSING');
+      if (event.replayed) {
+        return {
+          preparationId,
+          state: 'OPENED' as const,
+          eventId: event.id,
+          createdAt: event.created_at,
+          replayed: true,
+        };
+      }
+
+      const contexts = await tx.execute<PreparationContextRow>(sql`
+        select * from public.resolve_manual_email_preparation_context(
+          ${preparationId}::uuid,
+          ${auth.principalId},
+          false
+        )
+      `);
+      const context = contexts[0];
+      if (!context) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+      validateSnapshot(context);
       return {
         preparationId,
         state: 'OPENED' as const,
         eventId: event.id,
         createdAt: event.created_at,
-        replayed: event.replayed,
+        replayed: false,
       };
     }));
   } catch (error) {

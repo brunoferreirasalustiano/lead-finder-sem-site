@@ -199,6 +199,37 @@ describe('Gmail API manual email consumer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([500, 502, 503, 504])(
+    'classifies Gmail HTTP %s after POST as ambiguous',
+    async (status) => {
+      const fetchMock = vi.fn<OperatorEmailFetch>()
+        .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+        .mockResolvedValueOnce(jsonResponse({ error: 'server failure' }, status));
+      await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+        .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('does not treat a non-definitive redirect as a rejection', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(new Response(null, { status: 302 }));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a send timeout as ambiguous', async () => {
+    const timeout = Object.assign(new Error('request timed out'), { name: 'TimeoutError' });
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockRejectedValueOnce(timeout);
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('classifies a successful status without a provider id as ambiguous', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))

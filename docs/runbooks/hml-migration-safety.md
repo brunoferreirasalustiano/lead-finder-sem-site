@@ -34,28 +34,6 @@ Do not place `DATABASE_URL`, passwords, tokens, or other secrets in commands, lo
 
 Any late failure must roll back the complete provisioning attempt.
 
-## Runtime grants after migrations
-
-The migration runner deliberately ends with a deny/revoke boundary. When an
-existing `lead_finder_api_runtime` role is present, migrations `0042` through
-`0047` revoke the restricted manual-email `EXECUTE` grants. The HML deployment
-sequence therefore has two explicit, fail-closed stages:
-
-```text
-npm run db:migrate
-  -> npm run db:provision:hml-runtime
-  -> verify runtime allowlist and restricted-table denial
-  -> start or release the API
-```
-
-`db:provision:hml-runtime` runs the generic role descriptor first and the HML
-supplement second, then verifies the role attributes, the seven restricted
-email function grants, and the absence of direct access to restricted tables.
-It is safe to replay, but any error terminates the process; do not append
-`|| true` or continue deployment after a failed stage. This repository change
-does not authorize or perform a hosted migration, role change, Render deploy,
-or Supabase operation.
-
 ## Hosted execution gates
 
 Before any future hosted mutation, require a separate owner authorization and evidence for:

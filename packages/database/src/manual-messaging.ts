@@ -950,8 +950,14 @@ async function event(
       | { pilot_run_id: string; lead_id: string; contact_id: string; channel: MessagingChannel; result_fingerprint: string; result_snapshot: unknown; operator_principal_id: string; expires_at: Date; expired: boolean }
       | undefined;
     if (!p) throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
-    if (eventType === 'CANCELLED' && p.operator_principal_id !== auth.principalId)
+    if ((eventType === 'CANCELLED' || eventType === 'OPENED')
+      && p.operator_principal_id !== auth.principalId)
       throw new ManualMessagingError('Preparation not found', 'NOT_FOUND');
+    if (eventType === 'OPENED' && p.channel === 'EMAIL')
+      throw new ManualMessagingError(
+        'Restricted local email consumer is unavailable',
+        'EMAIL_CONSUMER_UNAVAILABLE',
+      );
     if (eventType !== 'CANCELLED') {
       if (p.expired) throw new ManualMessagingError('Manual message preparation expired', 'INVALID_STATE');
       const eligible = await exactEligibleContact(tx, p.pilot_run_id, p.lead_id, p.contact_id, p.channel);

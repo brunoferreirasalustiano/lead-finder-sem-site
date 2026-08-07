@@ -23,7 +23,8 @@ export type OperationalPrincipal = Readonly<{
     | 'BEARER_TOKEN'
     | 'HML_SMOKE_BEARER_TOKEN'
     | 'HML_OPERATOR_BEARER_TOKEN'
-    | 'HML_METRICS_BEARER_TOKEN';
+    | 'HML_METRICS_BEARER_TOKEN'
+    | 'HML_EMAIL_BEARER_TOKEN';
 }>;
 
 declare module 'fastify' {
@@ -130,6 +131,7 @@ export type AuthenticationOptions = Readonly<{
   temporary?: TemporaryAuthentication;
   operatorTemporary?: TemporaryAuthentication;
   metricsTemporary?: TemporaryAuthentication;
+  emailTemporary?: TemporaryAuthentication;
   authenticate?: (request: FastifyRequest) => OperationalPrincipal | undefined | Promise<OperationalPrincipal | undefined>;
 }>;
 
@@ -182,6 +184,16 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
       authenticationSource: 'HML_METRICS_BEARER_TOKEN' as const,
     };
   }
+  const emailTemporary = options.emailTemporary;
+  if (emailTemporary && emailTemporary.environment === 'homologation'
+    && emailTemporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, emailTemporary.tokenHash)) {
+    return {
+      id: emailTemporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(emailTemporary.principalPermissions),
+      authenticationSource: 'HML_EMAIL_BEARER_TOKEN' as const,
+    };
+  }
   return undefined;
 };
 
@@ -220,8 +232,12 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
   const failedTemporaryAuthentication = new Map<string, { count: number; resetAt: number }>();
   const temporaryRateLimit = (request: FastifyRequest) => {
     const now = Date.now();
-    const activeTemporary = [options.temporary, options.operatorTemporary, options.metricsTemporary]
-      .find((candidate) => candidate && candidate.expiresAt.getTime() > now);
+    const activeTemporary = [
+      options.temporary,
+      options.operatorTemporary,
+      options.metricsTemporary,
+      options.emailTemporary,
+    ].find((candidate) => candidate && candidate.expiresAt.getTime() > now);
     if (!activeTemporary || activeTemporary.expiresAt.getTime() <= Date.now()) return false;
     const key = request.ip || 'unknown';
     const current = failedTemporaryAuthentication.get(key);
@@ -266,6 +282,9 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     }
     if (principal.authenticationSource === 'HML_METRICS_BEARER_TOKEN') {
       request.log.info({ event: 'hml_metrics_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_metrics_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_EMAIL_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_email_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_email_authentication_accepted');
     }
 
     const requiredPermission = policiesByRoute.get(routeKey);

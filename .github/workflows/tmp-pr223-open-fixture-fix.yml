@@ -1,0 +1,44 @@
+name: PR223 narrow-contact OPEN fixture fix (one-shot)
+
+on:
+  push:
+    branches:
+      - fix/pr215-final-review-followups-20260807
+
+permissions:
+  contents: write
+
+jobs:
+  patch-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add dedicated OPEN capability to legitimate narrow-contact actor
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/narrow-contact-resolution.integration.ts')
+          text = path.read_text()
+          old = "permissions: new Set(['manual-messaging:prepare']),"
+          new = "permissions: new Set(['manual-messaging:prepare', 'manual-messaging:open']),"
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one actor permission fixture, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- scripts/narrow-contact-resolution.integration.ts
+      - name: Commit fixture-only correction
+        shell: bash
+        run: |
+          if git diff --quiet -- scripts/narrow-contact-resolution.integration.ts; then
+            echo 'fixture already corrected'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/narrow-contact-resolution.integration.ts
+          git commit -m 'test: grant OPEN to narrow-contact fixture actor'
+          git push origin HEAD:${GITHUB_REF_NAME}

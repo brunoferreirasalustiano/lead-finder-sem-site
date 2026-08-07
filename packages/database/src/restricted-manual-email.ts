@@ -463,6 +463,12 @@ export async function sendPreparedManualEmail(
   if (existingAttempt) {
     const persistedTerminal = terminalResult(existingAttempt, true);
     if (persistedTerminal) return persistedTerminal;
+    return {
+      state: 'IN_PROGRESS',
+      provider: 'GMAIL_API',
+      replayed: true,
+      attemptId: existingAttempt.id,
+    };
   }
 
   if (!runtime.sendEnabled || runtime.killSwitchEnabled) {

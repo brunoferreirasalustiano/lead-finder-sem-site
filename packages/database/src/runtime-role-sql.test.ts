@@ -23,6 +23,7 @@ const hmlRuntimeFunctions = [
   'public.create_manual_email_preparation(uuid, uuid, uuid, text, text, text, character, text, character, jsonb)',
   'public.resolve_manual_email_preparation_context(uuid, text, boolean)',
   'public.append_manual_email_open_event(uuid, text, character, text)',
+  'public.get_manual_email_send_attempt(uuid, text)',
   'public.create_manual_email_send_attempt(uuid, text, character, character, character)',
   'public.append_manual_email_send_event(uuid, text, text, character, text)',
 ] as const;

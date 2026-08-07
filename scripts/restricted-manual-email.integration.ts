@@ -461,7 +461,7 @@ try {
   await expectCode(
     recordManualOpen(
       db,
-      expiredReplayPreparation.preparationId,
+      completedReplayPreparation.preparationId,
       { idempotencyKey: randomUUID() },
       secondaryActor,
     ),

@@ -13,7 +13,6 @@ import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 import {
   prepareManualMessage as prepareLegacyManualMessage,
-  recordManualOpen as recordLegacyManualOpen,
 } from './manual-messaging.js';
 import {
   prepareManualMessage as prepareRestrictedManualMessage,
@@ -80,8 +79,8 @@ export async function recordManualOpen(
   input: { idempotencyKey: string },
   auth: AuthorizationContext,
 ) {
-  if (!auth.permissions.has('manual-messaging:send')) {
-    return recordLegacyManualOpen(db, preparationId, input, auth);
+  if (!auth.permissions.has('manual-messaging:open')) {
+    throw new Error('MANUAL_MESSAGING_OPEN_PERMISSION_REQUIRED');
   }
   return recordRestrictedManualOpen(db, preparationId, input, auth);
 }

@@ -1,0 +1,49 @@
+name: Refresh NanoID lock (temporary)
+
+on:
+  push:
+    branches:
+      - security/nanoid-ghsa-2v37-7h3g-55p8
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: security/nanoid-ghsa-2v37-7h3g-55p8
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Regenerate lock without package scripts
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Verify patched NanoID resolution
+        run: node -e "const l=require('./package-lock.json'); const p=l.packages['node_modules/nanoid']; if (!p || p.version !== '5.1.6') { console.error('Unexpected nanoid lock resolution'); process.exit(1) }"
+
+      - name: Audit high severity dependencies
+        run: npm audit --audit-level=high
+
+      - name: Remove temporary workflow and commit generated lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/refresh-nanoid-lock-temporary.yml
+          git add package-lock.json package.json
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "security: refresh lock for patched nanoid"
+          git push origin HEAD:security/nanoid-ghsa-2v37-7h3g-55p8

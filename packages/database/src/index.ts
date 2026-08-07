@@ -80,7 +80,7 @@ export async function recordManualOpen(
   input: { idempotencyKey: string },
   auth: AuthorizationContext,
 ) {
-  if (!auth.permissions.has('manual-messaging:send')) {
+  if (!auth.permissions.has('manual-messaging:open')) {
     return recordLegacyManualOpen(db, preparationId, input, auth);
   }
   return recordRestrictedManualOpen(db, preparationId, input, auth);

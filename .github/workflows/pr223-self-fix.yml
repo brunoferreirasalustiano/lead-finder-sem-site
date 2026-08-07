@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/pr215-final-review-followups-20260807
+  pull_request:
+    branches:
+      - hml/render-supabase-plan-b
 
 permissions:
   contents: write

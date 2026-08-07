@@ -1,0 +1,51 @@
+name: Temporary PR223 nanoid lockfile fix
+
+on:
+  push:
+    branches:
+      - fix/pr215-final-review-followups-20260807
+    paths:
+      - .github/workflows/tmp-pr223-nanoid-lockfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pr215-final-review-followups-20260807
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply npm audit lockfile fix only
+        run: npm audit fix --package-lock-only --ignore-scripts
+
+      - name: Verify manifest unchanged and high audit clean
+        shell: bash
+        run: |
+          git diff --exit-code -- package.json
+          npm audit --audit-level=high
+          git diff --check
+
+      - name: Commit lockfile-only security update
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No package-lock.json change was produced" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "fix: update nanoid transitive lockfile"
+          git push origin HEAD:fix/pr215-final-review-followups-20260807

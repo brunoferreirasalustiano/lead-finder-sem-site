@@ -84,6 +84,9 @@ export async function recordManualOpen(
   if (!auth.permissions.has('manual-messaging:open')) {
     throw new ManualMessagingError('Manual message open is not authorized', 'INELIGIBLE');
   }
+  if (!auth.permissions.has('manual-messaging:send')) {
+    return recordLegacyManualOpen(db, preparationId, input, auth);
+  }
   return recordRestrictedManualOpen(db, preparationId, input, auth);
 }
 
@@ -212,7 +215,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, id));
+      .where(eq(collectionJobs.id, job.id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

@@ -212,7 +212,7 @@ export async function claimCollection(db: Database) {
     await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
-      .where(eq(collectionJobs.id, job.id));
+      .where(eq(collectionJobs.id, id));
     const envelope = job.payload as { input: unknown };
     return { ...job, payload: envelope.input };
   });

@@ -433,15 +433,30 @@ const readExistingAttempt = async (
   db: Database,
   preparationId: string,
   auth: AuthorizationContext,
-): Promise<AttemptRow | undefined> => withDatabaseErrorMapping(async () => {
-  const rows = await db.execute<AttemptRow>(sql`
-    select * from public.get_manual_email_send_attempt(
-      ${preparationId}::uuid,
-      ${auth.principalId}
-    )
-  `);
-  return rows[0];
-});
+): Promise<AttemptRow | undefined> => {
+  try {
+    return await withDatabaseErrorMapping(async () => {
+      const rows = await db.execute<AttemptRow>(sql`
+        select * from public.get_manual_email_send_attempt(
+          ${preparationId}::uuid,
+          ${auth.principalId}
+        )
+      `);
+      return rows[0];
+    });
+  } catch (error) {
+    // Pre-0043 schemas do not have the restricted replay lookup.  Never
+    // fall through to the legacy sender: the restricted boundary must remain
+    // unavailable until its persistence contract is installed.
+    if (postgresCode(error) === '42883') {
+      throw new ManualMessagingError(
+        'Manual email delivery is unavailable',
+        'EMAIL_CONSUMER_UNAVAILABLE',
+      );
+    }
+    throw error;
+  }
+};
 
 const appendTerminal = async (
   db: Database,

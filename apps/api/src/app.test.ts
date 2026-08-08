@@ -9,6 +9,7 @@ import {
   csvCell,
   safeCampaignAuditItem,
   safeCampaignFailureItem,
+  safeManualEmailDeliveryDto,
 } from './app.js';
 import { permissions } from './auth.js';
 import { findForbiddenPiiResponseKeys, safeLeadDto } from './api-contracts.js';
@@ -953,6 +954,141 @@ describe('campaign management routes', () => {
     expect((await authenticatedInject(app, { method: 'POST', url: `/campaign-versions/${id}/approve`, headers, payload: { actor: ' ', approvedAt: 'invalid' } })).statusCode).toBe(400);
     expect((await authenticatedInject(app, { method: 'GET', url: '/campaigns/eligible/leads?channel=EMAIL&pageSize=101' })).statusCode).toBe(400);
     expect((await authenticatedInject(app, { method: 'POST', url: `/campaigns/${id}/simulations`, headers, payload: { campaignVersionId: id, channel: 'EMAIL', pageSize: 51 } })).statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+describe('restricted manual email HTTP replay contract', () => {
+  const preparationId = '70dfeb9d-30f0-4d5a-8762-3dbb4ed506af';
+  const attemptId = '80dfeb9d-30f0-4d5a-8762-3dbb4ed506ab';
+  const sendPermissions = ['manual-messaging:send'] as const;
+  const canaries = ['private@example.test', 'Synthetic subject', 'Synthetic body', 'sender@example.test'];
+
+  const replayAttempt = (
+    eventType: 'DELIVERED' | 'FAILED' | 'AMBIGUOUS' | null,
+  ) => ({
+    id: attemptId,
+    reserved_at: new Date('2026-08-08T10:00:00.000Z'),
+    replayed: true,
+    event_type: eventType,
+    provider_message_fingerprint: eventType === 'DELIVERED' ? 'd'.repeat(64) : null,
+    error_code: eventType === 'FAILED' ? 'DELIVERY_REJECTED'
+      : eventType === 'AMBIGUOUS' ? 'PROVIDER_OUTCOME_UNKNOWN' : null,
+    event_created_at: new Date('2026-08-08T10:00:01.000Z'),
+  });
+
+  it('uses 201 for a new result and 200 for replay while preserving safe metadata', () => {
+    expect(creationStatus(false)).toBe(201);
+    expect(creationStatus(true)).toBe(200);
+    expect(safeManualEmailDeliveryDto({
+      state: 'DELIVERED',
+      provider: 'GMAIL_API',
+      replayed: false,
+      attemptId,
+      messageIdFingerprint: 'd'.repeat(64),
+    })).toEqual({
+      state: 'DELIVERED',
+      provider: 'GMAIL_API',
+      replayed: false,
+      attemptId,
+      messageIdFingerprint: 'd'.repeat(64),
+    });
+  });
+
+  it.each([
+    ['DELIVERED', replayAttempt('DELIVERED'), { messageIdFingerprint: 'd'.repeat(64) }],
+    ['FAILED', replayAttempt('FAILED'), { errorCode: 'DELIVERY_REJECTED' }],
+    ['AMBIGUOUS', replayAttempt('AMBIGUOUS'), { errorCode: 'PROVIDER_OUTCOME_UNKNOWN' }],
+    ['IN_PROGRESS', replayAttempt(null), {}],
+  ] as const)('returns a replay-aware HTTP 200 for persisted %s without provider access', async (
+    state,
+    attempt,
+    metadata,
+  ) => {
+    const execute = vi.fn().mockResolvedValue([attempt]);
+    const transaction = vi.fn();
+    const deliverManualEmail = vi.fn();
+    const app = buildApp({ execute, transaction } as unknown as Database, {
+      authentication: { token: testToken, principalPermissions: sendPermissions },
+      manualEmailSendEnabled: false,
+      deliverManualEmail,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/send`,
+      headers: { authorization: `Bearer ${testToken}` },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      state,
+      provider: 'GMAIL_API',
+      replayed: true,
+      attemptId,
+      ...metadata,
+    });
+    for (const canary of canaries) expect(response.body).not.toContain(canary);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(deliverManualEmail).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('maps a pre-0043 replay lookup to HTTP 503 without a new attempt or provider call', async () => {
+    const execute = vi.fn().mockRejectedValue({ code: '42883' });
+    const transaction = vi.fn();
+    const deliverManualEmail = vi.fn();
+    const app = buildApp({ execute, transaction } as unknown as Database, {
+      authentication: { token: testToken, principalPermissions: sendPermissions },
+      manualEmailSendEnabled: false,
+      deliverManualEmail,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/send`,
+      headers: { authorization: `Bearer ${testToken}` },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: 'Manual messaging operation failed',
+      code: 'EMAIL_CONSUMER_UNAVAILABLE',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(deliverManualEmail).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('maps a disabled new attempt to HTTP 503 without reserving or calling a provider', async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    const transaction = vi.fn();
+    const deliverManualEmail = vi.fn();
+    const app = buildApp({ execute, transaction } as unknown as Database, {
+      authentication: { token: testToken, principalPermissions: sendPermissions },
+      manualEmailSendEnabled: false,
+      deliverManualEmail,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/manual-message-preparations/${preparationId}/send`,
+      headers: { authorization: `Bearer ${testToken}` },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: 'Manual messaging operation failed',
+      code: 'EMAIL_CONSUMER_UNAVAILABLE',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(deliverManualEmail).not.toHaveBeenCalled();
     await app.close();
   });
 });

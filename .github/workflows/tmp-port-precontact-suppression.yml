@@ -1,0 +1,43 @@
+name: Temporary precontact suppression port
+
+on:
+  push:
+    branches:
+      - fix/precontact-email-suppression-rebased-20260808
+    paths:
+      - .github/workflows/tmp-port-precontact-suppression.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Port reviewed files from PR 226 branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/precontact-email-suppression-20260807
+          git checkout origin/fix/precontact-email-suppression-20260807 -- \
+            database/migrations/0048_precontact_email_delivery_suppression.sql \
+            scripts/precontact-email-delivery-suppression.integration.ts
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const needle = 'tsx scripts/precontact-email-delivery-suppression.integration.ts';
+          if (!pkg.scripts['test:integration'].includes(needle)) {
+            pkg.scripts['test:integration'] += ` && ${needle}`;
+          }
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          NODE
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add database/migrations/0048_precontact_email_delivery_suppression.sql scripts/precontact-email-delivery-suppression.integration.ts package.json
+          git commit -m "fix: port precontact email suppression onto current HML"
+          git push origin HEAD:fix/precontact-email-suppression-rebased-20260808

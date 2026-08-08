@@ -27,4 +27,28 @@ GRANT EXECUTE ON FUNCTION
   public.append_manual_email_send_event(uuid, text, text, character, text)
 TO lead_finder_api_runtime;
 
+-- The bounded operator Gmail self-test reserves and replays attempts by reading
+-- its two fingerprint-only audit tables before any provider call. Migration
+-- 0027 originally granted this read boundary, but the generic runtime reset is
+-- intentionally deny-by-default and removes it. Restore only this HML-specific
+-- read surface after the reset; no raw recipient or message content is stored.
+GRANT SELECT ON TABLE
+  public.operator_email_test_attempts,
+  public.operator_email_test_events
+TO lead_finder_api_runtime;
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts;
+CREATE POLICY lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events;
+CREATE POLICY lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
 COMMIT;

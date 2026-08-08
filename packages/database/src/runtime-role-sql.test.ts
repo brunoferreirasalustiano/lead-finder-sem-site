@@ -28,6 +28,11 @@ const hmlRuntimeFunctions = [
   'public.append_manual_email_send_event(uuid, text, text, character, text)',
 ] as const;
 
+const operatorEmailSelfTestReadTables = [
+  'public.operator_email_test_attempts',
+  'public.operator_email_test_events',
+] as const;
+
 describe('least-privilege runtime SQL replay contract', () => {
   it('keeps HML manual messaging grants out of the generic role and restores them explicitly', () => {
     const blanketRevokePosition = createSql.indexOf(
@@ -47,7 +52,24 @@ describe('least-privilege runtime SQL replay contract', () => {
     expect(hmlSupplementSql).not.toContain('pilot_manual_whatsapp_cloud_send_events');
     expect(hmlSupplementSql).not.toContain('pilot_manual_email_send_attempts');
     expect(hmlSupplementSql).not.toContain('pilot_manual_email_send_events');
-    expect(hmlSupplementSql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/i);
+
+    expect(hmlSupplementSql).not.toMatch(/GRANT\s+(?:INSERT|UPDATE|DELETE)\s+ON/i);
+    expect(hmlSupplementSql).toMatch(
+      /GRANT\s+SELECT\s+ON\s+TABLE\s+public\.operator_email_test_attempts,\s*public\.operator_email_test_events\s+TO\s+lead_finder_api_runtime;/i,
+    );
+    for (const table of operatorEmailSelfTestReadTables) {
+      expect(hmlSupplementSql).toContain(table);
+    }
+    const selectGrants = hmlSupplementSql.match(/GRANT\s+SELECT\s+ON\s+TABLE[\s\S]*?TO\s+lead_finder_api_runtime;/gi) ?? [];
+    expect(selectGrants).toHaveLength(1);
+    expect(selectGrants[0]).toContain('public.operator_email_test_attempts');
+    expect(selectGrants[0]).toContain('public.operator_email_test_events');
+    expect(hmlSupplementSql).toContain(
+      'CREATE POLICY lead_finder_api_runtime_operator_email_attempts_select',
+    );
+    expect(hmlSupplementSql).toContain(
+      'CREATE POLICY lead_finder_api_runtime_operator_email_events_select',
+    );
   });
 
   it('keeps the runtime role non-inheriting while allowing postgres to administer it', () => {

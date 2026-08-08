@@ -10,6 +10,31 @@ BEGIN
 END
 $$;
 
+-- The HML Gmail self-test writes only through SECURITY DEFINER functions, but
+-- its idempotent replay path must inspect the two append-only audit tables.
+-- Keep direct writes denied and expose only SELECT under explicit RLS policies.
+GRANT SELECT ON TABLE
+  public.operator_email_test_attempts,
+  public.operator_email_test_events
+TO lead_finder_api_runtime;
+
+ALTER TABLE public.operator_email_test_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.operator_email_test_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts;
+CREATE POLICY lead_finder_api_runtime_operator_email_attempts_select
+  ON public.operator_email_test_attempts
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
+DROP POLICY IF EXISTS lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events;
+CREATE POLICY lead_finder_api_runtime_operator_email_events_select
+  ON public.operator_email_test_events
+  FOR SELECT TO lead_finder_api_runtime
+  USING (true);
+
 -- HML-only manual messaging functions. The generic runtime role script first
 -- revokes all function privileges; apply this supplement afterwards when the
 -- homologation WhatsApp and restricted email migrations are present.

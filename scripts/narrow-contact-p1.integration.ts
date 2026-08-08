@@ -337,7 +337,7 @@ try {
         templateVersion: emailInput.templateVersion,
       },
     });
-    assert.equal(response.statusCode, 422);
+    assert.equal(response.statusCode, 503);
     assert.equal(
       response.json<{ code: string }>().code,
       'EMAIL_CONSUMER_UNAVAILABLE',

@@ -74,7 +74,7 @@ CREATE OR REPLACE FUNCTION public.email_precontact_identity_fingerprint(p_email 
 RETURNS char(64)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path=pg_catalog,public,lead_finder_private
+SET search_path=pg_catalog, public
 AS $function$
 DECLARE
   normalized_email text := lower(btrim(p_email));
@@ -212,7 +212,7 @@ CREATE OR REPLACE FUNCTION public.enforce_email_precontact_suppression()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path=pg_catalog,public,lead_finder_private
+SET search_path=pg_catalog, public
 AS $function$
 DECLARE
   target_fingerprint char(64);
@@ -272,7 +272,7 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path=pg_catalog,public,lead_finder_private
+SET search_path=pg_catalog, public
 AS $function$
 DECLARE
   normalized_reason text := upper(btrim(p_reason));

@@ -1,5 +1,32 @@
 BEGIN;
 
+-- Migration 0041 did not persist the email value or a deterministic email
+-- identity with its contact-bound suppression rows. If permanent rows already
+-- exist before 0048, the address that originally bounced cannot be proven from
+-- the mutable lead_contacts row. Fail closed instead of suppressing a possibly
+-- replacement address. Replays skip this gate because 0048 then has its own
+-- immutable identity binding on every new permanent contact-bound event.
+DO $historical$
+DECLARE
+  ambiguous_count bigint;
+BEGIN
+  IF to_regclass('public.email_precontact_delivery_suppressions') IS NULL THEN
+    SELECT count(*)
+    INTO ambiguous_count
+    FROM public.contact_delivery_suppressions suppression
+    WHERE suppression.channel='EMAIL'
+      AND suppression.reason IN ('HARD_BOUNCE','INVALID_CONTACT');
+
+    IF ambiguous_count > 0 THEN
+      RAISE EXCEPTION
+        'migration 0048 requires controlled reconciliation for % historical permanent email suppression(s)',
+        ambiguous_count
+        USING ERRCODE='55000';
+    END IF;
+  END IF;
+END
+$historical$;
+
 CREATE SCHEMA IF NOT EXISTS lead_finder_private;
 REVOKE ALL ON SCHEMA lead_finder_private FROM PUBLIC;
 
@@ -156,6 +183,71 @@ BEGIN
 END
 $roles$;
 
+-- From 0048 onward every permanent contact-bound event stores the immutable
+-- HMAC identity observed while its contact_resolution_fingerprint binding is
+-- locked and verified. This makes future migration replays independent of the
+-- mutable lead_contacts.normalized_value column.
+ALTER TABLE public.contact_delivery_suppressions
+  ADD COLUMN IF NOT EXISTS email_precontact_identity_fingerprint char(64);
+
+DO $constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.contact_delivery_suppressions'::regclass
+      AND conname='contact_delivery_suppressions_precontact_identity_format'
+  ) THEN
+    ALTER TABLE public.contact_delivery_suppressions
+      ADD CONSTRAINT contact_delivery_suppressions_precontact_identity_format
+      CHECK (
+        email_precontact_identity_fingerprint IS NULL
+        OR email_precontact_identity_fingerprint ~ '^[0-9a-f]{64}$'
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.contact_delivery_suppressions'::regclass
+      AND conname='contact_delivery_suppressions_permanent_identity_required'
+  ) THEN
+    ALTER TABLE public.contact_delivery_suppressions
+      ADD CONSTRAINT contact_delivery_suppressions_permanent_identity_required
+      CHECK (
+        reason NOT IN ('HARD_BOUNCE','INVALID_CONTACT')
+        OR email_precontact_identity_fingerprint IS NOT NULL
+      );
+  END IF;
+END
+$constraint$;
+
+INSERT INTO lead_finder_private.email_contact_identities(
+  identity_fingerprint,suppressed
+)
+SELECT DISTINCT
+  suppression.email_precontact_identity_fingerprint,
+  true
+FROM public.contact_delivery_suppressions suppression
+WHERE suppression.reason IN ('HARD_BOUNCE','INVALID_CONTACT')
+  AND suppression.email_precontact_identity_fingerprint IS NOT NULL
+ON CONFLICT (identity_fingerprint) DO UPDATE
+SET suppressed=true,updated_at=clock_timestamp();
+
+DO $constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.contact_delivery_suppressions'::regclass
+      AND conname='contact_delivery_suppressions_precontact_identity_fk'
+  ) THEN
+    ALTER TABLE public.contact_delivery_suppressions
+      ADD CONSTRAINT contact_delivery_suppressions_precontact_identity_fk
+      FOREIGN KEY (email_precontact_identity_fingerprint)
+      REFERENCES lead_finder_private.email_contact_identities(identity_fingerprint)
+      ON DELETE RESTRICT;
+  END IF;
+END
+$constraint$;
+
 ALTER TABLE public.lead_contacts
   ADD COLUMN IF NOT EXISTS email_precontact_identity_fingerprint char(64);
 
@@ -200,19 +292,17 @@ WHERE upper(contact.type)='EMAIL'
     '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
   AND contact.email_precontact_identity_fingerprint IS NULL;
 
--- Migration 0041 already recorded permanent delivery failures by contact.
--- Promote those historical facts into the global pre-contact identity state
--- before the enforcement trigger is enabled, without duplicating ledger rows.
+-- Only immutable bindings written by the post-0048 contact-bound recorder are
+-- eligible for replay/backfill. Never derive a historical suppression from the
+-- contact's current, mutable email value.
 UPDATE lead_finder_private.email_contact_identities identity
 SET suppressed=true,updated_at=clock_timestamp()
 FROM public.contact_delivery_suppressions suppression
-JOIN public.lead_contacts contact
-  ON contact.id=suppression.contact_id
- AND contact.lead_id=suppression.lead_id
 WHERE suppression.channel='EMAIL'
   AND suppression.reason IN ('HARD_BOUNCE','INVALID_CONTACT')
-  AND contact.email_precontact_identity_fingerprint IS NOT NULL
-  AND identity.identity_fingerprint=contact.email_precontact_identity_fingerprint
+  AND suppression.email_precontact_identity_fingerprint IS NOT NULL
+  AND identity.identity_fingerprint=
+    suppression.email_precontact_identity_fingerprint
   AND NOT identity.suppressed;
 
 DO $constraint$
@@ -337,6 +427,11 @@ BEGIN
     RAISE EXCEPTION 'precontact email suppression occurrence time is required' USING ERRCODE='22023';
   END IF;
 
+  -- Suppression events are rare and security-sensitive. Serialize all writers
+  -- of lead_contacts before taking an identity lock so a normal contact update
+  -- can never hold contact->identity while this path holds identity->contact.
+  LOCK TABLE public.lead_contacts IN SHARE ROW EXCLUSIVE MODE;
+
   target_fingerprint := public.email_precontact_identity_fingerprint(p_email);
 
   INSERT INTO lead_finder_private.email_contact_identities(identity_fingerprint)
@@ -398,6 +493,264 @@ REVOKE ALL ON FUNCTION public.record_precontact_email_delivery_suppression(
   text,text,text,char(64),timestamptz
 ) FROM PUBLIC;
 
+-- Preserve the established operational reconciler contract from migration 0041
+-- while bridging every new permanent, contact-bound event into the global
+-- pre-contact ledger. The verified resolution fingerprint proves the current
+-- email binding at event time; that HMAC identity is persisted on the old ledger
+-- so future replays never infer identity from a mutable contact row.
+CREATE OR REPLACE FUNCTION public.record_email_delivery_suppression(
+  p_contact_id uuid,
+  p_lead_id uuid,
+  p_contact_resolution_fingerprint char(64),
+  p_reason text,
+  p_source text,
+  p_event_fingerprint char(64),
+  p_occurred_at timestamptz
+)
+RETURNS TABLE(
+  suppression_id uuid,
+  replayed boolean,
+  contact_invalidated boolean,
+  lead_email_suppressed boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=pg_catalog,public
+AS $function$
+DECLARE
+  normalized_reason text := upper(btrim(p_reason));
+  normalized_source text := upper(btrim(p_source));
+  target_contact record;
+  target_identity char(64);
+  existing_suppression public.contact_delivery_suppressions%ROWTYPE;
+  inserted_suppression public.contact_delivery_suppressions%ROWTYPE;
+  existing_global public.email_precontact_delivery_suppressions%ROWTYPE;
+  affected_rows integer := 0;
+  email_opt_out_exists boolean := false;
+BEGIN
+  IF p_contact_id IS NULL OR p_lead_id IS NULL THEN
+    RAISE EXCEPTION 'suppression target is required' USING ERRCODE='22023';
+  END IF;
+  IF btrim(p_contact_resolution_fingerprint::text) !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'suppression contact binding is invalid' USING ERRCODE='22023';
+  END IF;
+  IF normalized_reason NOT IN (
+    'HARD_BOUNCE','INVALID_CONTACT','OPT_OUT','COMPLAINT'
+  ) THEN
+    RAISE EXCEPTION 'suppression reason is invalid' USING ERRCODE='22023';
+  END IF;
+  IF normalized_source !~ '^[A-Z][A-Z0-9_]{0,63}$' THEN
+    RAISE EXCEPTION 'suppression source is invalid' USING ERRCODE='22023';
+  END IF;
+  IF btrim(p_event_fingerprint::text) !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'suppression fingerprint is invalid' USING ERRCODE='22023';
+  END IF;
+  IF p_occurred_at IS NULL THEN
+    RAISE EXCEPTION 'suppression occurrence time is required' USING ERRCODE='22023';
+  END IF;
+
+  -- Same writer-serialization boundary as the pre-contact recorder. This lock
+  -- is acquired before any contact or identity row lock, eliminating the mixed
+  -- contact->identity / identity->contact deadlock cycle.
+  LOCK TABLE public.lead_contacts IN SHARE ROW EXCLUSIVE MODE;
+
+  -- Keep the legacy advisory order for compatibility after the table-level
+  -- writer boundary has been established.
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('manual-messaging:' || p_lead_id::text,0)
+  );
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('email-delivery-suppression:' || p_contact_id::text,0)
+  );
+
+  SELECT
+    c.id,c.lead_id,c.type,c.is_valid,c.contact_resolution_fingerprint,
+    c.normalized_value
+  INTO target_contact
+  FROM public.lead_contacts c
+  WHERE c.id=p_contact_id AND c.lead_id=p_lead_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR upper(target_contact.type) <> 'EMAIL' THEN
+    RAISE EXCEPTION 'suppression target is not an email contact'
+      USING ERRCODE='22023';
+  END IF;
+  IF target_contact.contact_resolution_fingerprint IS DISTINCT FROM
+    lower(btrim(p_contact_resolution_fingerprint::text))
+  THEN
+    RAISE EXCEPTION 'suppression contact binding has changed'
+      USING ERRCODE='40001';
+  END IF;
+
+  IF normalized_reason IN ('HARD_BOUNCE','INVALID_CONTACT') THEN
+    target_identity := public.email_precontact_identity_fingerprint(
+      target_contact.normalized_value
+    );
+
+    INSERT INTO lead_finder_private.email_contact_identities(identity_fingerprint)
+    VALUES (target_identity)
+    ON CONFLICT (identity_fingerprint) DO NOTHING;
+
+    PERFORM 1
+    FROM lead_finder_private.email_contact_identities identity
+    WHERE identity.identity_fingerprint=target_identity
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'email suppression identity is unavailable'
+        USING ERRCODE='55000';
+    END IF;
+  END IF;
+
+  SELECT *
+  INTO existing_suppression
+  FROM public.contact_delivery_suppressions suppression
+  WHERE suppression.event_fingerprint=p_event_fingerprint
+  LIMIT 1
+  FOR UPDATE;
+
+  IF FOUND THEN
+    IF existing_suppression.contact_id IS DISTINCT FROM p_contact_id
+      OR existing_suppression.lead_id IS DISTINCT FROM p_lead_id
+      OR existing_suppression.reason IS DISTINCT FROM normalized_reason
+      OR existing_suppression.source IS DISTINCT FROM normalized_source
+      OR existing_suppression.occurred_at IS DISTINCT FROM p_occurred_at
+    THEN
+      RAISE EXCEPTION 'suppression fingerprint conflicts with persisted event'
+        USING ERRCODE='23505';
+    END IF;
+
+    IF normalized_reason IN ('HARD_BOUNCE','INVALID_CONTACT') THEN
+      IF existing_suppression.email_precontact_identity_fingerprint IS NULL THEN
+        RAISE EXCEPTION 'historical suppression identity requires controlled reconciliation'
+          USING ERRCODE='55000';
+      END IF;
+      IF existing_suppression.email_precontact_identity_fingerprint
+        IS DISTINCT FROM target_identity
+      THEN
+        RAISE EXCEPTION 'suppression contact binding has changed'
+          USING ERRCODE='40001';
+      END IF;
+
+      SELECT * INTO existing_global
+      FROM public.email_precontact_delivery_suppressions global_suppression
+      WHERE global_suppression.event_fingerprint=p_event_fingerprint
+      FOR UPDATE;
+
+      IF FOUND THEN
+        IF existing_global.identity_fingerprint IS DISTINCT FROM target_identity
+          OR existing_global.reason IS DISTINCT FROM normalized_reason
+          OR existing_global.source IS DISTINCT FROM normalized_source
+          OR existing_global.occurred_at IS DISTINCT FROM p_occurred_at
+        THEN
+          RAISE EXCEPTION 'precontact email suppression event fingerprint conflicts'
+            USING ERRCODE='23505';
+        END IF;
+      ELSE
+        INSERT INTO public.email_precontact_delivery_suppressions(
+          identity_fingerprint,reason,source,event_fingerprint,occurred_at
+        ) VALUES (
+          target_identity,normalized_reason,normalized_source,
+          p_event_fingerprint,p_occurred_at
+        );
+      END IF;
+
+      UPDATE lead_finder_private.email_contact_identities identity
+      SET suppressed=true,updated_at=clock_timestamp()
+      WHERE identity.identity_fingerprint=target_identity;
+
+      UPDATE public.lead_contacts
+      SET is_valid=false,updated_at=clock_timestamp()
+      WHERE id=p_contact_id AND lead_id=p_lead_id AND is_valid;
+    END IF;
+
+    SELECT EXISTS(
+      SELECT 1 FROM public.campaign_opt_outs opt_out
+      WHERE opt_out.lead_id=p_lead_id
+        AND (opt_out.channel IS NULL OR opt_out.channel='EMAIL')
+    ) INTO email_opt_out_exists;
+
+    RETURN QUERY SELECT
+      existing_suppression.id,
+      true,
+      normalized_reason IN ('HARD_BOUNCE','INVALID_CONTACT')
+        AND NOT target_contact.is_valid,
+      email_opt_out_exists;
+    RETURN;
+  END IF;
+
+  INSERT INTO public.contact_delivery_suppressions(
+    contact_id,lead_id,channel,reason,source,event_fingerprint,occurred_at,
+    email_precontact_identity_fingerprint
+  ) VALUES (
+    p_contact_id,p_lead_id,'EMAIL',normalized_reason,normalized_source,
+    p_event_fingerprint,p_occurred_at,target_identity
+  )
+  RETURNING * INTO inserted_suppression;
+
+  IF normalized_reason IN ('HARD_BOUNCE','INVALID_CONTACT') THEN
+    SELECT * INTO existing_global
+    FROM public.email_precontact_delivery_suppressions global_suppression
+    WHERE global_suppression.event_fingerprint=p_event_fingerprint
+    FOR UPDATE;
+
+    IF FOUND THEN
+      IF existing_global.identity_fingerprint IS DISTINCT FROM target_identity
+        OR existing_global.reason IS DISTINCT FROM normalized_reason
+        OR existing_global.source IS DISTINCT FROM normalized_source
+        OR existing_global.occurred_at IS DISTINCT FROM p_occurred_at
+      THEN
+        RAISE EXCEPTION 'precontact email suppression event fingerprint conflicts'
+          USING ERRCODE='23505';
+      END IF;
+    ELSE
+      INSERT INTO public.email_precontact_delivery_suppressions(
+        identity_fingerprint,reason,source,event_fingerprint,occurred_at
+      ) VALUES (
+        target_identity,normalized_reason,normalized_source,
+        p_event_fingerprint,p_occurred_at
+      );
+    END IF;
+
+    UPDATE lead_finder_private.email_contact_identities identity
+    SET suppressed=true,updated_at=clock_timestamp()
+    WHERE identity.identity_fingerprint=target_identity;
+
+    UPDATE public.lead_contacts
+    SET is_valid=false,updated_at=clock_timestamp()
+    WHERE id=p_contact_id AND lead_id=p_lead_id AND is_valid;
+    GET DIAGNOSTICS affected_rows=ROW_COUNT;
+  END IF;
+
+  IF normalized_reason IN ('OPT_OUT','COMPLAINT') THEN
+    SELECT EXISTS(
+      SELECT 1 FROM public.campaign_opt_outs opt_out
+      WHERE opt_out.lead_id=p_lead_id
+        AND (opt_out.channel IS NULL OR opt_out.channel='EMAIL')
+    ) INTO email_opt_out_exists;
+
+    IF NOT email_opt_out_exists THEN
+      INSERT INTO public.campaign_opt_outs(
+        lead_id,channel,reason,source
+      ) VALUES (
+        p_lead_id,'EMAIL','EMAIL_' || normalized_reason,normalized_source
+      );
+      email_opt_out_exists := true;
+    END IF;
+  END IF;
+
+  RETURN QUERY SELECT
+    inserted_suppression.id,
+    false,
+    affected_rows > 0,
+    email_opt_out_exists;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
+  uuid,uuid,char(64),text,text,char(64),timestamptz
+) FROM PUBLIC;
+
 DO $roles$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
@@ -406,6 +759,9 @@ BEGIN
     REVOKE ALL ON FUNCTION public.record_precontact_email_delivery_suppression(
       text,text,text,char(64),timestamptz
     ) FROM anon;
+    REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
+      uuid,uuid,char(64),text,text,char(64),timestamptz
+    ) FROM anon;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
@@ -413,6 +769,9 @@ BEGIN
     REVOKE ALL ON FUNCTION public.enforce_email_precontact_suppression() FROM authenticated;
     REVOKE ALL ON FUNCTION public.record_precontact_email_delivery_suppression(
       text,text,text,char(64),timestamptz
+    ) FROM authenticated;
+    REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
+      uuid,uuid,char(64),text,text,char(64),timestamptz
     ) FROM authenticated;
   END IF;
 
@@ -424,6 +783,9 @@ BEGIN
     REVOKE ALL ON FUNCTION public.record_precontact_email_delivery_suppression(
       text,text,text,char(64),timestamptz
     ) FROM lead_finder_api_runtime;
+    REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
+      uuid,uuid,char(64),text,text,char(64),timestamptz
+    ) FROM lead_finder_api_runtime;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='lead_finder_contact_resolver_runtime') THEN
@@ -434,6 +796,9 @@ BEGIN
     REVOKE ALL ON FUNCTION public.record_precontact_email_delivery_suppression(
       text,text,text,char(64),timestamptz
     ) FROM lead_finder_contact_resolver_runtime;
+    REVOKE ALL ON FUNCTION public.record_email_delivery_suppression(
+      uuid,uuid,char(64),text,text,char(64),timestamptz
+    ) FROM lead_finder_contact_resolver_runtime;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
@@ -441,6 +806,9 @@ BEGIN
     REVOKE ALL ON FUNCTION public.enforce_email_precontact_suppression() FROM service_role;
     GRANT EXECUTE ON FUNCTION public.record_precontact_email_delivery_suppression(
       text,text,text,char(64),timestamptz
+    ) TO service_role;
+    GRANT EXECUTE ON FUNCTION public.record_email_delivery_suppression(
+      uuid,uuid,char(64),text,text,char(64),timestamptz
     ) TO service_role;
   END IF;
 END

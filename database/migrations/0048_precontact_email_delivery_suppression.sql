@@ -159,12 +159,34 @@ $roles$;
 ALTER TABLE public.lead_contacts
   ADD COLUMN IF NOT EXISTS email_precontact_identity_fingerprint char(64);
 
+-- Replays of this migration must be able to reconcile historical malformed
+-- rows without the already-installed trigger trying to fingerprint them.
+DROP TRIGGER IF EXISTS lead_contacts_email_precontact_suppression
+  ON public.lead_contacts;
+
+-- Pre-0048 schemas did not enforce EMAIL syntax. Preserve the historical row
+-- but fail it closed and exclude it from the deterministic identity backfill.
+UPDATE public.lead_contacts contact
+SET is_valid=false,updated_at=clock_timestamp()
+WHERE upper(contact.type)='EMAIL'
+  AND (
+    contact.normalized_value IS NULL
+    OR btrim(contact.normalized_value)=''
+    OR char_length(lower(btrim(contact.normalized_value))) NOT BETWEEN 3 AND 320
+    OR lower(btrim(contact.normalized_value)) !~
+      '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+  )
+  AND contact.is_valid;
+
 INSERT INTO lead_finder_private.email_contact_identities(identity_fingerprint)
 SELECT DISTINCT public.email_precontact_identity_fingerprint(contact.normalized_value)
 FROM public.lead_contacts contact
 WHERE upper(contact.type)='EMAIL'
   AND contact.normalized_value IS NOT NULL
   AND btrim(contact.normalized_value)<>''
+  AND char_length(lower(btrim(contact.normalized_value))) BETWEEN 3 AND 320
+  AND lower(btrim(contact.normalized_value)) ~
+    '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
 ON CONFLICT (identity_fingerprint) DO NOTHING;
 
 UPDATE public.lead_contacts contact
@@ -173,7 +195,25 @@ SET email_precontact_identity_fingerprint=
 WHERE upper(contact.type)='EMAIL'
   AND contact.normalized_value IS NOT NULL
   AND btrim(contact.normalized_value)<>''
+  AND char_length(lower(btrim(contact.normalized_value))) BETWEEN 3 AND 320
+  AND lower(btrim(contact.normalized_value)) ~
+    '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
   AND contact.email_precontact_identity_fingerprint IS NULL;
+
+-- Migration 0041 already recorded permanent delivery failures by contact.
+-- Promote those historical facts into the global pre-contact identity state
+-- before the enforcement trigger is enabled, without duplicating ledger rows.
+UPDATE lead_finder_private.email_contact_identities identity
+SET suppressed=true,updated_at=clock_timestamp()
+FROM public.contact_delivery_suppressions suppression
+JOIN public.lead_contacts contact
+  ON contact.id=suppression.contact_id
+ AND contact.lead_id=suppression.lead_id
+WHERE suppression.channel='EMAIL'
+  AND suppression.reason IN ('HARD_BOUNCE','INVALID_CONTACT')
+  AND contact.email_precontact_identity_fingerprint IS NOT NULL
+  AND identity.identity_fingerprint=contact.email_precontact_identity_fingerprint
+  AND NOT identity.suppressed;
 
 DO $constraint$
 BEGIN

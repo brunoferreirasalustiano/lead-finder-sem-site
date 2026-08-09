@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { connect, databaseUrl } from './db.js';
 import { canonicalJson, sha256 } from './canonical.js';
-import { manifestContentSchema, type SuppressionEntry, type SuppressionManifest } from './types.js';
+import { manifestContentSchema, type PrecontactPermanentEvent, type SuppressionEntry, type SuppressionManifest } from './types.js';
 
 export async function exportManifest(output: string, url = databaseUrl()): Promise<SuppressionManifest> {
   const sql = connect(url);
@@ -20,8 +20,41 @@ export async function exportManifest(output: string, url = databaseUrl()): Promi
       if (row.crm_stage==='NAO_CONTATAR' && !entries.some((e) => e.leadId===row.lead_id && e.suppressionType==='CRM_NAO_CONTATAR')) add(row,'CRM_NAO_CONTATAR',cutoffAt);
       if (row.optout_at) add(row,row.channel ? 'OPT_OUT_CHANNEL':'OPT_OUT_GLOBAL',row.optout_at,row.channel ?? undefined,'EXISTING_OPT_OUT','CAMPAIGN_OPT_OUT');
     }
+    const keyRows = await sql<{ key_digest: string }[]>`
+      SELECT encode(extensions.digest(secret,'sha256'),'hex') key_digest
+      FROM lead_finder_private.email_suppression_hmac_key
+      WHERE singleton=true`;
+    if (keyRows.length !== 1) throw new Error('PRECONTACT_SUPPRESSION_KEY_UNAVAILABLE');
+    const fingerprintRows = await sql<{ identity_fingerprint: string }[]>`
+      SELECT identity_fingerprint::text identity_fingerprint
+      FROM lead_finder_private.email_contact_identities
+      WHERE suppressed=true
+      ORDER BY identity_fingerprint`;
+    const eventRows = await sql<{ identity_fingerprint: string; reason: 'HARD_BOUNCE'|'INVALID_CONTACT'; source: string; event_fingerprint: string; occurred_at: Date }[]>`
+      SELECT identity_fingerprint::text identity_fingerprint,reason,source,event_fingerprint::text event_fingerprint,occurred_at
+      FROM public.email_precontact_delivery_suppressions
+      ORDER BY occurred_at,event_fingerprint`;
+    const fingerprints = fingerprintRows.map((row) => row.identity_fingerprint);
+    const fingerprintSet = new Set(fingerprints);
+    const events: PrecontactPermanentEvent[] = eventRows.map((row) => ({
+      identityFingerprint: row.identity_fingerprint,
+      reasonCode: row.reason,
+      operationalSource: row.source,
+      eventFingerprint: row.event_fingerprint,
+      occurredAt: row.occurred_at.toISOString(),
+    }));
+    if (events.some((event) => !fingerprintSet.has(event.identityFingerprint))) throw new Error('PRECONTACT_SUPPRESSION_STATE_INCONSISTENT');
     const byType = Object.fromEntries(['IS_BLOCKED','DO_NOT_CONTACT','CRM_NAO_CONTATAR','OPT_OUT_GLOBAL','OPT_OUT_CHANNEL'].map((type) => [type, entries.filter((entry) => entry.suppressionType===type).length])) as Record<SuppressionEntry['suppressionType'],number>;
-    const content = manifestContentSchema.parse({ schemaVersion:'1.0', runId:randomUUID(), logicalOrigin:'DATABASE_PRE_RESTORE', cutoffAt, entries, counts:{ total:entries.length, byType } });
+    const content = manifestContentSchema.parse({
+      schemaVersion:'1.0', runId:randomUUID(), logicalOrigin:'DATABASE_PRE_RESTORE', cutoffAt, entries,
+      counts:{ total:entries.length, byType },
+      precontactPermanent:{
+        keyDigest:keyRows[0]!.key_digest,
+        fingerprints,
+        events,
+        counts:{ fingerprints:fingerprints.length, events:events.length },
+      },
+    });
     const manifest = { ...content, digest: sha256(content) };
     await writeFile(output, `${canonicalJson(manifest)}\n`, { encoding:'utf8', mode:0o600, flag:'wx' });
     return manifest;

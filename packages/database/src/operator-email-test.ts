@@ -26,6 +26,36 @@ export type OperatorEmailDelivery = (
   response: string;
 }>>;
 
+const knownProviderFailureClasses = [
+  'INVALID_CONFIGURATION',
+  'TOKEN_EXCHANGE_FAILED',
+  'DELIVERY_REJECTED',
+  'DELIVERY_AMBIGUOUS',
+] as const;
+type KnownOperatorEmailProviderFailureClass = typeof knownProviderFailureClasses[number];
+export type OperatorEmailProviderFailureClass = KnownOperatorEmailProviderFailureClass | 'UNKNOWN';
+
+const isKnownProviderFailureClass = (
+  value: unknown,
+): value is KnownOperatorEmailProviderFailureClass =>
+  typeof value === 'string'
+  && knownProviderFailureClasses.includes(value as KnownOperatorEmailProviderFailureClass);
+
+export const classifyOperatorEmailProviderFailure = (
+  error: unknown,
+): OperatorEmailProviderFailureClass => {
+  if (error === null || typeof error !== 'object' || !('code' in error)) return 'UNKNOWN';
+  const code = (error as { code?: unknown }).code;
+  return isKnownProviderFailureClass(code) ? code : 'UNKNOWN';
+};
+
+export const operatorEmailProviderFailureDisposition = (
+  failureClass: OperatorEmailProviderFailureClass,
+): 'FAILED' | 'AMBIGUOUS' =>
+  failureClass === 'DELIVERY_AMBIGUOUS' || failureClass === 'UNKNOWN'
+    ? 'AMBIGUOUS'
+    : 'FAILED';
+
 export class OperatorEmailTestError extends Error {
   constructor(
     message: string,
@@ -37,6 +67,7 @@ export class OperatorEmailTestError extends Error {
       | 'IDEMPOTENCY_CONFLICT'
       | 'AMBIGUOUS_STATE'
       | 'DELIVERY_FAILED',
+    readonly providerFailureClass?: OperatorEmailProviderFailureClass,
   ) {
     super(message);
   }
@@ -291,9 +322,17 @@ export async function sendOperatorEmailTest(
       body: prepared.body,
     });
   } catch (error) {
+    const failureClass = classifyOperatorEmailProviderFailure(error);
+    if (operatorEmailProviderFailureDisposition(failureClass) === 'AMBIGUOUS') {
+      throw new OperatorEmailTestError(
+        'Operator email test delivery state is ambiguous',
+        'AMBIGUOUS_STATE',
+        failureClass,
+      );
+    }
     const failureFingerprint = digest({
       provider: 'GMAIL_API',
-      errorType: error instanceof Error ? error.name : typeof error,
+      failureClass,
     });
     try {
       await appendOutcome(db, {
@@ -306,11 +345,13 @@ export async function sendOperatorEmailTest(
       throw new OperatorEmailTestError(
         'Operator email test delivery state is ambiguous',
         'AMBIGUOUS_STATE',
+        failureClass,
       );
     }
     throw new OperatorEmailTestError(
       'Operator email test delivery failed',
       'DELIVERY_FAILED',
+      failureClass,
     );
   }
 

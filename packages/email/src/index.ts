@@ -181,7 +181,7 @@ const exchangeRefreshToken = async (
   return token.data.access_token;
 };
 
-const manualDeliveryOutcomeCode = (status: number) =>
+const deliveryOutcomeCode = (status: number) =>
   status < 400
     || status >= 500
     || status === 408 || status === 409 || status === 425 || status === 429
@@ -228,17 +228,24 @@ export function createGmailApiOperatorEmailConsumer(
         );
       } catch {
         throw new OperatorEmailDeliveryError(
-          'Operator email delivery was rejected',
-          'DELIVERY_REJECTED',
+          'Operator email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
         );
       }
-      const delivery = deliveryResponse.ok
-        ? gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse))
-        : undefined;
-      if (!delivery?.success) {
+      if (!deliveryResponse.ok) {
+        const code = deliveryOutcomeCode(deliveryResponse.status);
         throw new OperatorEmailDeliveryError(
-          'Operator email delivery was rejected',
-          'DELIVERY_REJECTED',
+          code === 'DELIVERY_AMBIGUOUS'
+            ? 'Operator email provider outcome is unknown'
+            : 'Operator email delivery was rejected',
+          code,
+        );
+      }
+      const delivery = gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse));
+      if (!delivery.success) {
+        throw new OperatorEmailDeliveryError(
+          'Operator email provider outcome is unknown',
+          'DELIVERY_AMBIGUOUS',
         );
       }
       return {
@@ -298,7 +305,7 @@ export function createGmailApiManualEmailConsumer(
         );
       }
       if (!deliveryResponse.ok) {
-        const code = manualDeliveryOutcomeCode(deliveryResponse.status);
+        const code = deliveryOutcomeCode(deliveryResponse.status);
         throw new OperatorEmailDeliveryError(
           code === 'DELIVERY_AMBIGUOUS'
             ? 'Manual email provider outcome is unknown'

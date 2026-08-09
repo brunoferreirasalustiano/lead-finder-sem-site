@@ -166,7 +166,9 @@ try {
   let failedDeliveries = 0;
   const failingDelivery: OperatorEmailDelivery = async () => {
     failedDeliveries += 1;
-    throw new Error('synthetic Gmail API failure with operator@example.test');
+    throw Object.assign(new Error('synthetic deterministic Gmail rejection'), {
+      code: 'DELIVERY_REJECTED' as const,
+    });
   };
   const failureKey = randomUUID();
   await expectCode(
@@ -183,6 +185,40 @@ try {
   assert.equal(failedReplay.state, 'FAILED');
   assert.equal(failedReplay.replayed, true);
   assert.equal(failedDeliveries, 1);
+
+  const beforeAmbiguous = (await raw<{ attempts: number; events: number }[]>`
+    select
+      (select count(*)::int from operator_email_test_attempts) attempts,
+      (select count(*)::int from operator_email_test_events) events
+  `)[0]!;
+  let ambiguousDeliveries = 0;
+  const ambiguousDelivery: OperatorEmailDelivery = async () => {
+    ambiguousDeliveries += 1;
+    throw new Error('synthetic uncertain provider outcome');
+  };
+  const ambiguousKey = randomUUID();
+  await expectCode(
+    sendOperatorEmailTest(db, input(ambiguousKey), auth, runtime, ambiguousDelivery),
+    'AMBIGUOUS_STATE',
+  );
+  const afterAmbiguous = (await raw<{ attempts: number; events: number }[]>`
+    select
+      (select count(*)::int from operator_email_test_attempts) attempts,
+      (select count(*)::int from operator_email_test_events) events
+  `)[0]!;
+  assert.equal(afterAmbiguous.attempts, beforeAmbiguous.attempts + 1);
+  assert.equal(afterAmbiguous.events, beforeAmbiguous.events);
+  await expectCode(
+    sendOperatorEmailTest(db, input(ambiguousKey), auth, runtime, ambiguousDelivery),
+    'AMBIGUOUS_STATE',
+  );
+  assert.equal(ambiguousDeliveries, 1);
+  const afterAmbiguousReplay = (await raw<{ attempts: number; events: number }[]>`
+    select
+      (select count(*)::int from operator_email_test_attempts) attempts,
+      (select count(*)::int from operator_email_test_events) events
+  `)[0]!;
+  assert.deepEqual(afterAmbiguousReplay, afterAmbiguous);
 
   const stored = await raw<{ value: string }[]>`
     select to_jsonb(item)::text value from operator_email_test_attempts item
@@ -235,6 +271,7 @@ try {
     deliveries,
     concurrentDeliveries,
     failedDeliveries,
+    ambiguousDeliveries,
   }));
 } finally {
   await serviceRole.end();

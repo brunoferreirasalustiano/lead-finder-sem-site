@@ -40,7 +40,7 @@ docker compose "${COMPOSE_FILES[@]}" run --rm restore-suppression npm run restor
 
 # Capture the live key only in this shell's memory. --silent guarantees stdout
 # contains only the secret, and -T avoids a pseudo-TTY. The key is never placed
-# in BACKUP_DIR, argv, Compose environment, the manifest, or normal logs.
+# in BACKUP_DIR, argv, Compose environment, the manifest, or Docker logs.
 precontact_hmac_key="$(
   docker compose "${COMPOSE_FILES[@]}" run --rm -T restore-suppression \
     npm run --silent restore:suppression:key:export -- --manifest "$manifest_container"
@@ -50,12 +50,21 @@ precontact_hmac_key="$(
 restore_status=0
 docker compose "${COMPOSE_FILES[@]}" exec -T postgres sh -ceu 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges' < "${backup}" || restore_status=$?
 (( restore_status == 0 )) || die "pg_restore falhou com codigo ${restore_status}; API e worker permanecem parados."
+
+# A true pre-0048 backup can contain migration-0041 permanent events without an
+# immutable email identity. Before running 0048, bridge only events that have an
+# exact event-fingerprint/reason/source/timestamp match in the live manifest.
+# Unmatched or conflicting history fails closed before any migration runs.
+builtin printf '%s\n' "$precontact_hmac_key" | \
+  docker compose "${COMPOSE_FILES[@]}" run --rm -T restore-suppression \
+    npm run --silent restore:suppression:legacy:prepare -- --manifest "$manifest_container"
+
 docker compose "${COMPOSE_FILES[@]}" run --rm migrate
 
 # Feed the key to the one-shot runner only through stdin. `builtin printf` keeps
 # the secret out of a child-process argv; the Docker command receives no secret
 # argument or environment variable. Discard the shell copy immediately after a
-# successful rekey.
+# successful rekey (or no-op when the pre-0048 bridge already installed it).
 builtin printf '%s\n' "$precontact_hmac_key" | \
   docker compose "${COMPOSE_FILES[@]}" run --rm -T restore-suppression \
     npm run --silent restore:suppression:key:recover -- --manifest "$manifest_container"

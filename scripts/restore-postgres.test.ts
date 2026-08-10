@@ -11,6 +11,7 @@ describe('production restore suppression orchestration', () => {
       'restore:suppression:export',
       'restore:suppression:validate',
       'restore:suppression:key:export',
+      'restore:suppression:legacy:prepare',
       'restore:suppression:key:recover',
       'restore:suppression:apply',
       'restore:suppression:apply',
@@ -22,7 +23,7 @@ describe('production restore suppression orchestration', () => {
     runnerLines.forEach((line, index) => expect(line).toContain(phases[index]));
   });
 
-  it('keeps services stopped until in-memory key recovery, suppression apply and verification succeed', () => {
+  it('bridges true pre-0048 legacy suppressions before migration 0048 can run', () => {
     const ordered = [
       'stop api worker',
       'restore:suppression:export',
@@ -30,8 +31,8 @@ describe('production restore suppression orchestration', () => {
       'precontact_hmac_key="$(',
       'restore:suppression:key:export',
       'pg_restore -U',
+      'restore:suppression:legacy:prepare',
       'run --rm migrate',
-      "builtin printf '%s\\n' \"$precontact_hmac_key\" |",
       'restore:suppression:key:recover',
       "precontact_hmac_key=''",
       'unset precontact_hmac_key',
@@ -50,8 +51,9 @@ describe('production restore suppression orchestration', () => {
     expect(restoreScript).toContain('set +x');
     expect(restoreScript).toContain('precontact_hmac_key="$(');
     expect(restoreScript).toContain('npm run --silent restore:suppression:key:export -- --manifest "$manifest_container"');
-    expect(restoreScript).toContain("builtin printf '%s\\n' \"$precontact_hmac_key\" |");
+    expect(restoreScript).toContain('npm run --silent restore:suppression:legacy:prepare -- --manifest "$manifest_container"');
     expect(restoreScript).toContain('npm run --silent restore:suppression:key:recover -- --manifest "$manifest_container"');
+    expect(restoreScript.split("builtin printf '%s\\n' \"$precontact_hmac_key\" |").length - 1).toBe(2);
     expect(restoreScript).toContain("precontact_hmac_key=''");
     expect(restoreScript).toContain('unset precontact_hmac_key');
     expect(restoreScript).not.toContain('key_capsule');

@@ -1,5 +1,5 @@
 import { exportManifest } from './export.js';
-import { exportPrecontactHmacKey, recoverPrecontactHmacKey } from './key-recovery.js';
+import { exportPrecontactHmacKey, prepareLegacyPre0048Restore, recoverPrecontactHmacKey } from './key-recovery.js';
 import { loadManifest } from './validate.js';
 import { reconcile } from './apply.js';
 import { verifyReconciliation } from './verify.js';
@@ -39,6 +39,11 @@ try {
     if(!path)throw new Error('MANIFEST_REQUIRED');
     const m=await loadManifest(path);
     if(command==='validate')process.stdout.write(JSON.stringify({version:m.schemaVersion,totalEntries:m.entries.length,validEntries:m.entries.length,result:'SAFE'})+'\n');
+    else if(command==='prepare-legacy'){
+      const recoveryKey=await readRecoveryKeyFromStdin();
+      const r=await prepareLegacyPre0048Restore(recoveryKey,m);
+      process.stdout.write(JSON.stringify({version:m.schemaVersion,result:'SAFE',...r})+'\n');
+    }
     else if(command==='recover-key'){
       const recoveryKey=await readRecoveryKeyFromStdin();
       const r=await recoverPrecontactHmacKey(recoveryKey,m);

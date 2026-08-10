@@ -38,7 +38,7 @@ describe('production restore suppression orchestration', () => {
       'restore:suppression:apply -- --manifest "$manifest_container" --apply',
       'restore:suppression:verify',
       'pilot:real:preflight',
-      'rm -f -- "$key_capsule"',
+      'rm -f -- "$key_capsule" || die',
       'up -d api worker',
     ].map((token) => restoreScript.indexOf(token));
     expect(ordered.every((position) => position >= 0)).toBe(true);
@@ -52,7 +52,7 @@ describe('production restore suppression orchestration', () => {
     expect(restoreScript).toContain('trap cleanup_key_capsule EXIT');
     expect(restoreScript).toContain('[[ ! -e "$key_capsule" ]] || die');
     expect(restoreScript).toContain('trap - EXIT');
-    expect(restoreScript.indexOf('rm -f -- "$key_capsule"')).toBeLessThan(restoreScript.indexOf('up -d api worker'));
+    expect(restoreScript.indexOf('rm -f -- "$key_capsule" || die')).toBeLessThan(restoreScript.indexOf('up -d api worker'));
   });
 
   it.runIf(dockerAvailable)('renders a private, read-only, one-shot-capable runner without a published database port', () => {

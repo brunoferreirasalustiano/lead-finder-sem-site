@@ -207,7 +207,7 @@ export async function claimCollection(db: Database) {
         .for('update', { skipLocked: true })
     )[0];
     if (!job) return null;
-    await db
+    await tx
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
       .where(eq(collectionJobs.id, job.id));

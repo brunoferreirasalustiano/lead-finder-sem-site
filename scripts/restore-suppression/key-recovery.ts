@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, writeFile } from 'node:fs/promises';
 import { connect, databaseUrl } from './db.js';
 import type { SuppressionManifest } from './types.js';
 
@@ -9,13 +10,23 @@ const keyDigest = (hex: string): string =>
   createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
 
 async function loadKeyHex(path: string): Promise<string> {
-  const metadata = await lstat(path);
-  if (!metadata.isFile()) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-  if ((metadata.mode & 0o077) !== 0) throw new Error('PRECONTACT_HMAC_KEY_FILE_PERMISSIONS');
-  if (metadata.size < 64 || metadata.size > 128) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-  const value = (await readFile(path, 'utf8')).trim();
-  if (!KEY_HEX_PATTERN.test(value)) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-  return value;
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
+  }
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
+    if ((metadata.mode & 0o077) !== 0) throw new Error('PRECONTACT_HMAC_KEY_FILE_PERMISSIONS');
+    if (metadata.size < 64 || metadata.size > 128) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
+    const value = (await handle.readFile({ encoding: 'utf8' })).trim();
+    if (!KEY_HEX_PATTERN.test(value)) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
+    return value;
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function exportPrecontactHmacKey(

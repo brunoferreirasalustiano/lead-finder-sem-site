@@ -30,9 +30,16 @@ BEGIN
     AND NEW.reason IN ('HARD_BOUNCE','INVALID_CONTACT')
     AND NEW.email_precontact_identity_fingerprint IS NOT NULL
   THEN
+    -- The canonical 0048 recorder invalidates NEW.contact_id immediately after
+    -- this AFTER INSERT trigger returns and uses that UPDATE row count as part
+    -- of its established contact_invalidated result contract. This trigger is
+    -- responsible for the other already-existing contacts that share the same
+    -- immutable identity; excluding the reporting contact avoids consuming the
+    -- target transition before the recorder can report it.
     UPDATE public.lead_contacts contact
     SET is_valid=false,updated_at=clock_timestamp()
     WHERE upper(contact.type)='EMAIL'
+      AND contact.id IS DISTINCT FROM NEW.contact_id
       AND contact.email_precontact_identity_fingerprint=
         NEW.email_precontact_identity_fingerprint
       AND contact.is_valid;

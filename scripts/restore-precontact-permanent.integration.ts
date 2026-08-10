@@ -13,10 +13,23 @@ import { sha256 } from './restore-suppression/canonical.js';
 
 const url=process.env['DATABASE_URL']; if(!url)throw new Error('DATABASE_URL_REQUIRED');
 const run=(command:string,args:string[])=>new Promise<void>((resolve,reject)=>{const child=spawn(command,args,{stdio:['ignore','ignore','pipe'],env:process.env});let error='';child.stderr.on('data',(data)=>error+=String(data).replace(/postgres(?:ql)?:\/\/[^\s]+/giu,'postgresql://***'));child.on('exit',(code)=>code===0?resolve():reject(new Error(`${command}_FAILED:${code}:${error.slice(0,300)}`)));});
-const temp=await mkdtemp(join(tmpdir(),'restore-precontact-permanent-')); const dump=join(temp,'stale.dump'); const manifestPath=join(temp,'manifest.json');
+const temp=await mkdtemp(join(tmpdir(),'restore-precontact-permanent-')); const dump=join(temp,'stale.dump'); const manifestPath=join(temp,'manifest.json'); const emptyManifestPath=join(temp,'empty-manifest.json');
 let sql=postgres(url,{max:1});
 try{
   await sql.unsafe(`TRUNCATE TABLE public.email_precontact_delivery_suppressions, public.contact_delivery_suppressions, public.lead_contacts, lead_finder_private.email_contact_identities, campaign_provider_events, campaign_outbox, campaign_attempts, campaign_recipients, campaign_opt_outs, crm_timeline_events, restore_suppression_runs, campaigns, leads CASCADE`);
+
+  const emptyManifest=await exportManifest(emptyManifestPath,url);
+  assert.deepEqual(emptyManifest.precontactPermanent.counts,{fingerprints:0,events:0});
+  const emptyManifestKeyDigest=emptyManifest.precontactPermanent.keyDigest;
+  await sql`UPDATE lead_finder_private.email_suppression_hmac_key SET secret=extensions.gen_random_bytes(32),created_at=clock_timestamp() WHERE singleton=true`;
+  const rebasedKey=await sql<{key_digest:string}[]>`SELECT encode(extensions.digest(secret,'sha256'),'hex') key_digest FROM lead_finder_private.email_suppression_hmac_key WHERE singleton=true`;
+  assert.equal(rebasedKey.length,1); assert.notEqual(rebasedKey[0]!.key_digest,emptyManifestKeyDigest);
+  const emptyDry=await reconcile(emptyManifest,false,'ci-restore-pre0048-empty',url);
+  assert.equal(emptyDry.result,'SAFE');
+  assert.deepEqual(emptyDry.precontactPermanent,{keyMatched:false,fingerprints:0,events:0,alreadyApplied:0,requiringChange:0,conflicts:0});
+  await reconcile(emptyManifest,true,'ci-restore-pre0048-empty',url);
+  assert.equal(await verifyReconciliation(emptyManifest,url),'RESTORE_SUPPRESSION_SAFE');
+
   const leadId=randomUUID(); const contactId=randomUUID(); const rawAddress=`restore-precontact-${randomUUID()}@example.test`;
   await sql`INSERT INTO leads(id,osm_type,osm_id,name,category,score,status,is_closed) VALUES(${leadId}::uuid,'node',${`restore-precontact-${leadId}`},'Restore precontact fixture','integration',1,'SEM_SITE_CADASTRADO',false)`;
   await sql`INSERT INTO lead_contacts(id,lead_id,type,original_value,normalized_value,source,confidence,verified_at,is_valid,possible_whatsapp) VALUES(${contactId}::uuid,${leadId}::uuid,'EMAIL',${rawAddress},${rawAddress},'INTEGRATION',1,now(),true,false)`;
@@ -65,5 +78,5 @@ try{
   await sql.end();
 
   const tamperedContent={...manifest,precontactPermanent:{...manifest.precontactPermanent,keyDigest:'0'.repeat(64)}}; const {digest:_,...withoutDigest}=tamperedContent; const tampered=validateManifestValue({...withoutDigest,digest:sha256(withoutDigest)}); const mismatch=await reconcile(tampered,false,'ci-restore-precontact',url); assert.equal(mismatch.result,'BLOCKED'); assert.equal(mismatch.reason,'PRECONTACT_SUPPRESSION_KEY_MISMATCH');
-  process.stdout.write(JSON.stringify({gate:'RESTORE_PRECONTACT_PERMANENT',result:'PASS',staleRestorePreserved:true,rawAddressExported:false,keyMismatchFailsClosed:true})+'\n');
+  process.stdout.write(JSON.stringify({gate:'RESTORE_PRECONTACT_PERMANENT',result:'PASS',staleRestorePreserved:true,emptyStateKeyRebaseSafe:true,rawAddressExported:false,keyMismatchFailsClosed:true})+'\n');
 }finally{await sql.end().catch(()=>undefined);await rm(temp,{recursive:true,force:true});}

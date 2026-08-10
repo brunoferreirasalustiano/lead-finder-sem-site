@@ -64,7 +64,7 @@ describe('production restore suppression orchestration', () => {
     expect(restoreScript.indexOf('unset precontact_hmac_key')).toBeLessThan(restoreScript.indexOf('up -d api worker'));
   });
 
-  it.runIf(dockerAvailable)('renders a private, read-only, one-shot-capable runner without a published database port', () => {
+  it.runIf(dockerAvailable)('renders a private, read-only, no-log one-shot runner without a published database port', () => {
     const output = execFileSync(
       'docker',
       ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.production.yml', '--profile', 'tools', 'config', '--format', 'json'],
@@ -90,5 +90,6 @@ describe('production restore suppression orchestration', () => {
     expect(runner['read_only']).toBe(true);
     expect(runner['cap_drop']).toContain('ALL');
     expect(runner['environment']).toEqual({ DATABASE_URL: 'postgresql://leadfinder:compose-test-only@postgres:5432/leadfinder' });
+    expect(runner['logging']).toEqual({ driver: 'none' });
   });
 });

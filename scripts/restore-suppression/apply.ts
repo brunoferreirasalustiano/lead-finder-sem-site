@@ -5,6 +5,9 @@ import type { ReconciliationReport, SuppressionEntry, SuppressionManifest } from
 type Resolved = { entry: SuppressionEntry; leadId: string; already: boolean };
 type PrecontactInspection = { keyMatched: boolean; fingerprints: number; events: number; alreadyApplied: number; requiringChange: number; conflicts: number };
 
+const precontactKeyRequired = (manifest: SuppressionManifest): boolean =>
+  manifest.precontactPermanent.fingerprints.length > 0 || manifest.precontactPermanent.events.length > 0;
+
 async function resolveEntries(sql: ReturnType<typeof connect>, manifest: SuppressionManifest): Promise<{ resolved: Resolved[]; unresolved: number }> {
   const resolved: Resolved[] = []; let unresolved = 0;
   for (const entry of manifest.entries) {
@@ -64,9 +67,10 @@ async function inspectPrecontactPermanent(sql: ReturnType<typeof connect>, manif
 }
 
 const report = (manifest: SuppressionManifest, resolved: Resolved[], unresolved: number, precontact: PrecontactInspection): ReconciliationReport => {
-  const conflicts = precontact.conflicts + (precontact.keyMatched ? 0 : 1);
+  const keyMismatchBlocks = !precontact.keyMatched && precontactKeyRequired(manifest);
+  const conflicts = precontact.conflicts + (keyMismatchBlocks ? 1 : 0);
   const result = unresolved===0 && conflicts===0 ? 'SAFE' : 'BLOCKED';
-  const reason = !precontact.keyMatched ? 'PRECONTACT_SUPPRESSION_KEY_MISMATCH' : precontact.conflicts ? 'PRECONTACT_SUPPRESSION_CONFLICT' : unresolved ? 'UNRESOLVED_SUPPRESSION_TARGETS' : undefined;
+  const reason = keyMismatchBlocks ? 'PRECONTACT_SUPPRESSION_KEY_MISMATCH' : precontact.conflicts ? 'PRECONTACT_SUPPRESSION_CONFLICT' : unresolved ? 'UNRESOLVED_SUPPRESSION_TARGETS' : undefined;
   return {
     version:'1.0', totalEntries:manifest.entries.length, validEntries:manifest.entries.length,
     alreadyApplied:resolved.filter((item)=>item.already).length, requiringChange:resolved.filter((item)=>!item.already).length,

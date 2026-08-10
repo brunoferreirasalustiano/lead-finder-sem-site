@@ -191,6 +191,19 @@ try {
     const prepared = await prepareLegacyPre0048Restore(keyHex, manifest, resolved.url);
     assert.deepEqual(prepared, { prepared: true, legacyEvents: 1 });
 
+    await assert.rejects(
+      () => resolved.sql`
+        UPDATE contact_delivery_suppressions
+        SET source='RESTORE_LEGACY_TEST'
+        WHERE event_fingerprint=${fixture.eventFingerprint}::char(64)
+      `,
+      (error: unknown) =>
+        typeof error === 'object'
+        && error !== null
+        && 'code' in error
+        && error.code === '55000',
+    );
+
     const bridge = await resolved.sql<{ historical_identity: string; global_identity: string; key_digest: string }[]>`
       SELECT suppression.email_precontact_identity_fingerprint::text historical_identity,
         global_suppression.identity_fingerprint::text global_identity,

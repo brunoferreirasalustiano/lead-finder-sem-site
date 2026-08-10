@@ -150,6 +150,14 @@ export async function prepareLegacyPre0048Restore(
         FROM jsonb_array_elements_text(${tx.json(identities)}::jsonb)
       `;
 
+      // The legacy row already carries an append-only audit record. The
+      // bridge adds only the recovered identity binding inside this
+      // transaction; keep the trigger disabled for this single controlled
+      // update and restore it before the transaction can commit. Any failure
+      // rolls the transaction back, which also restores the trigger state.
+      await tx.unsafe(
+        'ALTER TABLE public.contact_delivery_suppressions DISABLE TRIGGER contact_delivery_suppressions_append_only',
+      );
       const changed = await tx<{ id: string }[]>`
         UPDATE public.contact_delivery_suppressions suppression
         SET email_precontact_identity_fingerprint=(mapping->>'identityFingerprint')::char(64)
@@ -160,6 +168,9 @@ export async function prepareLegacyPre0048Restore(
           AND suppression.email_precontact_identity_fingerprint IS NULL
         RETURNING suppression.id::text id
       `;
+      await tx.unsafe(
+        'ALTER TABLE public.contact_delivery_suppressions ENABLE TRIGGER contact_delivery_suppressions_append_only',
+      );
       if (changed.length !== legacy.length) {
         throw new Error('PRE0048_LEGACY_SUPPRESSION_RECONCILIATION_MISMATCH');
       }

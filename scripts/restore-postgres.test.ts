@@ -27,7 +27,7 @@ describe('production restore suppression orchestration', () => {
       'stop api worker',
       'restore:suppression:export',
       'restore:suppression:validate',
-      'precontact_hmac_key="$('.replace('"$', '"$('),
+      'precontact_hmac_key="$(',
       'restore:suppression:key:export',
       'pg_restore -U',
       'run --rm migrate',

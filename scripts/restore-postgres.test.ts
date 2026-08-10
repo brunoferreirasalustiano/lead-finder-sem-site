@@ -10,6 +10,8 @@ describe('production restore suppression orchestration', () => {
     const phases = [
       'restore:suppression:export',
       'restore:suppression:validate',
+      'restore:suppression:key:export',
+      'restore:suppression:key:recover',
       'restore:suppression:apply',
       'restore:suppression:apply',
       'restore:suppression:verify',
@@ -23,22 +25,34 @@ describe('production restore suppression orchestration', () => {
     });
   });
 
-  it('keeps services stopped until restore, migration, apply and verification succeed', () => {
+  it('keeps services stopped until key recovery, suppression apply and verification succeed', () => {
     const ordered = [
       'stop api worker',
       'restore:suppression:export',
       'restore:suppression:validate',
+      'restore:suppression:key:export',
       'pg_restore -U',
       'run --rm migrate',
+      'restore:suppression:key:recover',
       'restore:suppression:apply -- --manifest "$manifest_container"',
       'restore:suppression:apply -- --manifest "$manifest_container" --apply',
       'restore:suppression:verify',
       'pilot:real:preflight',
+      'rm -f -- "$key_capsule" || die',
       'up -d api worker',
     ].map((token) => restoreScript.indexOf(token));
     expect(ordered.every((position) => position >= 0)).toBe(true);
     expect(ordered).toEqual([...ordered].sort((left, right) => left - right));
     expect(restoreScript).toContain('RESTORE_RESUME_SERVICES:-false');
+  });
+
+  it('keeps the HMAC recovery capsule private and ephemeral', () => {
+    expect(restoreScript).toContain('umask 077');
+    expect(restoreScript).toContain('key_name="$manifest_name.precontact-hmac-key"');
+    expect(restoreScript).toContain('trap cleanup_key_capsule EXIT');
+    expect(restoreScript).toContain('[[ ! -e "$key_capsule" ]] || die');
+    expect(restoreScript).toContain('trap - EXIT');
+    expect(restoreScript.indexOf('rm -f -- "$key_capsule" || die')).toBeLessThan(restoreScript.indexOf('up -d api worker'));
   });
 
   it.runIf(dockerAvailable)('renders a private, read-only, one-shot-capable runner without a published database port', () => {

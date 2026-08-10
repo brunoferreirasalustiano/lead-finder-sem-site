@@ -35,13 +35,14 @@ const insertItem = async (availableAt: Date, id = crypto.randomUUID()) => {
 const insertExecutable = async (now: Date) => {
   sequence += 1;
   const suffix = `extreme-${sequence}-${crypto.randomUUID()}`;
+  const contactValue = `fixture-${suffix}@example.test`;
   const rows = await db.execute<{ outbox_id: string }>(sql`
     WITH lead AS (
       INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, crm_stage)
       VALUES ('node', ${suffix}, 'integration', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'QUALIFICADO') RETURNING id
     ), contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence, verified_at, is_valid, possible_whatsapp)
-      SELECT id, 'EMAIL', 'fixture', ${suffix}, 'integration', 1, ${now.toISOString()}::timestamptz, true, false FROM lead
+      SELECT id, 'EMAIL', ${contactValue}, ${contactValue}, 'integration', 1, ${now.toISOString()}::timestamptz, true, false FROM lead
     ), campaign AS (
       INSERT INTO campaigns (name, idempotency_key, payload_fingerprint, state)
       VALUES (${suffix}, ${`campaign-${suffix}`}, ${'e'.repeat(64)}, 'ATIVA') RETURNING id

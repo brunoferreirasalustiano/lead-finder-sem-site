@@ -2,11 +2,55 @@ import { connect, databaseUrl } from './db.js';
 import { suppressionChannel } from './scope.js';
 import type { SuppressionManifest } from './types.js';
 
+const precontactKeyRequired = (manifest: SuppressionManifest): boolean =>
+  manifest.precontactPermanent.fingerprints.length > 0 || manifest.precontactPermanent.events.length > 0;
+
 export async function verifyReconciliation(manifest: SuppressionManifest,url=databaseUrl()): Promise<'RESTORE_SUPPRESSION_SAFE'> {
   const sql=connect(url);
   try {
     const evidence=await sql<{attempt_count:string;provider_event_count:string;verified_at:Date|null}[]>`SELECT attempt_count::text,provider_event_count::text,verified_at FROM restore_suppression_runs WHERE run_id=${manifest.runId}::uuid AND manifest_digest=${manifest.digest} AND state='RESTORE_SUPPRESSION_SAFE'`;
     if(evidence.length!==1) throw new Error('RECONCILIATION_EVIDENCE_MISSING');
+
+    const keyRows=await sql<{key_digest:string}[]>`
+      SELECT encode(extensions.digest(secret,'sha256'),'hex') key_digest
+      FROM lead_finder_private.email_suppression_hmac_key
+      WHERE singleton=true`;
+    const keyMatched=keyRows.length===1 && keyRows[0]!.key_digest===manifest.precontactPermanent.keyDigest;
+    if(precontactKeyRequired(manifest) && !keyMatched) throw new Error('PRECONTACT_SUPPRESSION_KEY_MISMATCH');
+
+    if(manifest.precontactPermanent.fingerprints.length){
+      const identities=await sql<{identity_fingerprint:string}[]>`
+        SELECT identity_fingerprint::text identity_fingerprint
+        FROM lead_finder_private.email_contact_identities
+        WHERE suppressed=true
+          AND identity_fingerprint::text = ANY(${manifest.precontactPermanent.fingerprints}::text[])`;
+      if(identities.length!==manifest.precontactPermanent.fingerprints.length) throw new Error('POST_APPLY_PRECONTACT_SUPPRESSION_REGRESSION');
+      const unsafeContacts=await sql<{count:number}[]>`
+        SELECT count(*)::int count
+        FROM public.lead_contacts contact
+        WHERE contact.is_valid
+          AND upper(contact.type)='EMAIL'
+          AND contact.email_precontact_identity_fingerprint::text = ANY(${manifest.precontactPermanent.fingerprints}::text[])`;
+      if(unsafeContacts[0]!.count!==0) throw new Error('POST_APPLY_PRECONTACT_SUPPRESSION_REGRESSION');
+    }
+
+    if(manifest.precontactPermanent.events.length){
+      const requested=manifest.precontactPermanent.events.map((event)=>event.eventFingerprint);
+      const persisted=await sql<{identity_fingerprint:string;reason:string;source:string;event_fingerprint:string;occurred_at:Date}[]>`
+        SELECT identity_fingerprint::text identity_fingerprint,reason,source,event_fingerprint::text event_fingerprint,occurred_at
+        FROM public.email_precontact_delivery_suppressions
+        WHERE event_fingerprint::text = ANY(${requested}::text[])`;
+      const byEvent=new Map(persisted.map((event)=>[event.event_fingerprint,event]));
+      for(const event of manifest.precontactPermanent.events){
+        const row=byEvent.get(event.eventFingerprint);
+        if(!row
+          || row.identity_fingerprint!==event.identityFingerprint
+          || row.reason!==event.reasonCode
+          || row.source!==event.operationalSource
+          || row.occurred_at.toISOString()!==event.occurredAt) throw new Error('POST_APPLY_PRECONTACT_SUPPRESSION_REGRESSION');
+      }
+    }
+
     for(const entry of manifest.entries){
       const channel=suppressionChannel(entry);
       const targets=entry.leadId&&entry.stableIdentity

@@ -90,7 +90,7 @@ export async function checkDatabase(db: Database): Promise<void> {
 }
 export async function checkExpectedMigration(
   db: Database,
-  version = '0047_restricted_manual_email_final_review',
+  version = '0049_precontact_email_existing_duplicate_hardening',
 ): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`
     SELECT version
@@ -207,7 +207,7 @@ export async function claimCollection(db: Database) {
         .for('update', { skipLocked: true })
     )[0];
     if (!job) return null;
-    await tx
+    await db
       .update(collectionJobs)
       .set({ status: 'PROCESSING', updatedAt: new Date() })
       .where(eq(collectionJobs.id, job.id));

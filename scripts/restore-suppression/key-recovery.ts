@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { open, writeFile } from 'node:fs/promises';
 import { connect, databaseUrl } from './db.js';
 import type { SuppressionManifest } from './types.js';
 
@@ -9,30 +7,17 @@ const KEY_HEX_PATTERN = /^[0-9a-f]{64}$/u;
 const keyDigest = (hex: string): string =>
   createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
 
-async function loadKeyHex(path: string): Promise<string> {
-  let handle;
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch {
-    throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
+const normalizeRecoveryKey = (value: string): string => {
+  const normalized = value.trim();
+  if (!KEY_HEX_PATTERN.test(normalized)) {
+    throw new Error('PRECONTACT_HMAC_KEY_INPUT_INVALID');
   }
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile()) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-    if ((metadata.mode & 0o077) !== 0) throw new Error('PRECONTACT_HMAC_KEY_FILE_PERMISSIONS');
-    if (metadata.size < 64 || metadata.size > 128) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-    const value = (await handle.readFile({ encoding: 'utf8' })).trim();
-    if (!KEY_HEX_PATTERN.test(value)) throw new Error('PRECONTACT_HMAC_KEY_FILE_INVALID');
-    return value;
-  } finally {
-    await handle.close();
-  }
-}
+  return normalized;
+};
 
 export async function exportPrecontactHmacKey(
-  output: string,
   url = databaseUrl(),
-): Promise<{ keyDigest: string }> {
+): Promise<{ keyHex: string; keyDigest: string }> {
   const sql = connect(url);
   try {
     const rows = await sql<{ secret_hex: string }[]>`
@@ -43,26 +28,21 @@ export async function exportPrecontactHmacKey(
     if (rows.length !== 1 || !KEY_HEX_PATTERN.test(rows[0]!.secret_hex)) {
       throw new Error('PRECONTACT_HMAC_KEY_UNAVAILABLE');
     }
-    const secretHex = rows[0]!.secret_hex;
-    await writeFile(output, `${secretHex}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-      flag: 'wx',
-    });
-    return { keyDigest: keyDigest(secretHex) };
+    const keyHex = rows[0]!.secret_hex;
+    return { keyHex, keyDigest: keyDigest(keyHex) };
   } finally {
     await sql.end();
   }
 }
 
 export async function recoverPrecontactHmacKey(
-  keyFile: string,
+  recoveryKey: string,
   manifest: SuppressionManifest,
   url = databaseUrl(),
 ): Promise<{ rekeyed: boolean; contactsRekeyed: number }> {
-  const recoveredHex = await loadKeyHex(keyFile);
+  const recoveredHex = normalizeRecoveryKey(recoveryKey);
   if (keyDigest(recoveredHex) !== manifest.precontactPermanent.keyDigest) {
-    throw new Error('PRECONTACT_HMAC_KEY_CAPSULE_DIGEST_MISMATCH');
+    throw new Error('PRECONTACT_HMAC_KEY_RECOVERY_DIGEST_MISMATCH');
   }
 
   const sql = connect(url);

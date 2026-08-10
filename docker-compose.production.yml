@@ -50,7 +50,11 @@ services:
         target: /restore-manifests
     tmpfs:
       - /tmp:size=16m,mode=1777
-    logging: *production-logging
+    # This one-shot runner briefly transports the precontact HMAC recovery key
+    # on its attached stdout/stdin streams. Disable the Docker log driver so the
+    # daemon cannot persist those streams in host-side container logs.
+    logging:
+      driver: none
     networks: [database]
   worker:
     <<: *production-security

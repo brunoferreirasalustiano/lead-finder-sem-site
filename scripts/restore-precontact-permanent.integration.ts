@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -18,7 +18,6 @@ const temp=await mkdtemp(join(tmpdir(),'restore-precontact-permanent-'));
 const dump=join(temp,'stale.dump');
 const manifestPath=join(temp,'manifest.json');
 const emptyManifestPath=join(temp,'empty-manifest.json');
-const keyCapsule=join(temp,'precontact-hmac-key');
 let sql=postgres(url,{max:1});
 try{
   await sql.unsafe(`TRUNCATE TABLE public.email_precontact_delivery_suppressions, public.contact_delivery_suppressions, public.lead_contacts, lead_finder_private.email_contact_identities, campaign_provider_events, campaign_outbox, campaign_attempts, campaign_recipients, campaign_opt_outs, crm_timeline_events, restore_suppression_runs, campaigns, leads CASCADE`);
@@ -59,10 +58,13 @@ try{
   assert.equal(manifest.precontactPermanent.keyDigest,beforeDump[0]!.key_digest);
   assert.equal(manifest.precontactPermanent.fingerprints[0],beforeDump[0]!.identity);
   assert.equal(manifest.precontactPermanent.events[0]!.eventFingerprint,eventFingerprint);
-  const capsule=await exportPrecontactHmacKey(keyCapsule,url);
-  assert.equal(capsule.keyDigest,manifest.precontactPermanent.keyDigest);
-  const capsuleMetadata=await stat(keyCapsule);
-  assert.equal(capsuleMetadata.mode&0o077,0);
+
+  const filesBeforeKeyCapture=(await readdir(temp)).sort();
+  const capturedKey=await exportPrecontactHmacKey(url);
+  assert.equal(capturedKey.keyDigest,manifest.precontactPermanent.keyDigest);
+  assert.match(capturedKey.keyHex,/^[0-9a-f]{64}$/u);
+  assert.deepEqual((await readdir(temp)).sort(),filesBeforeKeyCapture);
+
   const serialized=await readFile(manifestPath,'utf8'); assert.doesNotMatch(serialized,new RegExp(rawAddress.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&'),'u')); assert.doesNotMatch(serialized,/"secret"|"email"|databaseurl|connectionstring/iu);
 
   await sql.end();
@@ -95,7 +97,7 @@ try{
   assert.equal(blockedBeforeRecovery.reason,'PRECONTACT_SUPPRESSION_KEY_MISMATCH');
   await sql.end();
 
-  const recovery=await recoverPrecontactHmacKey(keyCapsule,manifest,url);
+  const recovery=await recoverPrecontactHmacKey(capturedKey.keyHex,manifest,url);
   assert.equal(recovery.rekeyed,true);
   assert.ok(recovery.contactsRekeyed>=1);
   sql=postgres(url,{max:1});
@@ -120,5 +122,5 @@ try{
   await sql.end();
 
   const tamperedContent={...manifest,precontactPermanent:{...manifest.precontactPermanent,keyDigest:'0'.repeat(64)}}; const {digest:_,...withoutDigest}=tamperedContent; const tampered=validateManifestValue({...withoutDigest,digest:sha256(withoutDigest)}); const mismatch=await reconcile(tampered,false,'ci-restore-precontact',url); assert.equal(mismatch.result,'BLOCKED'); assert.equal(mismatch.reason,'PRECONTACT_SUPPRESSION_KEY_MISMATCH');
-  process.stdout.write(JSON.stringify({gate:'RESTORE_PRECONTACT_PERMANENT',result:'PASS',staleRestorePreserved:true,emptyStateKeyRebaseSafe:true,pre0048NonEmptyKeyRecoverySafe:true,keyCapsulePrivate:true,rawAddressExported:false,keyMismatchFailsClosed:true})+'\n');
+  process.stdout.write(JSON.stringify({gate:'RESTORE_PRECONTACT_PERMANENT',result:'PASS',staleRestorePreserved:true,emptyStateKeyRebaseSafe:true,pre0048NonEmptyKeyRecoverySafe:true,keyHandoffMemoryOnly:true,rawAddressExported:false,keyMismatchFailsClosed:true})+'\n');
 }finally{await sql.end().catch(()=>undefined);await rm(temp,{recursive:true,force:true});}

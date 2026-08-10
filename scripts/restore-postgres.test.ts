@@ -53,7 +53,7 @@ describe('production restore suppression orchestration', () => {
     expect(restoreScript).toContain('npm run --silent restore:suppression:key:export -- --manifest "$manifest_container"');
     expect(restoreScript).toContain('npm run --silent restore:suppression:legacy:prepare -- --manifest "$manifest_container"');
     expect(restoreScript).toContain('npm run --silent restore:suppression:key:recover -- --manifest "$manifest_container"');
-    expect(restoreScript.match(/builtin printf '%s\\n' \"\$precontact_hmac_key\" \|/gu)).toHaveLength(2);
+    expect(restoreScript.split("builtin printf '%s\\n' \"$precontact_hmac_key\" |").length - 1).toBe(2);
     expect(restoreScript).toContain("precontact_hmac_key=''");
     expect(restoreScript).toContain('unset precontact_hmac_key');
     expect(restoreScript).not.toContain('key_capsule');

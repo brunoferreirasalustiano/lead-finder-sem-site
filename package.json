@@ -35,6 +35,8 @@
     "pilot:real:fixture": "tsx scripts/pilot-real-synthetic-batch.ts",
     "pilot:real:log-privacy": "tsx scripts/pilot-real-log-privacy.ts",
     "restore:suppression:export": "tsx scripts/restore-suppression/cli.ts export",
+    "restore:suppression:key:export": "tsx scripts/restore-suppression/cli.ts export-key",
+    "restore:suppression:key:recover": "tsx scripts/restore-suppression/cli.ts recover-key",
     "restore:suppression:validate": "tsx scripts/restore-suppression/cli.ts validate",
     "restore:suppression:apply": "tsx scripts/restore-suppression/cli.ts apply",
     "restore:suppression:verify": "tsx scripts/restore-suppression/cli.ts verify",

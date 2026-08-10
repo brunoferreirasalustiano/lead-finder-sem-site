@@ -20,8 +20,19 @@ const idempotencyKeyFor = (request: FastifyRequest) => {
   return idempotencyKeySchema.safeParse(typeof value === 'string' ? value : undefined);
 };
 
-const operatorEmailError = (error: unknown, reply: FastifyReply) => {
+const operatorEmailError = (
+  error: unknown,
+  request: FastifyRequest,
+  reply: FastifyReply,
+) => {
   if (!(error instanceof OperatorEmailTestError)) throw error;
+  if (error.providerFailureClass) {
+    request.log.warn({
+      event: 'operator_email_test_provider_failure',
+      code: error.code,
+      providerFailureClass: error.providerFailureClass,
+    }, 'operator_email_test_provider_failure');
+  }
   const status = error.code === 'FORBIDDEN' ? 403
     : error.code === 'IDEMPOTENCY_CONFLICT' || error.code === 'AMBIGUOUS_STATE' ? 409
       : 503;
@@ -67,7 +78,7 @@ export function registerOperatorEmailTestRoute(
       }, 'operator_email_test_completed');
       return reply.status(result.replayed ? 200 : 201).send(result);
     } catch (error) {
-      return operatorEmailError(error, reply);
+      return operatorEmailError(error, request, reply);
     }
   });
 }

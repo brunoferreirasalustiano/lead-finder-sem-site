@@ -36,6 +36,7 @@ const policy: CampaignExecutionPolicy = {
 const insertExecutableAttempt = async (channel: 'EMAIL' | 'WHATSAPP', now: Date) => {
   sequence += 1;
   const suffix = `${sequence}-${crypto.randomUUID()}`;
+  const contactValue = channel === 'EMAIL' ? `fixture-${suffix}@example.test` : suffix;
   const rows = await db.execute<{ outbox_id: string }>(sql`
     WITH inserted_lead AS (
       INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, crm_stage)
@@ -43,7 +44,7 @@ const insertExecutableAttempt = async (channel: 'EMAIL' | 'WHATSAPP', now: Date)
       RETURNING id
     ), inserted_contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence, verified_at, is_valid, possible_whatsapp)
-      SELECT id, ${channel === 'EMAIL' ? 'EMAIL' : 'TELEFONE'}, 'fixture', ${suffix}, 'integration', 1, ${now.toISOString()}::timestamptz, true, ${channel === 'WHATSAPP'}
+      SELECT id, ${channel === 'EMAIL' ? 'EMAIL' : 'TELEFONE'}, ${contactValue}, ${contactValue}, 'integration', 1, ${now.toISOString()}::timestamptz, true, ${channel === 'WHATSAPP'}
       FROM inserted_lead
     ), inserted_campaign AS (
       INSERT INTO campaigns (name, idempotency_key, payload_fingerprint, state)

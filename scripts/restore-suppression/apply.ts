@@ -3,6 +3,11 @@ import { suppressionChannel } from './scope.js';
 import type { ReconciliationReport, SuppressionEntry, SuppressionManifest } from './types.js';
 
 type Resolved = { entry: SuppressionEntry; leadId: string; already: boolean };
+type PrecontactInspection = { keyMatched: boolean; fingerprints: number; events: number; alreadyApplied: number; requiringChange: number; conflicts: number };
+
+const precontactKeyRequired = (manifest: SuppressionManifest): boolean =>
+  manifest.precontactPermanent.fingerprints.length > 0 || manifest.precontactPermanent.events.length > 0;
+
 async function resolveEntries(sql: ReturnType<typeof connect>, manifest: SuppressionManifest): Promise<{ resolved: Resolved[]; unresolved: number }> {
   const resolved: Resolved[] = []; let unresolved = 0;
   for (const entry of manifest.entries) {
@@ -18,21 +23,115 @@ async function resolveEntries(sql: ReturnType<typeof connect>, manifest: Suppres
   }
   return { resolved, unresolved };
 }
-const report = (manifest: SuppressionManifest, resolved: Resolved[], unresolved: number): ReconciliationReport => ({ version:'1.0', totalEntries:manifest.entries.length, validEntries:manifest.entries.length, alreadyApplied:resolved.filter((item)=>item.already).length, requiringChange:resolved.filter((item)=>!item.already).length, unresolved, conflicts:0, result:unresolved===0?'SAFE':'BLOCKED', ...(unresolved ? { reason:'UNRESOLVED_SUPPRESSION_TARGETS' } : {}) });
+
+async function inspectPrecontactPermanent(sql: ReturnType<typeof connect>, manifest: SuppressionManifest): Promise<PrecontactInspection> {
+  const state = manifest.precontactPermanent;
+  const keyRows = await sql<{ key_digest: string }[]>`
+    SELECT encode(extensions.digest(secret,'sha256'),'hex') key_digest
+    FROM lead_finder_private.email_suppression_hmac_key
+    WHERE singleton=true`;
+  const keyMatched = keyRows.length === 1 && keyRows[0]!.key_digest === state.keyDigest;
+  if (!keyMatched) return { keyMatched:false, fingerprints:state.fingerprints.length, events:state.events.length, alreadyApplied:0, requiringChange:state.fingerprints.length+state.events.length, conflicts:0 };
+
+  const fingerprintRows = state.fingerprints.length === 0 ? [] : await sql<{ identity_fingerprint: string; suppressed: boolean }[]>`
+    SELECT identity_fingerprint::text identity_fingerprint,suppressed
+    FROM lead_finder_private.email_contact_identities
+    WHERE identity_fingerprint::text = ANY(${state.fingerprints}::text[])`;
+  const suppressed = new Set(fingerprintRows.filter((row) => row.suppressed).map((row) => row.identity_fingerprint));
+
+  const requestedEvents = state.events.map((event) => event.eventFingerprint);
+  const persistedEvents = requestedEvents.length === 0 ? [] : await sql<{ identity_fingerprint: string; reason: string; source: string; event_fingerprint: string; occurred_at: Date }[]>`
+    SELECT identity_fingerprint::text identity_fingerprint,reason,source,event_fingerprint::text event_fingerprint,occurred_at
+    FROM public.email_precontact_delivery_suppressions
+    WHERE event_fingerprint::text = ANY(${requestedEvents}::text[])`;
+  const persistedByEvent = new Map(persistedEvents.map((event) => [event.event_fingerprint,event]));
+  let exactEvents = 0; let missingEvents = 0; let conflicts = 0;
+  for (const event of state.events) {
+    const persisted = persistedByEvent.get(event.eventFingerprint);
+    if (!persisted) { missingEvents++; continue; }
+    if (persisted.identity_fingerprint !== event.identityFingerprint
+      || persisted.reason !== event.reasonCode
+      || persisted.source !== event.operationalSource
+      || persisted.occurred_at.toISOString() !== event.occurredAt) conflicts++;
+    else exactEvents++;
+  }
+  const exactFingerprints = state.fingerprints.filter((fingerprint) => suppressed.has(fingerprint)).length;
+  return {
+    keyMatched:true,
+    fingerprints:state.fingerprints.length,
+    events:state.events.length,
+    alreadyApplied:exactFingerprints+exactEvents,
+    requiringChange:(state.fingerprints.length-exactFingerprints)+missingEvents,
+    conflicts,
+  };
+}
+
+const report = (manifest: SuppressionManifest, resolved: Resolved[], unresolved: number, precontact: PrecontactInspection): ReconciliationReport => {
+  const keyMismatchBlocks = !precontact.keyMatched && precontactKeyRequired(manifest);
+  const conflicts = precontact.conflicts + (keyMismatchBlocks ? 1 : 0);
+  const result = unresolved===0 && conflicts===0 ? 'SAFE' : 'BLOCKED';
+  const reason = keyMismatchBlocks ? 'PRECONTACT_SUPPRESSION_KEY_MISMATCH' : precontact.conflicts ? 'PRECONTACT_SUPPRESSION_CONFLICT' : unresolved ? 'UNRESOLVED_SUPPRESSION_TARGETS' : undefined;
+  return {
+    version:'1.0', totalEntries:manifest.entries.length, validEntries:manifest.entries.length,
+    alreadyApplied:resolved.filter((item)=>item.already).length, requiringChange:resolved.filter((item)=>!item.already).length,
+    unresolved, conflicts, result, ...(reason ? { reason } : {}),
+    precontactPermanent:precontact,
+  };
+};
+
+async function applyPrecontactPermanent(tx: Parameters<Parameters<ReturnType<typeof connect>['begin']>[0]>[0], manifest: SuppressionManifest): Promise<void> {
+  const state = manifest.precontactPermanent;
+  if (state.fingerprints.length) {
+    await tx`
+      INSERT INTO lead_finder_private.email_contact_identities(identity_fingerprint,suppressed)
+      SELECT value::char(64),true
+      FROM jsonb_array_elements_text(${tx.json(state.fingerprints)}::jsonb)
+      ON CONFLICT (identity_fingerprint) DO UPDATE
+      SET suppressed=true,updated_at=clock_timestamp()`;
+  }
+  if (state.events.length) {
+    await tx`
+      INSERT INTO public.email_precontact_delivery_suppressions(
+        identity_fingerprint,reason,source,event_fingerprint,occurred_at
+      )
+      SELECT
+        (entry->>'identityFingerprint')::char(64),
+        entry->>'reasonCode',
+        entry->>'operationalSource',
+        (entry->>'eventFingerprint')::char(64),
+        (entry->>'occurredAt')::timestamptz
+      FROM jsonb_array_elements(${tx.json(state.events)}::jsonb) entry
+      ON CONFLICT (event_fingerprint) DO NOTHING`;
+  }
+  await tx`
+    UPDATE public.lead_contacts contact
+    SET is_valid=false,updated_at=clock_timestamp()
+    FROM lead_finder_private.email_contact_identities identity
+    WHERE identity.suppressed
+      AND contact.email_precontact_identity_fingerprint=identity.identity_fingerprint
+      AND upper(contact.type)='EMAIL'
+      AND contact.is_valid`;
+}
 
 export async function reconcile(manifest: SuppressionManifest, apply: boolean, actor: string, url=databaseUrl()): Promise<ReconciliationReport> {
   if (!/^[A-Za-z0-9._:@-]{1,100}$/u.test(actor)) throw new Error('INVALID_OPERATIONAL_ACTOR');
   const sql=connect(url);
   try {
-    const initial=await resolveEntries(sql,manifest); const dry=report(manifest,initial.resolved,initial.unresolved);
+    const initial=await resolveEntries(sql,manifest);
+    const initialPrecontact=await inspectPrecontactPermanent(sql,manifest);
+    const dry=report(manifest,initial.resolved,initial.unresolved,initialPrecontact);
     if (!apply || dry.result==='BLOCKED') return dry;
     await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtextextended('restore-suppression-reconciliation',0))`;
-      await tx.unsafe('LOCK TABLE leads, campaign_opt_outs, campaign_recipients, campaign_attempts, campaign_outbox, restore_suppression_runs IN SHARE ROW EXCLUSIVE MODE');
+      await tx.unsafe('LOCK TABLE leads, campaign_opt_outs, campaign_recipients, campaign_attempts, campaign_outbox, restore_suppression_runs, public.lead_contacts, lead_finder_private.email_contact_identities, public.email_precontact_delivery_suppressions IN SHARE ROW EXCLUSIVE MODE');
       const previous=await tx<{manifest_digest:string}[]>`SELECT manifest_digest FROM restore_suppression_runs WHERE run_id=${manifest.runId}::uuid`;
       if(previous[0]&&previous[0].manifest_digest!==manifest.digest) throw new Error('MANIFEST_IDENTITY_CONFLICT');
-      const locked=await resolveEntries(tx as unknown as ReturnType<typeof connect>,manifest);
-      if (locked.unresolved) throw new Error('UNRESOLVED_SUPPRESSION_TARGETS');
+      const connection=tx as unknown as ReturnType<typeof connect>;
+      const locked=await resolveEntries(connection,manifest);
+      const lockedPrecontact=await inspectPrecontactPermanent(connection,manifest);
+      const lockedReport=report(manifest,locked.resolved,locked.unresolved,lockedPrecontact);
+      if (lockedReport.result==='BLOCKED') throw new Error(lockedReport.reason ?? 'RESTORE_SUPPRESSION_BLOCKED');
+      await applyPrecontactPermanent(tx,manifest);
       for (const item of locked.resolved) {
         const { entry,leadId }=item;
         const channel=suppressionChannel(entry);

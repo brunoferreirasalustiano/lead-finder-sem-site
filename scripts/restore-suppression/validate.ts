@@ -22,6 +22,8 @@ export function validateManifestValue(value: unknown): SuppressionManifest {
   if (manifest.counts.total !== manifest.entries.length) throw new Error('MANIFEST_COUNTS_MISMATCH');
   const actual = Object.fromEntries(Object.keys(manifest.counts.byType).map((type) => [type, manifest.entries.filter((entry) => entry.suppressionType === type).length]));
   if (JSON.stringify(actual) !== JSON.stringify(manifest.counts.byType)) throw new Error('MANIFEST_COUNTS_MISMATCH');
+  if (manifest.precontactPermanent.counts.fingerprints !== manifest.precontactPermanent.fingerprints.length
+    || manifest.precontactPermanent.counts.events !== manifest.precontactPermanent.events.length) throw new Error('MANIFEST_COUNTS_MISMATCH');
   const seen = new Map<string, string>();
   for (const entry of manifest.entries) {
     if (Date.parse(entry.occurredAt) > Date.parse(manifest.cutoffAt)) throw new Error('TIMESTAMP_AFTER_CUTOFF');
@@ -29,6 +31,20 @@ export function validateManifestValue(value: unknown): SuppressionManifest {
     if (seen.has(key) && seen.get(key) !== encoded) throw new Error('CONFLICTING_DUPLICATE');
     if (seen.has(key)) throw new Error('DUPLICATE_ENTRY');
     seen.set(key, encoded);
+  }
+  const fingerprintSet = new Set<string>();
+  for (const fingerprint of manifest.precontactPermanent.fingerprints) {
+    if (fingerprintSet.has(fingerprint)) throw new Error('DUPLICATE_PRECONTACT_FINGERPRINT');
+    fingerprintSet.add(fingerprint);
+  }
+  const eventSet = new Map<string, string>();
+  for (const event of manifest.precontactPermanent.events) {
+    if (Date.parse(event.occurredAt) > Date.parse(manifest.cutoffAt)) throw new Error('TIMESTAMP_AFTER_CUTOFF');
+    if (!fingerprintSet.has(event.identityFingerprint)) throw new Error('PRECONTACT_EVENT_IDENTITY_MISSING');
+    const encoded = JSON.stringify(event);
+    if (eventSet.has(event.eventFingerprint) && eventSet.get(event.eventFingerprint) !== encoded) throw new Error('CONFLICTING_PRECONTACT_EVENT');
+    if (eventSet.has(event.eventFingerprint)) throw new Error('DUPLICATE_PRECONTACT_EVENT');
+    eventSet.set(event.eventFingerprint, encoded);
   }
   return manifest;
 }

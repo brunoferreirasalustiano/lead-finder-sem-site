@@ -2,6 +2,9 @@ import { connect, databaseUrl } from './db.js';
 import { suppressionChannel } from './scope.js';
 import type { SuppressionManifest } from './types.js';
 
+const precontactKeyRequired = (manifest: SuppressionManifest): boolean =>
+  manifest.precontactPermanent.fingerprints.length > 0 || manifest.precontactPermanent.events.length > 0;
+
 export async function verifyReconciliation(manifest: SuppressionManifest,url=databaseUrl()): Promise<'RESTORE_SUPPRESSION_SAFE'> {
   const sql=connect(url);
   try {
@@ -12,7 +15,8 @@ export async function verifyReconciliation(manifest: SuppressionManifest,url=dat
       SELECT encode(extensions.digest(secret,'sha256'),'hex') key_digest
       FROM lead_finder_private.email_suppression_hmac_key
       WHERE singleton=true`;
-    if(keyRows.length!==1 || keyRows[0]!.key_digest!==manifest.precontactPermanent.keyDigest) throw new Error('PRECONTACT_SUPPRESSION_KEY_MISMATCH');
+    const keyMatched=keyRows.length===1 && keyRows[0]!.key_digest===manifest.precontactPermanent.keyDigest;
+    if(precontactKeyRequired(manifest) && !keyMatched) throw new Error('PRECONTACT_SUPPRESSION_KEY_MISMATCH');
 
     if(manifest.precontactPermanent.fingerprints.length){
       const identities=await sql<{identity_fingerprint:string}[]>`

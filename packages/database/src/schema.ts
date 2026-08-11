@@ -468,6 +468,9 @@ export const pilotLeads = pgTable('pilot_leads', {
 export const pilotReviews = pgTable('pilot_reviews', {
   id: uuid('id').defaultRandom().primaryKey(), pilotRunId: uuid('pilot_run_id').notNull(), leadId: uuid('lead_id').notNull(),
   decision: text('decision').notNull(), reason: text('reason'), reviewerPrincipalId: text('reviewer_principal_id').notNull(),
+  approvalSource: text('approval_source').notNull().default('HUMAN'),
+  policyVersion: text('policy_version'), evidenceIds: jsonb('evidence_ids').notNull().default([]),
+  decisionReasons: jsonb('decision_reasons').notNull().default([]),
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }).defaultNow().notNull(), version: integer('version').notNull(),
 }, (table) => [
   foreignKey({ columns: [table.pilotRunId, table.leadId], foreignColumns: [pilotLeads.pilotRunId, pilotLeads.leadId] }).onDelete('restrict'),

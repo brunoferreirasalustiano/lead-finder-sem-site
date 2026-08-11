@@ -28,7 +28,14 @@ const hmlFunctions = [
   'append_manual_email_send_event',
   'run_hml_suppression_probe',
 ] as const;
-const daily6Functions = ['reserve_daily6_send', 'finalize_daily6_send'] as const;
+const daily6Functions = [
+  'reserve_daily6_send',
+  'finalize_daily6_send',
+  'list_daily6_candidates',
+  'prepare_daily6_pilot_context',
+  'ensure_daily6_batch',
+  'bump_daily6_batch_metrics',
+] as const;
 
 describe('post-migration HML runtime grant provisioning', () => {
   it('runs the generic deny-all descriptor before the HML supplement and fails closed', () => {

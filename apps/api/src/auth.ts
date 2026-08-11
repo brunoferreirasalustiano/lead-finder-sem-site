@@ -24,7 +24,9 @@ export type OperationalPrincipal = Readonly<{
     | 'HML_SMOKE_BEARER_TOKEN'
     | 'HML_OPERATOR_BEARER_TOKEN'
     | 'HML_METRICS_BEARER_TOKEN'
-    | 'HML_EMAIL_BEARER_TOKEN';
+    | 'HML_EMAIL_BEARER_TOKEN'
+    | 'HML_DISCOVERY_BEARER_TOKEN'
+    | 'HML_DAILY6_BEARER_TOKEN';
 }>;
 
 declare module 'fastify' {
@@ -111,6 +113,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('POST', '/operator-test-preparations/:id/response', 'operator-test:response'),
   policy('POST', '/operator-tests/email/send', 'operator-email-test:send'),
   policy('POST', '/internal/hml/suppression-probe', 'hml-suppression-probe:run'),
+  policy('POST', '/internal/daily6/run-slot', 'daily6:execute'),
   policy('POST', '/collect', 'collection:execute'),
   policy('GET', '/leads/export.csv', 'leads:export'),
 ];
@@ -134,6 +137,8 @@ export type AuthenticationOptions = Readonly<{
   operatorTemporary?: TemporaryAuthentication;
   metricsTemporary?: TemporaryAuthentication;
   emailTemporary?: TemporaryAuthentication;
+  discoveryTemporary?: TemporaryAuthentication;
+  daily6Temporary?: TemporaryAuthentication;
   authenticate?: (request: FastifyRequest) => OperationalPrincipal | undefined | Promise<OperationalPrincipal | undefined>;
 }>;
 
@@ -196,6 +201,26 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
       authenticationSource: 'HML_EMAIL_BEARER_TOKEN' as const,
     };
   }
+  const discoveryTemporary = options.discoveryTemporary;
+  if (discoveryTemporary && discoveryTemporary.environment === 'homologation'
+    && discoveryTemporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, discoveryTemporary.tokenHash)) {
+    return {
+      id: discoveryTemporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(discoveryTemporary.principalPermissions),
+      authenticationSource: 'HML_DISCOVERY_BEARER_TOKEN' as const,
+    };
+  }
+  const daily6Temporary = options.daily6Temporary;
+  if (daily6Temporary && daily6Temporary.environment === 'homologation'
+    && daily6Temporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, daily6Temporary.tokenHash)) {
+    return {
+      id: daily6Temporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(daily6Temporary.principalPermissions),
+      authenticationSource: 'HML_DAILY6_BEARER_TOKEN' as const,
+    };
+  }
   return undefined;
 };
 
@@ -239,6 +264,8 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
       options.operatorTemporary,
       options.metricsTemporary,
       options.emailTemporary,
+      options.discoveryTemporary,
+      options.daily6Temporary,
     ].find((candidate) => candidate && candidate.expiresAt.getTime() > now);
     if (!activeTemporary || activeTemporary.expiresAt.getTime() <= Date.now()) return false;
     const key = request.ip || 'unknown';
@@ -287,6 +314,12 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     }
     if (principal.authenticationSource === 'HML_EMAIL_BEARER_TOKEN') {
       request.log.info({ event: 'hml_email_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_email_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_DISCOVERY_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_discovery_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_discovery_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_DAILY6_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_daily6_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_daily6_authentication_accepted');
     }
 
     const requiredPermission = policiesByRoute.get(routeKey);

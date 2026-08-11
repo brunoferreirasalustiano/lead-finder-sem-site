@@ -16,6 +16,7 @@ const migrationVersions = [
   '0045_restricted_manual_email_review_followups',
   '0046_restricted_manual_email_open_order',
   '0047_restricted_manual_email_final_review',
+  '0056_daily6_automated_compliance',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',
@@ -30,6 +31,10 @@ const hmlFunctions = [
 const daily6Functions = [
   'reserve_daily6_send',
   'finalize_daily6_send',
+  'list_daily6_candidates',
+  'prepare_daily6_pilot_context',
+  'ensure_daily6_batch',
+  'bump_daily6_batch_metrics',
 ] as const;
 const restrictedTables = [
   'lead_contacts',

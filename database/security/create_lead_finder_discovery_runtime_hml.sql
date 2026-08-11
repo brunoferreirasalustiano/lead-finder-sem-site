@@ -11,9 +11,6 @@ BEGIN
   ELSE
     EXECUTE 'ALTER ROLE lead_finder_discovery_runtime WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='postgres') THEN
-    EXECUTE 'GRANT lead_finder_discovery_runtime TO postgres';
-  END IF;
 END
 $$;
 
@@ -58,9 +55,82 @@ GRANT UPDATE (original_value,source,confidence,verified_at,is_valid,updated_at)
   ON TABLE public.lead_contacts
 TO lead_finder_discovery_runtime;
 
--- RLS is intentionally not bypassed. If a hosted project has RLS enabled on
--- these repository tables, the administrator must add equivalent, reviewed
--- role policies before provisioning the secret; this script fails closed by
--- not creating permissive policies automatically.
+-- RLS is a required boundary for this role. Fail closed if any repository
+-- table was provisioned without RLS instead of silently widening access.
+DO $$
+DECLARE
+  table_name text;
+  rls_enabled boolean;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY[
+    'schema_migrations', 'collection_jobs', 'leads', 'lead_contacts', 'lead_evidence'
+  ] LOOP
+    SELECT c.relrowsecurity
+      INTO rls_enabled
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = table_name;
+    IF rls_enabled IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'DISCOVERY_RLS_REQUIRED:%', table_name;
+    END IF;
+  END LOOP;
+END
+$$;
+
+-- Policies are exclusive to this role. USING/WITH CHECK true is intentionally
+-- bounded by the table/column grants above and by the role's NOBYPASSRLS
+-- attribute; no other role receives these policies.
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_schema_migrations_select ON public.schema_migrations;
+CREATE POLICY lead_finder_discovery_runtime_schema_migrations_select
+  ON public.schema_migrations FOR SELECT TO lead_finder_discovery_runtime
+  USING (true);
+
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_collection_jobs_select ON public.collection_jobs;
+CREATE POLICY lead_finder_discovery_runtime_collection_jobs_select
+  ON public.collection_jobs FOR SELECT TO lead_finder_discovery_runtime
+  USING (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_collection_jobs_insert ON public.collection_jobs;
+CREATE POLICY lead_finder_discovery_runtime_collection_jobs_insert
+  ON public.collection_jobs FOR INSERT TO lead_finder_discovery_runtime
+  WITH CHECK (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_collection_jobs_update ON public.collection_jobs;
+CREATE POLICY lead_finder_discovery_runtime_collection_jobs_update
+  ON public.collection_jobs FOR UPDATE TO lead_finder_discovery_runtime
+  USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_leads_select ON public.leads;
+CREATE POLICY lead_finder_discovery_runtime_leads_select
+  ON public.leads FOR SELECT TO lead_finder_discovery_runtime
+  USING (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_leads_insert ON public.leads;
+CREATE POLICY lead_finder_discovery_runtime_leads_insert
+  ON public.leads FOR INSERT TO lead_finder_discovery_runtime
+  WITH CHECK (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_leads_update ON public.leads;
+CREATE POLICY lead_finder_discovery_runtime_leads_update
+  ON public.leads FOR UPDATE TO lead_finder_discovery_runtime
+  USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_lead_contacts_select ON public.lead_contacts;
+CREATE POLICY lead_finder_discovery_runtime_lead_contacts_select
+  ON public.lead_contacts FOR SELECT TO lead_finder_discovery_runtime
+  USING (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_lead_contacts_insert ON public.lead_contacts;
+CREATE POLICY lead_finder_discovery_runtime_lead_contacts_insert
+  ON public.lead_contacts FOR INSERT TO lead_finder_discovery_runtime
+  WITH CHECK (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_lead_contacts_update ON public.lead_contacts;
+CREATE POLICY lead_finder_discovery_runtime_lead_contacts_update
+  ON public.lead_contacts FOR UPDATE TO lead_finder_discovery_runtime
+  USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_lead_evidence_select ON public.lead_evidence;
+CREATE POLICY lead_finder_discovery_runtime_lead_evidence_select
+  ON public.lead_evidence FOR SELECT TO lead_finder_discovery_runtime
+  USING (true);
+DROP POLICY IF EXISTS lead_finder_discovery_runtime_lead_evidence_insert ON public.lead_evidence;
+CREATE POLICY lead_finder_discovery_runtime_lead_evidence_insert
+  ON public.lead_evidence FOR INSERT TO lead_finder_discovery_runtime
+  WITH CHECK (true);
 
 COMMIT;

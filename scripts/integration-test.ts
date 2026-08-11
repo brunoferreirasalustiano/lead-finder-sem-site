@@ -522,11 +522,15 @@ try {
     observedAt: '2026-07-11T12:00:00.000Z',
     notes: 'deterministic evidence',
   };
+  const evidenceBefore = Number((await db.select({ value: count() }).from(leadEvidence).where(eq(leadEvidence.leadId, lead.id)))[0]?.value ?? 0);
   await Promise.all([
     inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
     inject({ method: 'POST', url: `/leads/${lead.id}/evidence`, payload: evidencePayload }),
   ]);
-  assert.equal((await db.select({ value: count() }).from(leadEvidence))[0]?.value, 1);
+  assert.equal(
+    Number((await db.select({ value: count() }).from(leadEvidence).where(eq(leadEvidence.leadId, lead.id)))[0]?.value ?? 0),
+    evidenceBefore + 1,
+  );
   assert.ok((await db.select({ value: count() }).from(leadQualificationHistory))[0]!.value >= 5);
   const secondLead = (
     await db

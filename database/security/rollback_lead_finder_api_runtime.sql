@@ -46,6 +46,16 @@ BEGIN
     REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM lead_finder_api_runtime;
     REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM lead_finder_api_runtime;
 
+    -- Daily-6 reservations live in a non-public schema and are granted to the
+    -- runtime role by the HML supplement/migration. Revoke those grants before
+    -- dropping the role so rollback remains complete after migration 0055.
+    IF EXISTS (
+      SELECT 1 FROM pg_namespace WHERE nspname = 'lead_finder_internal'
+    ) THEN
+      REVOKE ALL ON SCHEMA lead_finder_internal FROM lead_finder_api_runtime;
+      REVOKE ALL ON ALL FUNCTIONS IN SCHEMA lead_finder_internal FROM lead_finder_api_runtime;
+    END IF;
+
     IF EXISTS (
       SELECT 1 FROM pg_namespace WHERE nspname = 'supabase_migrations'
     ) THEN

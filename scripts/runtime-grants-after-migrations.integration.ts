@@ -27,6 +27,10 @@ const hmlFunctions = [
   'append_manual_email_send_event',
   'run_hml_suppression_probe',
 ] as const;
+const daily6Functions = [
+  'reserve_daily6_send',
+  'finalize_daily6_send',
+] as const;
 const restrictedTables = [
   'lead_contacts',
   'pilot_manual_message_preparations',
@@ -56,6 +60,15 @@ const functionPrivileges = () => owner<{ identity: string; executable: boolean }
   join pg_namespace namespace_record on namespace_record.oid=procedure_record.pronamespace
   where namespace_record.nspname='public'
     and procedure_record.proname in ${owner(hmlFunctions)}
+    order by identity`;
+
+const daily6FunctionPrivileges = () => owner<{ identity: string; executable: boolean }[]>`
+  select procedure_record.oid::regprocedure::text as identity,
+    has_function_privilege(${roleName}, procedure_record.oid, 'EXECUTE') as executable
+  from pg_proc procedure_record
+  join pg_namespace namespace_record on namespace_record.oid=procedure_record.pronamespace
+  where namespace_record.nspname='lead_finder_internal'
+    and procedure_record.proname in ${owner(daily6Functions)}
   order by identity`;
 
 const assertRestrictedTablesDenied = async () => {
@@ -83,6 +96,9 @@ try {
     select version from public.schema_migrations
     where version in ${owner(migrationVersions)}`;
   assert.equal(applied.length, migrationVersions.length, '0042-0047 must be applied first');
+  const daily6Applied = await owner<{ version: string }[]>`
+    select version from public.schema_migrations where version = '0055_daily6_atomic_reservations'`;
+  assert.equal(daily6Applied.length, 1, '0055 must be applied before runtime grants are verified');
 
   await owner.unsafe(
     `ALTER ROLE ${roleName} PASSWORD '${rolePassword.replaceAll("'", "''")}'`,
@@ -91,6 +107,12 @@ try {
   const before = await functionPrivileges();
   assert.equal(before.length, hmlFunctions.length);
   assert.equal(before.some((row) => row.executable), false, 'pre-fix state must reproduce SQLSTATE 42501');
+  const daily6Before = await daily6FunctionPrivileges();
+  assert.equal(daily6Before.length, daily6Functions.length);
+  // Migration 0055 grants the internal functions when the least-privilege
+  // runtime role already exists; the generic reset intentionally touches only
+  // public functions, so this boundary must remain executable throughout.
+  assert.equal(daily6Before.every((row) => row.executable), true);
   await assertRestrictedTablesDenied();
 
   const deniedRole = postgres(roleUrl.toString(), { max: 1 });
@@ -106,6 +128,12 @@ try {
   const after = await functionPrivileges();
   assert.equal(after.length, hmlFunctions.length);
   assert.equal(after.every((row) => row.executable), true);
+  const daily6After = await daily6FunctionPrivileges();
+  assert.equal(daily6After.length, daily6Functions.length);
+  assert.equal(daily6After.every((row) => row.executable), true);
+  const internalSchemaUsage = await owner<{ usable: boolean }[]>`
+    select has_schema_privilege(${roleName}, 'lead_finder_internal', 'USAGE') as usable`;
+  assert.equal(internalSchemaUsage[0]?.usable, true);
   await assertRestrictedTablesDenied();
 
   const publicExecute = await owner<{ executable: boolean | null }[]>`
@@ -143,6 +171,7 @@ try {
     result: 'RUNTIME_GRANTS_AFTER_MIGRATIONS_PASS',
     preFix: '42501',
     postFixFunctions: after.length,
+    daily6Functions: daily6After.length,
     replay: 2,
     restrictedTablesDenied: true,
   }));

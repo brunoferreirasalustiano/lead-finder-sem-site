@@ -81,6 +81,37 @@ describe('PR 223 restricted manual email follow-ups', () => {
     );
   });
 
+  it('uses the dedicated Daily-6 permission for the quota-bound send route', async () => {
+    expect(authSource).toContain(
+      "policy('POST', '/daily6/manual-message-preparations/:id/send', 'daily6:send')",
+    );
+    expect(restrictedEmailSource).toContain(
+      "requirePermission(auth, runtime.daily6 ? 'daily6:send' : 'manual-messaging:send')",
+    );
+
+    const execute = vi.fn();
+    const db = { execute } as unknown as Database;
+    const unauthorized = createAuthorizationContext({
+      principalId: 'daily6-without-permission',
+      permissions: new Set(),
+      authenticationMethod: 'unit-test',
+    });
+    await expect(sendPreparedManualEmail(
+      db,
+      '00000000-0000-4000-8000-000000000207',
+      unauthorized,
+      {
+        sendEnabled: true,
+        killSwitchEnabled: false,
+        sender: 'sender@example.test',
+        fingerprintKey: 'f'.repeat(32),
+        deliver: vi.fn(),
+        daily6: { batchId: '2026-08-12|09|campinas-sp|daily6-v1', sendIdentity: '2026-08-12|09|campinas-sp|daily6-v1|lead-1' },
+      },
+    )).rejects.toMatchObject({ code: 'INELIGIBLE' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['DELIVERED', 'd'.repeat(64), null],
     ['FAILED', null, 'DELIVERY_REJECTED'],

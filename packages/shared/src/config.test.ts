@@ -405,6 +405,8 @@ describe('environment configuration', () => {
     expect(parseApiConfig(planB)).toMatchObject({ DEPLOYMENT_PROFILE: 'supabase-render', DRY_RUN: true,
       API_BATCH_PROCESSING_ENABLED: false, REAL_SEND_ENABLED: false,
       REAL_PROVIDERS_ENABLED: false, COLLECTION_EGRESS_ENABLED: false });
+    expect(() => parseApiConfig({ ...database, DAILY6_PILOT_ENABLED: 'true' })).toThrow('DAILY6_PILOT_ENABLED');
+    expect(parseApiConfig({ ...planB, DEPLOYMENT_ENVIRONMENT: 'homologation', DAILY6_PILOT_ENABLED: 'true' }).DAILY6_PILOT_ENABLED).toBe(true);
     expect(parseApiConfig({
       ...planB,
       API_BATCH_PROCESSING_ENABLED: 'true',
@@ -433,7 +435,44 @@ describe('environment configuration', () => {
       WHATSAPP_CLOUD_MAX_SENDS: '2',
     })).toThrow('supabase-render requires');
     expect(() => parseApiConfig({ ...planB, DAILY_LEAD_LIMIT: '61' })).toThrow('DAILY_LEAD_LIMIT');
-    expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('bounded API batch endpoint');
+    expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('supabase-render worker is HML-only');
+  });
+
+  it('allows only the bounded HML supabase-render discovery worker contract', () => {
+    const hmlOneShot = {
+      ...database,
+      DEPLOYMENT_PROFILE: 'supabase-render',
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      WORKER_MODE: 'oneshot',
+      MAX_JOBS_PER_RUN: '1',
+      COLLECTION_EGRESS_ENABLED: 'true',
+      OVERPASS_API_URL: 'https://overpass-api.de/api/interpreter',
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+      ENRICHMENT_PROVIDER: 'composite',
+      TAVILY_API_KEY: 'synthetic-tavily-key',
+      SHADOW_MODE_ENABLED: 'true',
+      DRY_RUN: 'true',
+      REAL_SEND_ENABLED: 'false',
+      REAL_PROVIDERS_ENABLED: 'false',
+    } as const;
+    expect(parseWorkerConfig(hmlOneShot)).toMatchObject({
+      DEPLOYMENT_PROFILE: 'supabase-render',
+      WORKER_MODE: 'oneshot',
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      COLLECTION_EGRESS_ENABLED: true,
+      ENRICHMENT_EGRESS_ENABLED: true,
+    });
+    expect(() => parseWorkerConfig({ ...hmlOneShot, WORKER_MODE: 'continuous' })).toThrow('bounded oneshot mode');
+    expect(() => parseWorkerConfig({ ...hmlOneShot, DEPLOYMENT_ENVIRONMENT: 'production' })).toThrow('HML-only');
+    expect(() => parseWorkerConfig({
+      ...hmlOneShot,
+      DEPLOYMENT_ENVIRONMENT: 'production',
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+    })).toThrow('production');
+    expect(() => parseWorkerConfig({ ...hmlOneShot, REAL_SEND_ENABLED: 'true' })).toThrow('DRY_RUN');
+    expect(() => parseWorkerConfig({ ...hmlOneShot, REAL_PROVIDERS_ENABLED: 'true' })).toThrow('DRY_RUN');
+    expect(() => parseWorkerConfig({ ...hmlOneShot, MAX_JOBS_PER_RUN: '2' })).toThrow('at most one job');
+    expect(parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'oracle-vps' }).DEPLOYMENT_PROFILE).toBe('oracle-vps');
   });
 
   it('accepts Render PORT and validates an explicit CORS allowlist', () => {

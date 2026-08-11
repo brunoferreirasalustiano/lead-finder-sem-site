@@ -94,6 +94,7 @@ export const daily6Batches = pgTable('daily6_batches', {
   policyVersion: text('policy_version').notNull(),
   maxSendsPerBatch: integer('max_sends_per_batch').notNull().default(2),
   maxSendsPerDay: integer('max_sends_per_day').notNull().default(6),
+  reserved: integer('reserved').notNull().default(0),
   discovered: integer('discovered').notNull().default(0),
   enriched: integer('enriched').notNull().default(0),
   autoApproved: integer('auto_approved').notNull().default(0),

@@ -10,7 +10,7 @@ const loadProvisioningSql = () => readFile(provisioningFile, 'utf8');
 
 describe('contact resolver runtime role provisioning', () => {
   it('fails fast and encloses every mutation in one explicit transaction', async () => {
-    const sql = await loadProvisioningSql();
+    const sql = (await loadProvisioningSql()).replaceAll('\r\n', '\n');
     const outerBegins = sql.match(/^BEGIN;$/gm) ?? [];
     const outerCommits = sql.match(/^COMMIT;$/gm) ?? [];
 
@@ -23,7 +23,7 @@ describe('contact resolver runtime role provisioning', () => {
   });
 
   it('preserves the hardened role attributes and narrow grants', async () => {
-    const sql = await loadProvisioningSql();
+    const sql = (await loadProvisioningSql()).replaceAll('\r\n', '\n');
 
     expect(sql).toContain('LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE');
     expect(sql).toContain('NOREPLICATION NOBYPASSRLS');

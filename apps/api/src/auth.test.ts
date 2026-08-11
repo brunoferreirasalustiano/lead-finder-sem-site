@@ -117,6 +117,25 @@ describe('API authentication boundary', () => {
     await malformedApp.close();
   });
 
+  it('keeps the Daily-6 delivery route unavailable while the pilot flag is off', async () => {
+    const app = buildApp({} as Database, {
+      daily6PilotEnabled: false,
+      authentication: { token, principalPermissions: ['daily6:send'] },
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/daily6/manual-message-preparations/123e4567-e89b-42d3-a456-426614174000/send',
+      headers: {
+        ...authorization,
+        'x-daily6-batch-id': '2026-08-12|09|campinas-sp|daily6-v1',
+        'x-daily6-send-identity': '2026-08-12|09|campinas-sp|daily6-v1|lead-1',
+      },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'Daily-6 pilot is disabled', code: 'DAILY6_DISABLED' });
+    await app.close();
+  });
+
   it('accepts a valid HML smoke token only with its fixed synthetic principal and minimum permissions', async () => {
     const smokeToken = 'hml-smoke-token-for-tests-only-00000000000000000000000000000000';
     const app = Fastify({ logger: false });
@@ -480,6 +499,11 @@ describe('API authentication boundary', () => {
       { method: 'POST', path: '/manual-message-preparations/:id/send', permission: 'manual-messaging:send' },
       { method: 'POST', path: '/manual-message-preparations/:id/whatsapp-cloud-send', permission: 'manual-messaging:cloud-send' },
     ]);
+    expect(routePolicies).toContainEqual({
+      method: 'POST',
+      path: '/daily6/manual-message-preparations/:id/send',
+      permission: 'daily6:send',
+    });
     expect(routePolicies).toContainEqual({
       method: 'POST',
       path: '/operator-tests/email/send',

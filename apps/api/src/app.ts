@@ -62,6 +62,7 @@ import {
   prepareManualMessage,
   getPreparedWhatsAppLink,
   sendPreparedManualEmail,
+  type Daily6EmailRuntime,
   recordManualOpen,
   confirmManualResult,
   recordManualResponse,
@@ -223,6 +224,7 @@ export function buildApp(db: Database, options: {
   manualEmailKillSwitchEnabled?: boolean;
   manualEmailSender?: string;
   manualEmailFingerprintKey?: string;
+  daily6PilotEnabled?: boolean;
   hmlSuppressionProbeEnabled?: boolean;
   deliverManualEmail?: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
@@ -814,6 +816,15 @@ export function buildApp(db: Database, options: {
   app.post('/manual-message-preparations/:id/confirm',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=confirmManualMessageSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid confirmation request',code:'INVALID_REQUEST'});if(request.principal?.authenticationSource==='HML_SMOKE_BEARER_TOKEN'&&body.data.result==='SENT_CONFIRMED')return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await confirmManualResult(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_confirmed',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_confirmed');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/response',async(request,reply)=>{const id=parseId(request.params);const key=idempotencyKey(request.headers);const body=recordManualResponseSchema.safeParse(request.body);if(!id.success||!key.success||!body.success)return reply.status(400).send({error:'Invalid response request',code:'INVALID_REQUEST'});if(body.data.result==='OPT_OUT'&&!request.principal?.permissions.has('manual-messaging:opt-out'))return reply.status(403).send({error:'Access denied',code:'FORBIDDEN'});return manualMessagingRoute(reply,async()=>{const result=await recordManualResponse(db,id.data,{...body.data,idempotencyKey:key.data},authorizationContextFor(request));request.log.info({event:'manual_message_response_recorded',preparationId:id.data,state:result.state,result:result.result,principalId:request.principal!.id,replayed:result.replayed},'manual_message_response_recorded');return reply.status(creationStatus(result.replayed)).send(result);});});
   app.post('/manual-message-preparations/:id/send',async(request,reply)=>{const id=parseId(request.params);if(!id.success||Object.keys(request.body??{}).length>0)return reply.status(400).send({error:'Invalid send request',code:'INVALID_REQUEST'});return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled&&Boolean(options.deliverManualEmail&&options.manualEmailSender&&options.manualEmailFingerprintKey),killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender??'',fingerprintKey:options.manualEmailFingerprintKey??'',deliver:options.deliverManualEmail??(()=>Promise.reject(new Error('MANUAL_EMAIL_DISABLED')))});request.log.info({event:'manual_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed,attemptId:result.attemptId},'manual_email_delivery_recorded');return reply.status(creationStatus(result.replayed)).send(safeManualEmailDeliveryDto(result));});});
+  app.post('/daily6/manual-message-preparations/:id/send',async(request,reply)=>{
+    const id=parseId(request.params);
+    const batchId=typeof request.headers['x-daily6-batch-id']==='string'?request.headers['x-daily6-batch-id']:'';
+    const sendIdentity=typeof request.headers['x-daily6-send-identity']==='string'?request.headers['x-daily6-send-identity']:'';
+    if(!options.daily6PilotEnabled)return reply.status(404).send({error:'Daily-6 pilot is disabled',code:'DAILY6_DISABLED'});
+    if(!id.success||Object.keys(request.body??{}).length>0||!/^[-a-z0-9|]{1,160}$/.test(batchId)||!/^[-a-z0-9|]{1,160}$/.test(sendIdentity))return reply.status(400).send({error:'Invalid Daily-6 send request',code:'INVALID_REQUEST'});
+    const daily6: Daily6EmailRuntime={batchId,sendIdentity};
+    return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled&&Boolean(options.deliverManualEmail&&options.manualEmailSender&&options.manualEmailFingerprintKey),killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender??'',fingerprintKey:options.manualEmailFingerprintKey??'',deliver:options.deliverManualEmail??(()=>Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),daily6});request.log.info({event:'daily6_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed,attemptId:result.attemptId},'daily6_email_delivery_recorded');return reply.status(creationStatus(result.replayed)).send(safeManualEmailDeliveryDto(result));});
+  });
   app.post('/manual-message-preparations/:id/whatsapp-cloud-send',async(request,reply)=>{
     const id=parseId(request.params);
     const key=idempotencyKey(request.headers);

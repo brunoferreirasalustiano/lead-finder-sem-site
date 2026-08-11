@@ -26,6 +26,8 @@ const hmlRuntimeFunctions = [
   'public.get_manual_email_send_attempt(uuid, text)',
   'public.create_manual_email_send_attempt(uuid, text, character, character, character)',
   'public.append_manual_email_send_event(uuid, text, text, character, text)',
+  'lead_finder_internal.reserve_daily6_send(text, text, uuid, char(64), text)',
+  'lead_finder_internal.finalize_daily6_send(text, text, text, char(64), text)',
 ] as const;
 
 const operatorEmailSelfTestReadTables = [
@@ -91,5 +93,19 @@ describe('least-privilege runtime SQL replay contract', () => {
     expect(membershipLookupPosition).toBeGreaterThanOrEqual(0);
     expect(membershipRevokePosition).toBeGreaterThan(membershipLookupPosition);
     expect(dropRolePosition).toBeGreaterThan(membershipRevokePosition);
+  });
+
+  it('revokes non-public Daily-6 grants before dropping the runtime role', () => {
+    const internalSchemaRevokePosition = rollbackSql.indexOf(
+      'REVOKE ALL ON SCHEMA lead_finder_internal FROM lead_finder_api_runtime;',
+    );
+    const internalFunctionRevokePosition = rollbackSql.indexOf(
+      'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA lead_finder_internal FROM lead_finder_api_runtime;',
+    );
+    const dropRolePosition = rollbackSql.indexOf('DROP ROLE IF EXISTS lead_finder_api_runtime;');
+
+    expect(internalSchemaRevokePosition).toBeGreaterThanOrEqual(0);
+    expect(internalFunctionRevokePosition).toBeGreaterThan(internalSchemaRevokePosition);
+    expect(dropRolePosition).toBeGreaterThan(internalFunctionRevokePosition);
   });
 });

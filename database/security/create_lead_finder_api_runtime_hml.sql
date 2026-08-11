@@ -28,6 +28,15 @@ GRANT EXECUTE ON FUNCTION
   public.run_hml_suppression_probe(text, boolean)
 TO lead_finder_api_runtime;
 
+-- Daily-6 quota enforcement is exposed only through SECURITY DEFINER functions.
+-- The runtime receives no direct table grants and cannot bypass reservation,
+-- recipient uniqueness, or the durable batch/day limits.
+GRANT USAGE ON SCHEMA lead_finder_internal TO lead_finder_api_runtime;
+GRANT EXECUTE ON FUNCTION
+  lead_finder_internal.reserve_daily6_send(text, text, uuid, char(64), text),
+  lead_finder_internal.finalize_daily6_send(text, text, text, char(64), text)
+TO lead_finder_api_runtime;
+
 -- The bounded operator Gmail self-test reserves and replays attempts by reading
 -- its two fingerprint-only audit tables before any provider call. Migration
 -- 0027 originally granted this read boundary, but the generic runtime reset is

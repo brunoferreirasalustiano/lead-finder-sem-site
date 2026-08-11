@@ -77,6 +77,9 @@ import {
 } from '@lead-finder/database';
 import {
   collectSchema,
+  collectionCityId,
+  collectionRequestIdentitySchema,
+  parseCollectionRequestIdentity,
   contactInputSchema,
   evidenceInputSchema,
   listLeadsSchema,
@@ -850,11 +853,18 @@ export function buildApp(db: Database, options: {
         error: 'Invalid collection parameters',
         details: { fieldErrors: { limit: [`Limit exceeds DAILY_LEAD_LIMIT (${dailyLeadLimit})`] } },
       });
+    const identityHeader = request.headers['x-collection-identity'];
+    const identity = typeof identityHeader === 'string' ? identityHeader : undefined;
+    const parsedIdentity = identity ? parseCollectionRequestIdentity(identity) : null;
+    if (!parsedIdentity || !collectionRequestIdentitySchema.safeParse(identity).success || parsedIdentity.cityId !== collectionCityId(parsed.data.city, parsed.data.state)) {
+      return reply.status(400).send({ error: 'Invalid collection identity', code: 'COLLECTION_IDENTITY_REQUIRED' });
+    }
     const job = await enqueueCollectionJob(db, parsed.data, {
       enabled: true,
       configurationVersion: 1,
-    });
-    return reply.status(202).send(job);
+    }, identity);
+    request.log.info({ event: 'collection_job_enqueued', requestId: request.id, collectionIdentity: identity, jobId: job.id, replayed: job.replayed }, 'collection_job_enqueued');
+    return reply.status(job.replayed ? 200 : 202).send(job);
   });
   app.get('/leads/export.csv', async (request, reply) => {
     const query = typeof request.query === 'object' && request.query !== null ? request.query : {};

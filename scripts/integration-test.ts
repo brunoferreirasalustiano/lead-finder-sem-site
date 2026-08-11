@@ -110,6 +110,8 @@ try {
       contact_delivery_suppressions,
       lead_contacts,
       lead_qualification_history,
+      daily6_send_ledger,
+      daily6_batches,
       collection_jobs,
       leads
     restart identity
@@ -177,7 +179,12 @@ try {
     category: 'oficinas',
     limit: 5,
   };
-  const accepted = await inject({ method: 'POST', url: '/collect', payload });
+  const accepted = await inject({
+    method: 'POST',
+    url: '/collect',
+    headers: { 'x-collection-identity': '2026-08-12|09|campinas-sp|daily6-v1' },
+    payload,
+  });
   assert.equal(accepted.statusCode, 202);
   responses.push({
     status: 200,
@@ -610,7 +617,7 @@ try {
   const [historicalJob] = await db.select().from(collectionJobs).where(eq(collectionJobs.status, 'PENDING'));
   assert.ok(historicalJob, 'historical job must remain pending without consuming an attempt');
 
-  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 }, '2026-08-12|13|campinas-sp|daily6-v1');
   responses.push({
     status: 200,
     body: JSON.stringify({ elements: [{ type: 'node', id: 1001, tags: { name: 'duplicate' } }] }),
@@ -621,14 +628,14 @@ try {
     1,
   );
 
-  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 }, '2026-08-12|16|campinas-sp|daily6-v1');
   responses.push({ status: 200, body: '{invalid-json' });
   assert.equal(await processNextJob(db, overpass), true);
   assert.equal(
     (await db.select().from(collectionJobs).where(eq(collectionJobs.status, 'FAILED'))).length,
     1,
   );
-  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 });
+  await enqueueCollection(db, payload, { enabled: true, configurationVersion: 1 }, '2026-08-13|09|campinas-sp|daily6-v1');
   responses.push({ status: 200, body: JSON.stringify({ elements: [] }) });
   assert.equal(await processNextJob(db, overpass), true);
 

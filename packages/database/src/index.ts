@@ -6,11 +6,13 @@ import type { MessagingChannel } from '@lead-finder/messaging';
 import {
   normalizeAddress,
   normalizeBusinessName,
+  collectionRequestIdentitySchema,
+  parseCollectionRequestIdentity,
   type AuthorizationContext,
   type LeadStatus,
   type NormalizedLead,
 } from '@lead-finder/shared';
-import { collectionJobs, leads, type NewLead } from './schema.js';
+import { collectionJobs, daily6Batches, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 import {
   prepareManualMessage as prepareLegacyManualMessage,
@@ -198,16 +200,40 @@ export async function enqueueCollection(
   db: Database,
   payload: unknown,
   authorization?: CollectionEgressAuthorization,
+  requestIdentity?: string,
 ) {
   if (authorization?.enabled !== true || authorization.configurationVersion !== 1) {
     throw new Error('COLLECTION_EGRESS_DISABLED');
   }
-  return (
-    await db
+  const parsedIdentity = collectionRequestIdentitySchema.safeParse(requestIdentity);
+  if (!parsedIdentity.success) throw new Error('COLLECTION_IDENTITY_REQUIRED');
+  const batch = parseCollectionRequestIdentity(parsedIdentity.data);
+  if (!batch) throw new Error('COLLECTION_IDENTITY_REQUIRED');
+  return db.transaction(async (tx) => {
+    await tx.insert(daily6Batches).values([{
+      batchId: parsedIdentity.data,
+      batchDate: batch.date,
+      slot: batch.slot,
+      cityId: batch.cityId,
+      policyVersion: batch.policyVersion,
+    }]).onConflictDoNothing();
+    const inserted = await tx
       .insert(collectionJobs)
-      .values({ payload: { input: payload, collectionEgress: collectionAuthorization } })
-      .returning({ id: collectionJobs.id, status: collectionJobs.status })
-  )[0];
+      .values({
+        requestIdentity: parsedIdentity.data,
+        payload: { input: payload, collectionEgress: collectionAuthorization, collectionRequestIdentity: parsedIdentity.data },
+      })
+      .onConflictDoNothing()
+      .returning({ id: collectionJobs.id, status: collectionJobs.status });
+    if (inserted[0]) return { ...inserted[0], replayed: false };
+    const existing = (await tx
+      .select({ id: collectionJobs.id, status: collectionJobs.status })
+      .from(collectionJobs)
+      .where(eq(collectionJobs.requestIdentity, parsedIdentity.data))
+      .limit(1))[0];
+    if (!existing) throw new Error('COLLECTION_IDEMPOTENCY_RACE');
+    return { ...existing, replayed: true };
+  });
 }
 const collectionLeaseMs = 30 * 60 * 1_000;
 const collectionMaxAttempts = 3;

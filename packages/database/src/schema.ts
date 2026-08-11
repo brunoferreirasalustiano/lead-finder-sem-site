@@ -35,6 +35,10 @@ export const leads = pgTable(
     whatsapp: text('whatsapp'),
     email: text('email'),
     website: text('website'),
+    websiteStatus: text('website_status')
+      .$type<'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED'>()
+      .notNull()
+      .default('UNKNOWN'),
     instagram: text('instagram'),
     facebook: text('facebook'),
     address: text('address'),
@@ -85,6 +89,8 @@ export const leadEvidence = pgTable(
       .references(() => leads.id, { onDelete: 'cascade' }),
     source: text('source').notNull(),
     reference: text('reference'),
+    evidenceType: text('evidence_type').notNull().default('LEGACY'),
+    verificationStatus: text('verification_status').notNull().default('OBSERVED'),
     result: text('result').notNull(),
     confidence: numeric('confidence', { precision: 4, scale: 3 }).notNull(),
     observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),

@@ -4,6 +4,7 @@ import {
   hasRegisteredWebsite,
   normalizeElement,
   OverpassClient,
+  OverpassError,
 } from './index.js';
 describe('website detection', () =>
   it('checks all supported keys', () => {
@@ -69,3 +70,13 @@ describe('retry', () =>
     ).resolves.toEqual([]);
     expect(fetchFn).toHaveBeenCalledTimes(2);
   }, 2000));
+
+describe('source failures', () =>
+  it('classifies a bounded 504 failure as temporary unavailability', async () => {
+    const client = new OverpassClient({
+      endpoint: 'https://x.test', timeoutMs: 100, maxRetries: 0,
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 504 })),
+    });
+    await expect(client.collect({ city: 'Campinas', state: 'SP', country: 'Brasil', category: 'oficinas', limit: 1 }))
+      .rejects.toMatchObject({ code: 'SOURCE_TEMPORARILY_UNAVAILABLE' } satisfies Partial<OverpassError>);
+  }));

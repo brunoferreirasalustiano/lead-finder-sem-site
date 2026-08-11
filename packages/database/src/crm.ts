@@ -143,7 +143,7 @@ export async function changeCrmStage(db: Database, leadId: string, command: CrmS
     if (!current) throw new CrmDomainError('Lead not found', 'NOT_FOUND');
     const from = current.crmStage ?? 'NOVO';
     if (from !== 'NAO_CONTATAR') await requireCommercialLead(tx, leadId);
-    else if (current.qualificationStatus !== 'SEM_SITE_CONFIRMADO' || current.isBlocked || current.doNotContact)
+    else if (current.qualificationStatus !== 'SEM_SITE_CONFIRMADO' || current.websiteStatus !== 'NO_OFFICIAL_SITE_CONFIRMED' || current.isBlocked || current.doNotContact)
       throw new CrmDomainError('Lead is not eligible for commercial reactivation', 'INELIGIBLE_LEAD');
     assertCrmTransition(from, command, authorization);
     const auditTimestamp = new Date();
@@ -220,7 +220,7 @@ export const completeTask = (db: Database, taskId: string, input: TaskCompleteIn
 export const rescheduleTask = (db: Database, taskId: string, input: TaskRescheduleInput) => mutateTask(db, taskId, input, 'reschedule');
 export const listTimeline = (db: Database, leadId: string, options?: ListOptions) => { const page = normalizeListOptions(options); return db.select().from(crmTimelineEvents).where(eq(crmTimelineEvents.leadId, leadId)).orderBy(desc(crmTimelineEvents.createdAt), desc(crmTimelineEvents.id)).limit(page.limit).offset(page.offset); };
 
-const queueEligibility = and(eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'), eq(leads.isBlocked, false), eq(leads.doNotContact, false), sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`);
+const queueEligibility = and(eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'), eq(leads.websiteStatus, 'NO_OFFICIAL_SITE_CONFIRMED'), eq(leads.isBlocked, false), eq(leads.doNotContact, false), sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`);
 export function listOverdueTasks(db: Database, now: Date, limit = 100) { return db.select({ task: crmTasks, lead: leads }).from(crmTasks).innerJoin(leads, eq(leads.id, crmTasks.leadId)).where(and(eq(crmTasks.status, 'PENDENTE'), lt(crmTasks.dueAt, now), queueEligibility)).orderBy(asc(crmTasks.dueAt), asc(crmTasks.id)).limit(limit); }
 export function listUpcomingFollowUps(db: Database, from: Date, to: Date, limit = 100, owner?: string) { return db.select({ task: crmTasks, lead: leads }).from(crmTasks).innerJoin(leads, eq(leads.id, crmTasks.leadId)).where(and(eq(crmTasks.status, 'PENDENTE'), gte(crmTasks.dueAt, from), lte(crmTasks.dueAt, to), owner ? eq(crmTasks.owner, owner) : undefined, queueEligibility)).orderBy(asc(crmTasks.dueAt), asc(crmTasks.id)).limit(limit); }
 

@@ -38,6 +38,7 @@ export async function getQualification(db: Database, leadId: string) {
       .select({
         id: leads.id,
         qualificationStatus: leads.qualificationStatus,
+        websiteStatus: leads.websiteStatus,
         isBlocked: leads.isBlocked,
         doNotContact: leads.doNotContact,
       })
@@ -73,6 +74,8 @@ export async function addEvidence(
   leadId: string,
   input: Audit & {
     reference?: string | undefined;
+    evidenceType?: string | undefined;
+    verificationStatus?: 'VERIFIED' | 'OBSERVED' | 'UNVERIFIED' | 'REJECTED' | undefined;
     result: string;
     confidence: number;
     observedAt: Date;
@@ -96,6 +99,8 @@ export async function addEvidence(
           leadId,
           source: input.source,
           reference: input.reference,
+          evidenceType: input.evidenceType ?? 'LEGACY',
+          verificationStatus: input.verificationStatus ?? 'OBSERVED',
           result: input.result,
           confidence: String(input.confidence),
           observedAt: input.observedAt,
@@ -268,6 +273,11 @@ export async function listOutreachEligibleLeads(db: Database, limit = 50) {
     .where(
       and(
         eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'),
+        eq(leads.websiteStatus, 'NO_OFFICIAL_SITE_CONFIRMED'),
+        sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_IDENTITY' and e.verification_status = 'VERIFIED' and e.result = 'BUSINESS_IDENTITY_CONFIRMED')`,
+        sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_ACTIVITY' and e.verification_status = 'VERIFIED' and e.result = 'ACTIVE')`,
+        sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'WEBSITE' and e.verification_status = 'VERIFIED' and e.result = 'NO_OFFICIAL_SITE_CONFIRMED')`,
+        sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_EMAIL' and e.verification_status = 'VERIFIED' and e.result = 'EMAIL_BUSINESS_ASSOCIATION_PASS')`,
         eq(leads.isBlocked, false),
         eq(leads.doNotContact, false),
         sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`,

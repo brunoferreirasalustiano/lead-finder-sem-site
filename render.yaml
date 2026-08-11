@@ -22,6 +22,7 @@ services:
       - { key: REAL_PROVIDERS_ENABLED, value: 'false' }
       - { key: REAL_PROVIDER_CONFIGURED, value: 'false' }
       - { key: COLLECTION_EGRESS_ENABLED, value: 'false' }
+      - { key: ENRICHMENT_EGRESS_ENABLED, value: 'false' }
       - { key: DAILY_LEAD_LIMIT, value: '60' }
       - { key: LEAD_BATCH_SIZE, value: '5' }
       - { key: PROCESSING_TIME_BUDGET_MS, value: '45000' }

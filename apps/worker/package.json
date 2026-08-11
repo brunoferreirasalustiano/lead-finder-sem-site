@@ -11,6 +11,7 @@
   "dependencies": {
     "@lead-finder/batch-processor": "*",
     "@lead-finder/database": "*",
+    "@lead-finder/enrichment": "*",
     "@lead-finder/lead-scoring": "*",
     "@lead-finder/overpass-client": "*",
     "@lead-finder/shared": "*"

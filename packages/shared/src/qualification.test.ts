@@ -26,6 +26,7 @@ describe('qualification domain', () => {
   it('blocks outreach unless confirmed with a verified contact', () => {
     const base = {
       qualificationStatus: 'SEM_SITE_CONFIRMADO' as const,
+      websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED' as const,
       isBlocked: false,
       doNotContact: false,
       contacts: [{ isValid: true, verifiedAt: new Date() }],

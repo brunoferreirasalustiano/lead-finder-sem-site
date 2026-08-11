@@ -70,11 +70,11 @@ async function insertChain(prefix: string) {
   await db`
     INSERT INTO public.leads(
       id, osm_type, osm_id, name, category, phone, whatsapp, email, address,
-      city, state, score, status, qualification_status
+      city, state, score, status, qualification_status, website_status
     ) VALUES (
       ${leadId}::uuid, 'node', ${`${prefix}-${leadId}`}, ${marker}, 'synthetic',
       ${syntheticSensitivePhone}, ${syntheticSensitivePhone}, ${syntheticSensitiveEmail}, ${marker},
-      'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO'
+      'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NO_OFFICIAL_SITE_CONFIRMED'
     )`;
   await db`
     INSERT INTO public.campaigns(id, name, idempotency_key, payload_fingerprint)

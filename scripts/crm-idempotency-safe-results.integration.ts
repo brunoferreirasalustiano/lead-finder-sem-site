@@ -57,11 +57,11 @@ try {
   await raw`
     INSERT INTO public.leads(
       id, osm_type, osm_id, name, category, phone, whatsapp, email, address,
-      city, state, score, status, qualification_status, crm_stage
+      city, state, score, status, qualification_status, website_status, crm_stage
     ) VALUES (
       ${leadId}::uuid, 'node', ${`crm-replay-${leadId}`}, ${marker}, 'synthetic',
       ${syntheticSensitivePhone}, ${syntheticSensitivePhone}, ${syntheticSensitiveEmail}, ${marker},
-      'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NOVO'
+      'Campinas', 'SP', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NO_OFFICIAL_SITE_CONFIRMED', 'NOVO'
     )`;
 
   stage = 'INSERT_DIRTY_LEGACY_RESULTS';
@@ -92,6 +92,7 @@ try {
             phone: syntheticSensitivePhone,
             email: syntheticSensitiveEmail,
             qualificationStatus: 'SEM_SITE_CONFIRMADO',
+            websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED',
             isBlocked: false,
             doNotContact: false,
             crmStage: 'NOVO',

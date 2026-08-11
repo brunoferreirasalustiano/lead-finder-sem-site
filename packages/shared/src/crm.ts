@@ -176,12 +176,14 @@ export function assertCrmTransition(from: CrmStage, input: CrmStageChangeInput, 
 
 export interface CommercialQueueCandidate {
   qualificationStatus: QualificationStatus;
+  websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
   crmStage: CrmStage;
   isBlocked: boolean;
   doNotContact: boolean;
 }
 export const isEligibleForCommercialQueue = (lead: CommercialQueueCandidate) =>
   lead.qualificationStatus === 'SEM_SITE_CONFIRMADO' &&
+  lead.websiteStatus === 'NO_OFFICIAL_SITE_CONFIRMED' &&
   !lead.isBlocked &&
   !lead.doNotContact &&
   lead.crmStage !== 'NAO_CONTATAR';

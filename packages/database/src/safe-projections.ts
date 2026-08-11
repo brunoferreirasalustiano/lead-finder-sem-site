@@ -8,6 +8,7 @@ export const safeLeadSelection = {
   city: leads.city,
   state: leads.state,
   website: leads.website,
+  websiteStatus: leads.websiteStatus,
   score: leads.score,
   status: leads.status,
   qualificationStatus: leads.qualificationStatus,

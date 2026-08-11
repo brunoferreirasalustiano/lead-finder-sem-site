@@ -260,6 +260,12 @@ try {
     [200, 200],
   );
   assert.equal((await db.select({ value: count() }).from(leadContacts))[0]?.value, 1);
+  await db.insert(leadEvidence).values([
+    { leadId: lead.id, source: 'integration', reference: 'https://source.example.test/identity', evidenceType: 'BUSINESS_IDENTITY', verificationStatus: 'VERIFIED', result: 'BUSINESS_IDENTITY_CONFIRMED', confidence: '1', observedAt: new Date('2026-07-11T12:00:00Z'), fingerprint: `identity-${lead.id}` },
+    { leadId: lead.id, source: 'integration', reference: 'https://source.example.test/activity', evidenceType: 'BUSINESS_ACTIVITY', verificationStatus: 'VERIFIED', result: 'ACTIVE', confidence: '1', observedAt: new Date('2026-07-11T12:00:00Z'), fingerprint: `activity-${lead.id}` },
+    { leadId: lead.id, source: 'integration', reference: 'https://source.example.test/website', evidenceType: 'WEBSITE', verificationStatus: 'VERIFIED', result: 'NO_OFFICIAL_SITE_CONFIRMED', confidence: '1', observedAt: new Date('2026-07-11T12:00:00Z'), fingerprint: `website-${lead.id}` },
+    { leadId: lead.id, source: 'integration', reference: 'https://source.example.test/email', evidenceType: 'BUSINESS_EMAIL', verificationStatus: 'VERIFIED', result: 'EMAIL_BUSINESS_ASSOCIATION_PASS', confidence: '1', observedAt: new Date('2026-07-11T12:00:00Z'), fingerprint: `email-${lead.id}` },
+  ]);
   assert.equal((await listOutreachEligibleLeads(db)).length, 1);
 
   const actor = 'crm-integration';
@@ -475,7 +481,7 @@ try {
 
   const otherLead = (await db.insert(leads).values({
     osmType: 'node', osmId: 'cross-resource-lead', category: 'oficinas', score: 10,
-    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO',
   }).returning())[0]!;
   const otherOpportunity = (await createOpportunity(db, otherLead.id, {
     title: 'Other lead opportunity', value: '10.00', actor, idempotencyKey: 'other-opportunity-001',
@@ -492,10 +498,10 @@ try {
   assert.equal((await db.select({ value: count() }).from(crmNotes))[0]!.value, notesBeforeCrossLead);
   assert.equal((await db.select({ value: count() }).from(crmTimelineEvents))[0]!.value, timelineBeforeCrossLead);
   const excludedLeads = await db.insert(leads).values([
-    { osmType: 'node', osmId: 'blocked-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO', isBlocked: true },
-    { osmType: 'node', osmId: 'dnc-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO', doNotContact: true },
+    { osmType: 'node', osmId: 'blocked-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO', isBlocked: true },
+    { osmType: 'node', osmId: 'dnc-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO', doNotContact: true },
     { osmType: 'node', osmId: 'incompatible-crm', category: 'oficinas', score: 10, status: 'PENDENTE_VALIDACAO', qualificationStatus: 'PENDENTE', crmStage: 'NOVO' },
-    { osmType: 'node', osmId: 'stage-dnc-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NAO_CONTATAR' },
+    { osmType: 'node', osmId: 'stage-dnc-crm', category: 'oficinas', score: 10, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NAO_CONTATAR' },
   ]).returning();
   await db.insert(crmTasks).values(excludedLeads.map((excluded, index) => ({
     leadId: excluded.id, title: `Excluded ${index}`, dueAt: new Date('2026-07-11T09:00:00Z'), owner: actor,

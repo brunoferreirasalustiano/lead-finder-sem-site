@@ -76,7 +76,7 @@ describe('CRM contracts', () => {
   });
 
   it('keeps blocked and incompatible leads out of every commercial queue', () => {
-    const eligible = { qualificationStatus: 'SEM_SITE_CONFIRMADO' as const, crmStage: 'QUALIFICADO' as const, isBlocked: false, doNotContact: false };
+    const eligible = { qualificationStatus: 'SEM_SITE_CONFIRMADO' as const, websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED' as const, crmStage: 'QUALIFICADO' as const, isBlocked: false, doNotContact: false };
     expect(isEligibleForCommercialQueue(eligible)).toBe(true);
     expect(isEligibleForCommercialQueue({ ...eligible, qualificationStatus: 'DESCARTADO' })).toBe(false);
     expect(isEligibleForCommercialQueue({ ...eligible, crmStage: 'NAO_CONTATAR' })).toBe(false);

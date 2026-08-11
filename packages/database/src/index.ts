@@ -37,6 +37,7 @@ export * from './operator-email-test.js';
 export * from './hml-suppression-probe.js';
 export * from './deployment-processing.js';
 export * from './prospecting-metrics.js';
+export * from './enrichment.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed
@@ -117,6 +118,13 @@ export async function insertLeads(
   db: Database,
   input: Array<NormalizedLead & { score: number }>,
 ): Promise<number> {
+  return (await insertLeadsReturning(db, input)).length;
+}
+
+export async function insertLeadsReturning(
+  db: Database,
+  input: Array<NormalizedLead & { score: number }>,
+) {
   const values: NewLead[] = uniqueByOsm(input).map((lead) => ({
     ...lead,
     latitude: lead.latitude?.toString(),
@@ -124,10 +132,14 @@ export async function insertLeads(
     status: deriveStatus(lead),
     normalizedName: lead.name ? normalizeBusinessName(lead.name) || null : null,
     normalizedAddress: lead.address ? normalizeAddress(lead.address) || null : null,
+    websiteStatus: lead.websiteStatus ?? 'UNKNOWN',
   }));
-  if (values.length === 0) return 0;
-  return (await db.insert(leads).values(values).onConflictDoNothing().returning({ id: leads.id }))
-    .length;
+  if (values.length === 0) return [];
+  return db.insert(leads).values(values).onConflictDoNothing().returning({
+    id: leads.id,
+    osmType: leads.osmType,
+    osmId: leads.osmId,
+  });
 }
 export interface LeadFilters {
   page: number;
@@ -170,6 +182,9 @@ export async function listLeads(db: Database, f: LeadFilters) {
 }
 export async function getLead(db: Database, id: string) {
   return (await db.select(safeLeadSelection).from(leads).where(eq(leads.id, id)).limit(1))[0] ?? null;
+}
+export async function getLeadByOsmIdentity(db: Database, osmType: string, osmId: string) {
+  return (await db.select(safeLeadSelection).from(leads).where(and(eq(leads.osmType, osmType), eq(leads.osmId, osmId))).limit(1))[0] ?? null;
 }
 export interface CollectionEgressAuthorization {
   enabled: true;

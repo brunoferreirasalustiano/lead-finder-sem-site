@@ -34,6 +34,7 @@ export const safeLeadDto = (value: unknown) => {
     city: item['city'],
     state: item['state'],
     website: item['website'],
+    websiteStatus: item['websiteStatus'],
     score: item['score'],
     status: item['status'],
     qualificationStatus: item['qualificationStatus'],

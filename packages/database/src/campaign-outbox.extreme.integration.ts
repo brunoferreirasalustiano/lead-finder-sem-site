@@ -38,8 +38,8 @@ const insertExecutable = async (now: Date) => {
   const contactValue = `fixture-${suffix}@example.test`;
   const rows = await db.execute<{ outbox_id: string }>(sql`
     WITH lead AS (
-      INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, crm_stage)
-      VALUES ('node', ${suffix}, 'integration', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'QUALIFICADO') RETURNING id
+      INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, website_status, crm_stage)
+      VALUES ('node', ${suffix}, 'integration', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NO_OFFICIAL_SITE_CONFIRMED', 'QUALIFICADO') RETURNING id
     ), contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence, verified_at, is_valid, possible_whatsapp)
       SELECT id, 'EMAIL', ${contactValue}, ${contactValue}, 'integration', 1, ${now.toISOString()}::timestamptz, true, false FROM lead

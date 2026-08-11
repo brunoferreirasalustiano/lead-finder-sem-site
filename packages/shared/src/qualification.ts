@@ -51,12 +51,14 @@ export const canTransitionQualification = (from: QualificationStatus, to: Qualif
 
 export interface OutreachCandidate {
   qualificationStatus: QualificationStatus;
+  websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
   isBlocked: boolean;
   doNotContact: boolean;
   contacts: Array<{ isValid: boolean; verifiedAt: Date | string | null }>;
 }
 export const isEligibleForOutreach = (lead: OutreachCandidate) =>
   lead.qualificationStatus === 'SEM_SITE_CONFIRMADO' &&
+  lead.websiteStatus === 'NO_OFFICIAL_SITE_CONFIRMED' &&
   !lead.isBlocked &&
   !lead.doNotContact &&
   lead.contacts.some((contact) => contact.isValid && contact.verifiedAt !== null);

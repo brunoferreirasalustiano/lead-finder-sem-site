@@ -73,6 +73,7 @@ export const cancelCampaign = (state: CampaignState): CampaignState => { assertC
 
 export interface CampaignEligibilityCandidate {
   qualificationStatus: QualificationStatus;
+  websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
   crmStage: CrmStage;
   isBlocked: boolean;
   doNotContact: boolean;
@@ -89,6 +90,7 @@ export type CampaignIneligibilityReason = (typeof campaignIneligibilityReasons)[
 export function evaluateCampaignEligibility(candidate: CampaignEligibilityCandidate): { eligible: true } | { eligible: false; reason: CampaignIneligibilityReason } {
   if (candidate.qualificationStatus === 'DESCARTADO') return { eligible: false, reason: 'LEAD_DISCARDED' };
   if (candidate.qualificationStatus !== 'SEM_SITE_CONFIRMADO') return { eligible: false, reason: 'QUALIFICATION_REQUIRED' };
+  if (candidate.websiteStatus !== 'NO_OFFICIAL_SITE_CONFIRMED') return { eligible: false, reason: 'QUALIFICATION_REQUIRED' };
   if (!candidate.contact.isValid || candidate.contact.verifiedAt === null) return { eligible: false, reason: 'CONTACT_NOT_VERIFIED' };
   if (candidate.isBlocked) return { eligible: false, reason: 'LEAD_BLOCKED' };
   if (candidate.doNotContact) return { eligible: false, reason: 'DO_NOT_CONTACT' };

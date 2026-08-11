@@ -65,6 +65,8 @@ export interface NormalizedLead {
   whatsapp: string | null;
   email: string | null;
   website: string | null;
+  /** OSM alone cannot prove ownership or absence of a website. */
+  websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
   instagram: string | null;
   facebook: string | null;
   address: string | null;

@@ -8,7 +8,7 @@ import {
 const id = '123e4567-e89b-42d3-a456-426614174000';
 const key = 'pilot-key-0001';
 const eligibleLead = {
-  reviewDecision: 'APPROVED' as const, qualificationStatus: 'SEM_SITE_CONFIRMADO', hasValidVerifiedContact: true,
+  reviewDecision: 'APPROVED' as const, qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED' as const, hasValidVerifiedContact: true,
   isBlocked: false, doNotContact: false, hasActiveOptOut: false, crmStage: 'QUALIFICADO', versionConsistent: true,
 };
 const readyInput = {

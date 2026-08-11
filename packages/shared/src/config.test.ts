@@ -364,6 +364,32 @@ describe('environment configuration', () => {
     })).toThrow('COLLECTION_EGRESS_ENABLED');
   });
 
+  it('keeps enrichment egress disabled by default and rejects unsafe production activation', () => {
+    expect(parseWorkerConfig(database)).toMatchObject({ ENRICHMENT_EGRESS_ENABLED: false });
+    expect(() => parseWorkerConfig({
+      ...database,
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+    })).toThrow('ENRICHMENT_API_URL is required when ENRICHMENT_EGRESS_ENABLED=true');
+    expect(parseWorkerConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+      ENRICHMENT_API_URL: 'https://enrichment.example.test/v1',
+    })).toMatchObject({ ENRICHMENT_EGRESS_ENABLED: true });
+    expect(() => parseWorkerConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'production',
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+      ENRICHMENT_API_URL: 'https://enrichment.example.test/v1',
+    })).toThrow('ENRICHMENT_EGRESS_ENABLED is not permitted in production');
+    expect(() => parseWorkerConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      ENRICHMENT_EGRESS_ENABLED: 'true',
+      ENRICHMENT_API_URL: 'http://enrichment.example.test/v1',
+    })).toThrow('ENRICHMENT_API_URL must use HTTPS outside development');
+  });
+
   it('rejects retry base greater than retry maximum', () => {
     expect(() => parseWorkerConfig({
       ...database,

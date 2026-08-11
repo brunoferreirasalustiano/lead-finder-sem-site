@@ -23,6 +23,7 @@ const addLeadWithInsertError = (insertError: unknown) => {
     execute: () => Promise.resolve(selectCall === 2 ? [{
       id: leadId,
       qualification_status: 'SEM_SITE_CONFIRMADO',
+      website_status: 'NO_OFFICIAL_SITE_CONFIRMED',
       is_blocked: false,
       do_not_contact: false,
       crm_stage: null,

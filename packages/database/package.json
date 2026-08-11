@@ -9,6 +9,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@lead-finder/enrichment": "*",
     "@lead-finder/messaging": "*",
     "@lead-finder/prospecting-orchestrator": "*",
     "@lead-finder/shared": "*",

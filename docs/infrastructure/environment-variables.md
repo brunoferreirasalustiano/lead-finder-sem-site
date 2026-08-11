@@ -44,6 +44,9 @@ A aplicação usa PostgreSQL direto por `DATABASE_URL`. Qualquer uso futuro de `
 |---|---:|---:|---|
 | `COLLECTION_EGRESS_ENABLED` | sim | sim | `false` por padrão |
 | `OVERPASS_API_URL` | opcional | opcional | vazio enquanto egress estiver desligado |
+| `ENRICHMENT_EGRESS_ENABLED` | sim | sim | `false` por padrão; independente da coleta |
+| `ENRICHMENT_API_URL` | opcional | opcional | vazio enquanto enriquecimento estiver desligado |
+| `ENRICHMENT_MIN_INTERVAL_MS` | sim (worker) | sim (worker) | 250 ms por padrão; limita a cadência do provider de enriquecimento |
 | `OVERPASS_TIMEOUT_MS` | sim | sim | timeout limitado |
 | `OVERPASS_MAX_RETRIES` | sim | sim | retry limitado |
 | `DAILY_LEAD_LIMIT` | sim | sim | `60`, teto de banco 60 |

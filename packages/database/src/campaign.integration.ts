@@ -6,7 +6,7 @@ import {
   campaignRecipients, campaignTemplates, campaignVersions, createAttemptWithOutbox,
   createCampaignWithVersion, createDatabase, createRecipientWithOutbox, leads, listAvailableOutbox,
   listEligibleCampaignLeads, recordOptOut, recordProviderEvent, updateRecipientState,
-  leadContacts, persistenceFingerprint,
+  leadContacts, leadEvidence, persistenceFingerprint,
   CampaignPersistenceError,
 } from './index.js';
 
@@ -37,15 +37,21 @@ try {
 
   const lead = (await db.insert(leads).values({
     osmType: 'node', osmId: `campaign-${suffix}`, category: 'oficinas', score: 90,
-    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO',
   }).returning())[0]!;
   const eligibilityLeads = await db.insert(leads).values([
-    { osmType: 'node', osmId: `whatsapp-false-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
-    { osmType: 'node', osmId: `whatsapp-true-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
-    { osmType: 'node', osmId: `email-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: `whatsapp-false-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: `whatsapp-true-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO' },
+    { osmType: 'node', osmId: `email-${suffix}`, category: 'oficinas', score: 90, status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO' },
   ]).returning();
   const incompatiblePhone = eligibilityLeads[0]!; const compatiblePhone = eligibilityLeads[1]!; const emailLead = eligibilityLeads[2]!;
   const verifiedAt = new Date('2026-07-12T12:00:00Z');
+  await db.insert(leadEvidence).values(eligibilityLeads.flatMap((lead) => [
+    { leadId: lead.id, source: 'integration', reference: `https://source.example.test/${lead.id}/identity`, evidenceType: 'BUSINESS_IDENTITY', verificationStatus: 'VERIFIED', result: 'BUSINESS_IDENTITY_CONFIRMED', confidence: '1', observedAt: verifiedAt, fingerprint: `identity-${lead.id}` },
+    { leadId: lead.id, source: 'integration', reference: `https://source.example.test/${lead.id}/activity`, evidenceType: 'BUSINESS_ACTIVITY', verificationStatus: 'VERIFIED', result: 'ACTIVE', confidence: '1', observedAt: verifiedAt, fingerprint: `activity-${lead.id}` },
+    { leadId: lead.id, source: 'integration', reference: `https://source.example.test/${lead.id}/website`, evidenceType: 'WEBSITE', verificationStatus: 'VERIFIED', result: 'NO_OFFICIAL_SITE_CONFIRMED', confidence: '1', observedAt: verifiedAt, fingerprint: `website-${lead.id}` },
+    ...(lead.id === emailLead.id ? [{ leadId: lead.id, source: 'integration', reference: `https://source.example.test/${lead.id}/email`, evidenceType: 'BUSINESS_EMAIL', verificationStatus: 'VERIFIED', result: 'EMAIL_BUSINESS_ASSOCIATION_PASS', confidence: '1', observedAt: verifiedAt, fingerprint: `email-${lead.id}` }] : []),
+  ]));
   await db.insert(leadContacts).values([
     { leadId: incompatiblePhone.id, type: 'TELEFONE', originalValue: '+551100000001', normalizedValue: '+551100000001', source: 'test', confidence: '1', verifiedAt, isValid: true, possibleWhatsapp: false },
     { leadId: compatiblePhone.id, type: 'TELEFONE', originalValue: '+551100000002', normalizedValue: '+551100000002', source: 'test', confidence: '1', verifiedAt, isValid: true, possibleWhatsapp: true },
@@ -80,7 +86,7 @@ try {
 
   const legacyLead = (await db.insert(leads).values({
     osmType: 'node', osmId: `campaign-legacy-${suffix}`, category: 'oficinas', score: 90,
-    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO',
   }).returning())[0]!;
   const legacyRecipientPayload = {
     campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: legacyLead.id,
@@ -114,7 +120,7 @@ try {
 
   const nullLead = (await db.insert(leads).values({
     osmType: 'node', osmId: `campaign-null-${suffix}`, category: 'oficinas', score: 90,
-    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO',
   }).returning())[0]!;
   const nullRecipientInput = {
     campaignId: createdCampaign.data.id, campaignVersionId: version.id, leadId: nullLead.id,
@@ -195,7 +201,7 @@ try {
 
   const concurrentLead = (await db.insert(leads).values({
     osmType: 'node', osmId: `campaign-concurrent-${suffix}`, category: 'oficinas', score: 90,
-    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'NOVO',
+    status: 'SEM_SITE_CADASTRADO', qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'NOVO',
   }).returning())[0]!;
   const concurrentRecipient = (await createRecipientWithOutbox(db, {
     ...recipientInput, leadId: concurrentLead.id, idempotencyKey: `recipient-concurrent-${suffix}`,

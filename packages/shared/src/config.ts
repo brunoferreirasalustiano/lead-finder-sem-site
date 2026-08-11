@@ -100,6 +100,11 @@ const commonSchema = z.object({
     z.enum(['true', 'false']).default('false'),
   ).transform((value) => value === 'true'),
   OVERPASS_API_URL: optionalEnvironmentString(z.string().trim().url()),
+  ENRICHMENT_EGRESS_ENABLED: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false'),
+  ).transform((value) => value === 'true'),
+  ENRICHMENT_API_URL: optionalEnvironmentString(z.string().trim().url()),
 });
 
 const requireCollectionEndpoint = (
@@ -111,6 +116,36 @@ const requireCollectionEndpoint = (
       code: 'custom',
       path: ['OVERPASS_API_URL'],
       message: 'OVERPASS_API_URL is required when COLLECTION_EGRESS_ENABLED=true',
+    });
+  }
+};
+
+const requireEnrichmentEndpoint = (
+  configuration: { ENRICHMENT_EGRESS_ENABLED: boolean; ENRICHMENT_API_URL?: string | undefined; DEPLOYMENT_ENVIRONMENT: 'development' | 'homologation' | 'production' },
+  context: z.RefinementCtx,
+) => {
+  if (configuration.ENRICHMENT_EGRESS_ENABLED && !configuration.ENRICHMENT_API_URL) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ENRICHMENT_API_URL'],
+      message: 'ENRICHMENT_API_URL is required when ENRICHMENT_EGRESS_ENABLED=true',
+    });
+  }
+  if (configuration.ENRICHMENT_EGRESS_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT === 'production') {
+    context.addIssue({
+      code: 'custom',
+      path: ['ENRICHMENT_EGRESS_ENABLED'],
+      message: 'ENRICHMENT_EGRESS_ENABLED is not permitted in production without a reviewed production provider profile',
+    });
+  }
+  if (configuration.ENRICHMENT_EGRESS_ENABLED
+    && configuration.DEPLOYMENT_ENVIRONMENT !== 'development'
+    && configuration.ENRICHMENT_API_URL
+    && !configuration.ENRICHMENT_API_URL.startsWith('https://')) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ENRICHMENT_API_URL'],
+      message: 'ENRICHMENT_API_URL must use HTTPS outside development',
     });
   }
 };
@@ -221,6 +256,7 @@ const apiSchema = commonSchema.extend({
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  requireEnrichmentEndpoint(configuration, context);
   if (configuration.HML_SUPPRESSION_PROBE_ENABLED
     && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({
@@ -520,6 +556,9 @@ const workerSchema = commonSchema.extend({
   OUTBOX_LEASE_MS: integerFromEnvironment('OUTBOX_LEASE_MS', 1_000, 3_600_000, 30_000),
   OVERPASS_TIMEOUT_MS: integerFromEnvironment('OVERPASS_TIMEOUT_MS', 1_000, 120_000, 30_000),
   OVERPASS_MAX_RETRIES: integerFromEnvironment('OVERPASS_MAX_RETRIES', 0, 10, 3),
+  ENRICHMENT_TIMEOUT_MS: integerFromEnvironment('ENRICHMENT_TIMEOUT_MS', 1_000, 120_000, 30_000),
+  ENRICHMENT_MAX_RETRIES: integerFromEnvironment('ENRICHMENT_MAX_RETRIES', 0, 5, 2),
+  ENRICHMENT_MIN_INTERVAL_MS: integerFromEnvironment('ENRICHMENT_MIN_INTERVAL_MS', 0, 60_000, 250),
   WORKER_POLL_INTERVAL_MS: integerFromEnvironment(
     'WORKER_POLL_INTERVAL_MS',
     1_000,
@@ -554,6 +593,7 @@ const workerSchema = commonSchema.extend({
   ),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  requireEnrichmentEndpoint(configuration, context);
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
     context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render must use the bounded API batch endpoint, not the continuous worker' });
   }

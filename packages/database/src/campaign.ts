@@ -296,7 +296,17 @@ export async function reserveSimulatedRecipient(db: Database, input: Parameters<
 export const listEligibleCampaignLeads = (db: Database, channel: CampaignChannel, limit: number, offset: number) => db
   .selectDistinctOn([leads.id], { lead: leads, contact: leadContacts }).from(leads)
   .innerJoin(leadContacts, and(eq(leadContacts.leadId, leads.id), eq(leadContacts.isValid, true), sql`${leadContacts.verifiedAt} is not null`, channel === 'EMAIL' ? eq(leadContacts.type, 'EMAIL') : or(eq(leadContacts.type, 'WHATSAPP'), and(eq(leadContacts.type, 'TELEFONE'), eq(leadContacts.possibleWhatsapp, true)))))
-  .where(and(eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'), eq(leads.isBlocked, false), eq(leads.doNotContact, false), sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`, sql`not exists (select 1 from campaign_opt_outs o where o.lead_id = ${leads.id} and (o.channel is null or o.channel = ${channel}))`))
+  .where(and(
+    eq(leads.qualificationStatus, 'SEM_SITE_CONFIRMADO'),
+    eq(leads.websiteStatus, 'NO_OFFICIAL_SITE_CONFIRMED'),
+    sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_IDENTITY' and e.verification_status = 'VERIFIED' and e.result = 'BUSINESS_IDENTITY_CONFIRMED')`,
+    sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_ACTIVITY' and e.verification_status = 'VERIFIED' and e.result = 'ACTIVE')`,
+    sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'WEBSITE' and e.verification_status = 'VERIFIED' and e.result = 'NO_OFFICIAL_SITE_CONFIRMED')`,
+    channel === 'EMAIL' ? sql`exists (select 1 from lead_evidence e where e.lead_id = ${leads.id} and e.evidence_type = 'BUSINESS_EMAIL' and e.verification_status = 'VERIFIED' and e.result = 'EMAIL_BUSINESS_ASSOCIATION_PASS')` : undefined,
+    eq(leads.isBlocked, false), eq(leads.doNotContact, false),
+    sql`${leads.crmStage} is distinct from 'NAO_CONTATAR'::crm_stage`,
+    sql`not exists (select 1 from campaign_opt_outs o where o.lead_id = ${leads.id} and (o.channel is null or o.channel = ${channel}))`,
+  ))
   .orderBy(asc(leads.id), desc(leadContacts.verifiedAt), asc(leadContacts.id)).limit(Math.min(100, Math.max(1, limit))).offset(Math.max(0, offset));
 export const listCampaignRecipients = (db: Database, campaignId: string, limit: number, offset: number) => db.select().from(campaignRecipients).where(eq(campaignRecipients.campaignId, campaignId)).orderBy(desc(campaignRecipients.createdAt), desc(campaignRecipients.id)).limit(limit).offset(offset);
 export const listRecipientAttempts = (db: Database, recipientId: string, limit: number, offset: number) => db.select().from(campaignAttempts).where(eq(campaignAttempts.recipientId, recipientId)).orderBy(desc(campaignAttempts.createdAt), desc(campaignAttempts.id)).limit(limit).offset(offset);

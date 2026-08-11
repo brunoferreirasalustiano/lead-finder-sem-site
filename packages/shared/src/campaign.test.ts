@@ -15,7 +15,7 @@ const verifyMatrix = <T extends string>(states: readonly T[], graph: Readonly<Re
   }
 };
 const eligible: CampaignEligibilityCandidate = {
-  qualificationStatus: 'SEM_SITE_CONFIRMADO', crmStage: 'QUALIFICADO', isBlocked: false, doNotContact: false,
+  qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED', crmStage: 'QUALIFICADO', isBlocked: false, doNotContact: false,
   contact: { channel: 'EMAIL', isValid: true, verifiedAt: '2026-07-12T12:00:00Z' }, optOuts: [],
   isFirstContact: true, firstContactApproval: { approvedBy: 'reviewer', approvedAt: '2026-07-12T12:01:00Z' },
 };
@@ -35,6 +35,7 @@ describe('campaign eligibility', () => {
   it('accepts a compatible qualified CRM candidate', () => expect(evaluateCampaignEligibility(eligible)).toEqual({ eligible: true }));
   it.each([
     ['qualification', { qualificationStatus: 'PENDENTE' as const }, 'QUALIFICATION_REQUIRED'],
+    ['unknown website', { websiteStatus: 'UNKNOWN' as const }, 'QUALIFICATION_REQUIRED'],
     ['discarded', { qualificationStatus: 'DESCARTADO' as const }, 'LEAD_DISCARDED'],
     ['unverified', { contact: { ...eligible.contact, verifiedAt: null } }, 'CONTACT_NOT_VERIFIED'],
     ['invalid contact', { contact: { ...eligible.contact, isValid: false } }, 'CONTACT_NOT_VERIFIED'],

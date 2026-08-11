@@ -66,7 +66,7 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
   } as const;
   const createLead=async(label:keyof typeof fixturePhoneByLabel)=>{
     const phone=fixturePhoneByLabel[label];
-    const lead=(await db.insert(leads).values({osmType:'node',osmId:`pilot-${label}-${suffix}`,name:`Empresa Ficticia ${label}`,category:'Categoria Ficticia',city:'Regiao Ficticia',state:'XX',score:1,status:'SEM_SITE_CADASTRADO',qualificationStatus:'SEM_SITE_CONFIRMADO'}).returning())[0]!;
+    const lead=(await db.insert(leads).values({osmType:'node',osmId:`pilot-${label}-${suffix}`,name:`Empresa Ficticia ${label}`,category:'Categoria Ficticia',city:'Regiao Ficticia',state:'XX',score:1,status:'SEM_SITE_CADASTRADO',qualificationStatus:'SEM_SITE_CONFIRMADO',websiteStatus:'NO_OFFICIAL_SITE_CONFIRMED'}).returning())[0]!;
     const contacts=await db.insert(leadContacts).values([
       {leadId:lead.id,type:'EMAIL',originalValue:`${label}@example.invalid`,normalizedValue:`${label}@example.invalid`,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
       {leadId:lead.id,type:'TELEFONE',originalValue:phone,normalizedValue:phone,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},

@@ -11,6 +11,7 @@ describe('safe lead SQL projection', () => {
       'city',
       'state',
       'website',
+      'websiteStatus',
       'score',
       'status',
       'qualificationStatus',

@@ -2,18 +2,28 @@ import { createDatabase } from '@lead-finder/database';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
 import { createCollectionProcessor } from './collection-egress.js';
+import { HttpBusinessEnrichmentProvider } from '@lead-finder/enrichment';
+import { processNextJob } from './process-job.js';
 import { hostname } from 'node:os';
 import { createGracefulStop } from './graceful-stop.js';
 import { createConsoleOperationalLogger } from './operational-observability.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const operationalLogger = createConsoleOperationalLogger();
+const enrichmentProvider = config.ENRICHMENT_EGRESS_ENABLED
+  ? new HttpBusinessEnrichmentProvider({
+      endpoint: config.ENRICHMENT_API_URL!,
+      timeoutMs: config.ENRICHMENT_TIMEOUT_MS,
+      maxRetries: config.ENRICHMENT_MAX_RETRIES,
+      minIntervalMs: config.ENRICHMENT_MIN_INTERVAL_MS,
+    })
+  : undefined;
 const processCollection = createCollectionProcessor(db, {
   enabled: config.COLLECTION_EGRESS_ENABLED && !config.PILOT_KILL_SWITCH_ENABLED,
   endpoint: config.OVERPASS_API_URL,
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
-}, operationalLogger);
+}, operationalLogger, undefined, (database, client) => processNextJob(database, client, enrichmentProvider));
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
   dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,

@@ -39,8 +39,8 @@ const insertExecutableAttempt = async (channel: 'EMAIL' | 'WHATSAPP', now: Date)
   const contactValue = channel === 'EMAIL' ? `fixture-${suffix}@example.test` : suffix;
   const rows = await db.execute<{ outbox_id: string }>(sql`
     WITH inserted_lead AS (
-      INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, crm_stage)
-      VALUES ('node', ${suffix}, 'integration', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'QUALIFICADO')
+      INSERT INTO leads (osm_type, osm_id, category, score, status, qualification_status, website_status, crm_stage)
+      VALUES ('node', ${suffix}, 'integration', 1, 'SEM_SITE_CADASTRADO', 'SEM_SITE_CONFIRMADO', 'NO_OFFICIAL_SITE_CONFIRMED', 'QUALIFICADO')
       RETURNING id
     ), inserted_contact AS (
       INSERT INTO lead_contacts (lead_id, type, original_value, normalized_value, source, confidence, verified_at, is_valid, possible_whatsapp)

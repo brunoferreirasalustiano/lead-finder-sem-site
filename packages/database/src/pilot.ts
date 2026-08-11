@@ -49,13 +49,13 @@ const hasPostgresCode = (error: unknown, expectedCode: string): boolean => {
 
 async function eligibility(tx: Tx, leadId: string, contactId?: string, expected?: {region:string;category:string}) {
   await lock(tx, `pilot:lead:${leadId}`);
-  const rows = await tx.execute(sql<{id:string; qualification_status:string; is_blocked:boolean; do_not_contact:boolean; crm_stage:string|null; city:string|null;category:string;has_contact:boolean; has_opt_out:boolean}[]>`
-    select l.id,l.qualification_status,l.is_blocked,l.do_not_contact,l.crm_stage,l.city,l.category,
+  const rows = await tx.execute(sql<{id:string; qualification_status:string; website_status:string; is_blocked:boolean; do_not_contact:boolean; crm_stage:string|null; city:string|null;category:string;has_contact:boolean; has_opt_out:boolean}[]>`
+    select l.id,l.qualification_status,l.website_status,l.is_blocked,l.do_not_contact,l.crm_stage,l.city,l.category,
       exists(select 1 from lead_contacts c where c.lead_id=l.id and c.is_valid=true and c.verified_at is not null and btrim(c.source)<>'empty' ${contactId ? sql`and c.id=${contactId}::uuid` : sql``}) has_contact,
       exists(select 1 from campaign_opt_outs o where o.lead_id=l.id) has_opt_out from leads l where l.id=${leadId}::uuid for update`);
-  const l = rows[0] as {id:string; qualification_status:string; is_blocked:boolean; do_not_contact:boolean; crm_stage:string|null;city:string|null;category:string;has_contact:boolean;has_opt_out:boolean}|undefined;
+  const l = rows[0] as {id:string; qualification_status:string; website_status:string; is_blocked:boolean; do_not_contact:boolean; crm_stage:string|null;city:string|null;category:string;has_contact:boolean;has_opt_out:boolean}|undefined;
   if (!l) throw new PilotPersistenceError('Lead not found','NOT_FOUND');
-  if (l.qualification_status!=='SEM_SITE_CONFIRMADO'||l.is_blocked||l.do_not_contact||l.crm_stage==='NAO_CONTATAR'||l.has_opt_out||!l.has_contact)
+  if (l.qualification_status!=='SEM_SITE_CONFIRMADO'||l.website_status!=='NO_OFFICIAL_SITE_CONFIRMED'||l.is_blocked||l.do_not_contact||l.crm_stage==='NAO_CONTATAR'||l.has_opt_out||!l.has_contact)
     throw new PilotPersistenceError('Lead is not eligible for pilot operations','INELIGIBLE_LEAD');
   if(expected && ((l.city && l.city.localeCompare(expected.region,undefined,{sensitivity:'accent'})!==0)||l.category.localeCompare(expected.category,undefined,{sensitivity:'accent'})!==0))
     throw new PilotPersistenceError('Lead is outside pilot region or category','INELIGIBLE_LEAD');
@@ -84,8 +84,8 @@ export async function getPilotRun(db: Database,id:string) {
 export interface PilotRuntimeSafety { shadowModeEnabled:boolean; realProviderConfigured:boolean; collectionEgressEnabled:boolean }
 const safeRuntime: PilotRuntimeSafety={shadowModeEnabled:false,realProviderConfigured:false,collectionEgressEnabled:false};
 async function assertReady(tx:Tx,run:typeof pilotRuns.$inferSelect,safety:PilotRuntimeSafety) {
-  const associated=await tx.execute(sql<{qualification_status:string;is_blocked:boolean;do_not_contact:boolean;crm_stage:string|null;has_contact:boolean;has_opt_out:boolean;decision:string|null}[]>`
-   select l.qualification_status,l.is_blocked,l.do_not_contact,l.crm_stage,
+  const associated=await tx.execute(sql<{qualification_status:string;website_status:string;is_blocked:boolean;do_not_contact:boolean;crm_stage:string|null;has_contact:boolean;has_opt_out:boolean;decision:string|null}[]>`
+   select l.qualification_status,l.website_status,l.is_blocked,l.do_not_contact,l.crm_stage,
    exists(select 1 from lead_contacts c where c.lead_id=l.id and c.is_valid and c.verified_at is not null and btrim(c.source)<>'') has_contact,
    exists(select 1 from campaign_opt_outs o where o.lead_id=l.id) has_opt_out,
    (select r.decision from pilot_reviews r where r.pilot_run_id=pl.pilot_run_id and r.lead_id=pl.lead_id order by r.version desc limit 1) decision
@@ -93,9 +93,9 @@ async function assertReady(tx:Tx,run:typeof pilotRuns.$inferSelect,safety:PilotR
   // Pilot runs currently have no command that can attach a campaign. A non-null legacy/forged
   // association is therefore not proof of simulation and must fail closed.
   const campaignSimulated=run.campaignId===null;
-  const readinessRows=associated as unknown as Array<{qualification_status:string;is_blocked:boolean;do_not_contact:boolean;crm_stage:string|null;has_contact:boolean;has_opt_out:boolean;decision:string|null}>;
+  const readinessRows=associated as unknown as Array<{qualification_status:string;website_status:string;is_blocked:boolean;do_not_contact:boolean;crm_stage:string|null;has_contact:boolean;has_opt_out:boolean;decision:string|null}>;
   const check=evaluatePilotReadiness({name:run.name,region:run.region,category:run.category,targetLeadCount:run.targetLeadCount,
-    leads:readinessRows.map(l=>({reviewDecision:l.decision as 'APPROVED'|'REJECTED'|'NEEDS_REVIEW'|null,qualificationStatus:l.qualification_status,hasValidVerifiedContact:l.has_contact,isBlocked:l.is_blocked,doNotContact:l.do_not_contact,hasActiveOptOut:l.has_opt_out,crmStage:l.crm_stage??'NOVO',versionConsistent:true})),
+    leads:readinessRows.map(l=>({reviewDecision:l.decision as 'APPROVED'|'REJECTED'|'NEEDS_REVIEW'|null,qualificationStatus:l.qualification_status,websiteStatus:l.website_status as 'UNKNOWN'|'OFFICIAL_SITE_FOUND'|'NO_OFFICIAL_SITE_CONFIRMED',hasValidVerifiedContact:l.has_contact,isBlocked:l.is_blocked,doNotContact:l.do_not_contact,hasActiveOptOut:l.has_opt_out,crmStage:l.crm_stage??'NOVO',versionConsistent:true})),
     shadowModeEnabled:safety.shadowModeEnabled,campaignSimulated,realProviderConfigured:safety.realProviderConfigured,collectionEgressEnabled:safety.collectionEgressEnabled,versionConsistent:true});
   if(!check.ready) throw new PilotPersistenceError(`Pilot readiness failed: ${check.reasons.join(',')}`,'INVALID_STATE');
 }

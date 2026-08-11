@@ -102,7 +102,9 @@ export const pilotReadinessFailureReasons = [
 ] as const;
 export type PilotReadinessFailureReason = (typeof pilotReadinessFailureReasons)[number];
 export interface PilotReadinessLead {
-  reviewDecision: PilotReviewDecision | null; qualificationStatus: string; hasValidVerifiedContact: boolean;
+  reviewDecision: PilotReviewDecision | null; qualificationStatus: string;
+  websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
+  hasValidVerifiedContact: boolean;
   isBlocked: boolean; doNotContact: boolean; hasActiveOptOut: boolean; crmStage: string; versionConsistent: boolean;
 }
 export interface PilotReadinessInput {
@@ -118,7 +120,7 @@ export function evaluatePilotReadiness(input: PilotReadinessInput): PilotReadine
   if (input.leads.length > input.targetLeadCount) reasons.add('TARGET_EXCEEDED');
   for (const lead of input.leads) {
     if (lead.reviewDecision !== 'APPROVED') reasons.add('REVIEW_NOT_APPROVED');
-    if (lead.qualificationStatus !== 'SEM_SITE_CONFIRMADO') reasons.add('QUALIFICATION_REQUIRED');
+    if (lead.qualificationStatus !== 'SEM_SITE_CONFIRMADO' || lead.websiteStatus !== 'NO_OFFICIAL_SITE_CONFIRMED') reasons.add('QUALIFICATION_REQUIRED');
     if (!lead.hasValidVerifiedContact) reasons.add('INVALID_CONTACT');
     if (lead.isBlocked) reasons.add('LEAD_BLOCKED');
     if (lead.doNotContact) reasons.add('DO_NOT_CONTACT');

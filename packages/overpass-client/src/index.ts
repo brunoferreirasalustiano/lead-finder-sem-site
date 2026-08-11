@@ -50,6 +50,7 @@ export function normalizeElement(element: OsmElement, category: Category): Norma
     whatsapp: get(t, 'contact:whatsapp', 'whatsapp'),
     email: get(t, 'contact:email', 'email'),
     website: get(t, 'website', 'contact:website', 'url'),
+    websiteStatus: 'UNKNOWN',
     instagram: get(t, 'contact:instagram', 'instagram'),
     facebook: get(t, 'contact:facebook', 'facebook'),
     address: addressOf(t),
@@ -76,6 +77,7 @@ export class OverpassError extends Error {
   constructor(
     message: string,
     public readonly status?: number,
+    public readonly code: 'SOURCE_TEMPORARILY_UNAVAILABLE' | 'INVALID_SOURCE_RESPONSE' = 'SOURCE_TEMPORARILY_UNAVAILABLE',
   ) {
     super(message);
   }
@@ -111,6 +113,9 @@ export class OverpassClient {
           const error = new OverpassError(
             `Overpass responded with ${response.status}`,
             response.status,
+            [429, 502, 504].includes(response.status)
+              ? 'SOURCE_TEMPORARILY_UNAVAILABLE'
+              : 'INVALID_SOURCE_RESPONSE',
           );
           if (![429, 502, 504].includes(response.status)) throw error;
           lastError = error;
@@ -137,6 +142,8 @@ export class OverpassClient {
     }
     throw new OverpassError(
       `Overpass request failed after retries: ${lastError instanceof Error ? lastError.message : 'unknown error'}`,
+      lastError instanceof OverpassError ? lastError.status : undefined,
+      'SOURCE_TEMPORARILY_UNAVAILABLE',
     );
   }
 }

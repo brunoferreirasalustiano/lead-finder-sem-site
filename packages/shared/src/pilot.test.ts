@@ -9,7 +9,7 @@ const id = '123e4567-e89b-42d3-a456-426614174000';
 const key = 'pilot-key-0001';
 const eligibleLead = {
   reviewDecision: 'APPROVED' as const, qualificationStatus: 'SEM_SITE_CONFIRMADO', websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED' as const, hasValidVerifiedContact: true,
-  isBlocked: false, doNotContact: false, hasActiveOptOut: false, crmStage: 'QUALIFICADO', versionConsistent: true,
+  hasRequiredEvidence: true, isBlocked: false, doNotContact: false, hasActiveOptOut: false, crmStage: 'QUALIFICADO', versionConsistent: true,
 };
 const readyInput = {
   name: 'Piloto sintetico', region: 'SP', category: 'oficinas', targetLeadCount: 20, leads: [eligibleLead],
@@ -72,13 +72,13 @@ describe('pilot readiness', () => {
   it('reports all relevant failures without trusting a READY snapshot', () => {
     const result = evaluatePilotReadiness({
       ...readyInput, leads: [{ ...eligibleLead, reviewDecision: null, qualificationStatus: 'PENDENTE', hasValidVerifiedContact: false,
-        isBlocked: true, doNotContact: true, hasActiveOptOut: true, crmStage: 'NAO_CONTATAR', versionConsistent: false }],
+        hasRequiredEvidence: false, isBlocked: true, doNotContact: true, hasActiveOptOut: true, crmStage: 'NAO_CONTATAR', versionConsistent: false }],
       shadowModeEnabled: false, campaignSimulated: false, realProviderConfigured: true, collectionEgressEnabled: true,
       versionConsistent: false,
     });
     expect(result.ready).toBe(false);
     expect(result.reasons).toEqual(expect.arrayContaining([
-      'REVIEW_NOT_APPROVED', 'QUALIFICATION_REQUIRED', 'INVALID_CONTACT', 'LEAD_BLOCKED', 'DO_NOT_CONTACT',
+      'REVIEW_NOT_APPROVED', 'QUALIFICATION_REQUIRED', 'EVIDENCE_REQUIRED', 'INVALID_CONTACT', 'LEAD_BLOCKED', 'DO_NOT_CONTACT',
       'ACTIVE_OPT_OUT', 'CRM_DO_NOT_CONTACT', 'SHADOW_MODE_DISABLED', 'CAMPAIGN_NOT_SIMULATED',
       'REAL_PROVIDER_CONFIGURED', 'COLLECTION_EGRESS_ENABLED', 'VERSION_INCONSISTENCY',
     ]));

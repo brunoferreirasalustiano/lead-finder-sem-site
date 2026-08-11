@@ -3,6 +3,7 @@ import { assertApiKillSwitchReleased, hmlOperatorAuthPermissions, hmlSmokeAuthPe
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
+import { registerHmlSuppressionProbeRoute } from './hml-suppression-probe-route.js';
 import { parseHmlMetricsAuthentication } from './hml-metrics-auth.js';
 import { parseHmlEmailAuthentication } from './hml-email-auth.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
@@ -68,7 +69,8 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
   realProviderConfigured: config.REAL_PROVIDER_CONFIGURED,
   manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
-  manualEmailKillSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
+   manualEmailKillSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
+   hmlSuppressionProbeEnabled: config.HML_SUPPRESSION_PROBE_ENABLED,
   ...(config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY ? { manualEmailSender: config.MANUAL_EMAIL_SENDER, manualEmailFingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY } : {}),
   whatsappCloudRuntime: {
     enabled: config.WHATSAPP_CLOUD_API_ENABLED,
@@ -182,6 +184,12 @@ registerOperatorEmailTestRoute(
     ? (message) => operatorEmailConsumer.sendInternalTest(message)
     : () => Promise.reject(new Error('OPERATOR_EMAIL_TEST_DISABLED')),
 );
+if (config.HML_SUPPRESSION_PROBE_ENABLED) {
+  registerHmlSuppressionProbeRoute(app, db, {
+    enabled: config.HML_SUPPRESSION_PROBE_ENABLED,
+    deploymentEnvironment: config.DEPLOYMENT_ENVIRONMENT,
+  });
+}
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (exitCode = 0) => {
   process.exitCode = exitCode;

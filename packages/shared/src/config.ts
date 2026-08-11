@@ -30,6 +30,7 @@ export const apiAuthPermissions = [
   'operator-test:confirm',
   'operator-test:response',
   'operator-email-test:send',
+  'hml-suppression-probe:run',
 ] as const;
 export type ApiAuthPermission = (typeof apiAuthPermissions)[number];
 
@@ -151,6 +152,7 @@ const apiSchema = commonSchema.extend({
   ),
   OPERATOR_EMAIL_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  HML_SUPPRESSION_PROBE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_EMAIL_TEST_RECIPIENT: optionalEnvironmentString(
     z.string().trim().toLowerCase().email().max(320),
   ),
@@ -219,6 +221,14 @@ const apiSchema = commonSchema.extend({
   OPERATIONAL_OLDEST_PENDING_DEGRADED_MS: integerFromEnvironment('OPERATIONAL_OLDEST_PENDING_DEGRADED_MS', 1_000, 604_800_000, 300_000),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
+  if (configuration.HML_SUPPRESSION_PROBE_ENABLED
+    && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+    context.addIssue({
+      code: 'custom',
+      path: ['HML_SUPPRESSION_PROBE_ENABLED'],
+      message: 'HML suppression probe is permitted only when DEPLOYMENT_ENVIRONMENT=homologation',
+    });
+  }
   const smokeFieldsConfigured = configuration.HML_SMOKE_AUTH_TOKEN_HASH !== undefined
     || configuration.HML_SMOKE_AUTH_EXPIRES_AT !== undefined
     || configuration.HML_SMOKE_AUTH_PRINCIPAL_ID !== undefined;

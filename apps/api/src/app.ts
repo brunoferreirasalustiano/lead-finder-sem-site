@@ -220,6 +220,7 @@ export function buildApp(db: Database, options: {
   manualEmailKillSwitchEnabled?: boolean;
   manualEmailSender?: string;
   manualEmailFingerprintKey?: string;
+  hmlSuppressionProbeEnabled?: boolean;
   deliverManualEmail?: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
   deliverWhatsAppCloud?: WhatsAppCloudDeliver;
@@ -317,7 +318,10 @@ export function buildApp(db: Database, options: {
         backlogCount: options.operationalBacklogDegradedCount ?? 100,
         oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
       }), timeout()]);
-      await Promise.race([checkExpectedMigration(db), timeout()]);
+       await Promise.race([checkExpectedMigration(db), timeout()]);
+       if (options.hmlSuppressionProbeEnabled) {
+         await Promise.race([checkExpectedMigration(db, '0050_hml_suppression_probe'), timeout()]);
+       }
       if (readiness.status === 'unhealthy') return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
       return { status: readiness.status, timestamp: new Date().toISOString() };
     } catch {

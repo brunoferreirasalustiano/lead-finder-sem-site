@@ -50,6 +50,7 @@ describe('HML email authentication configuration', () => {
       'manual-messaging:send',
       'manual-messaging:cancel',
       'operator-email-test:send',
+      'hml-suppression-probe:run',
     ]);
     expect(parsed?.principalPermissions).not.toContain('manual-messaging:cloud-send');
     expect(parsed?.principalPermissions).not.toContain('campaigns:write');

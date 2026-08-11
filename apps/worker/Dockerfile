@@ -21,7 +21,8 @@ RUN npm prune --omit=dev \
   && test -f packages/batch-processor/dist/index.js \
   && test -f packages/lead-scoring/dist/index.js \
   && test -f packages/overpass-client/dist/index.js \
-  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
+  && test -f packages/enrichment/dist/index.js \
+  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/enrichment'); await import('@lead-finder/messaging'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor'); await import('@lead-finder/lead-scoring'); await import('@lead-finder/overpass-client')"
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
@@ -46,4 +47,6 @@ COPY --from=build --chown=node:node /app/packages/lead-scoring/package.json ./pa
 COPY --from=build --chown=node:node /app/packages/lead-scoring/dist ./packages/lead-scoring/dist
 COPY --from=build --chown=node:node /app/packages/overpass-client/package.json ./packages/overpass-client/package.json
 COPY --from=build --chown=node:node /app/packages/overpass-client/dist ./packages/overpass-client/dist
+COPY --from=build --chown=node:node /app/packages/enrichment/package.json ./packages/enrichment/package.json
+COPY --from=build --chown=node:node /app/packages/enrichment/dist ./packages/enrichment/dist
 CMD ["node","apps/worker/dist/index.js"]

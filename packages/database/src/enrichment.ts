@@ -3,6 +3,8 @@ import { eq, sql } from 'drizzle-orm';
 import {
   classifyWebsite,
   isPublicSourceLocator,
+  isBusinessEmailAddress,
+  MIN_VERIFIED_EVIDENCE_CONFIDENCE,
   type BusinessEnrichmentResult,
   isReadyForHumanReview,
 } from '@lead-finder/enrichment';
@@ -18,48 +20,48 @@ const evidenceRows = (leadId: string, result: BusinessEnrichmentResult) => [
     source: result.identity.sourceType,
     reference: result.identity.sourceLocator,
     evidenceType: 'BUSINESS_IDENTITY',
-    verificationStatus: result.identity.confirmed ? 'VERIFIED' as const : 'UNVERIFIED' as const,
+    verificationStatus: result.identity.confirmed && result.identity.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE ? 'VERIFIED' as const : 'UNVERIFIED' as const,
     result: result.identity.confirmed ? 'BUSINESS_IDENTITY_CONFIRMED' : 'BUSINESS_IDENTITY_UNCONFIRMED',
     confidence: String(result.identity.confidence),
     observedAt: result.identity.observedAt,
-    fingerprint: fingerprint(['BUSINESS_IDENTITY', result.identity.sourceLocator, result.identity.observedAt.toISOString(), result.identity.confirmed]),
+    fingerprint: fingerprint(['BUSINESS_IDENTITY', result.identity.sourceLocator, result.identity.confirmed]),
   },
   {
     leadId,
     source: result.activity.sourceType,
     reference: result.activity.sourceLocator,
     evidenceType: 'BUSINESS_ACTIVITY',
-    verificationStatus: result.activity.status === 'ACTIVE' ? 'VERIFIED' as const : 'UNVERIFIED' as const,
+    verificationStatus: result.activity.status === 'ACTIVE' && result.activity.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE ? 'VERIFIED' as const : 'UNVERIFIED' as const,
     result: result.activity.status,
     confidence: String(result.activity.confidence),
     observedAt: result.activity.observedAt,
-    fingerprint: fingerprint(['BUSINESS_ACTIVITY', result.activity.sourceLocator, result.activity.observedAt.toISOString(), result.activity.status]),
+    fingerprint: fingerprint(['BUSINESS_ACTIVITY', result.activity.sourceLocator, result.activity.status]),
   },
   {
     leadId,
     source: result.website.sourceType,
     reference: result.website.sourceLocator,
     evidenceType: 'WEBSITE',
-    verificationStatus: result.website.officialSiteFound || result.website.confidence < 0.85 ? 'UNVERIFIED' as const : 'VERIFIED' as const,
+    verificationStatus: result.website.officialSiteFound || result.website.confidence < MIN_VERIFIED_EVIDENCE_CONFIDENCE ? 'UNVERIFIED' as const : 'VERIFIED' as const,
     result: result.website.officialSiteFound
       ? 'OFFICIAL_SITE_FOUND'
       : classifyWebsite(result) === 'NO_OFFICIAL_SITE_CONFIRMED' ? 'NO_OFFICIAL_SITE_CONFIRMED' : 'UNKNOWN',
     confidence: String(result.website.confidence),
     observedAt: result.website.observedAt,
-    fingerprint: fingerprint(['WEBSITE', result.website.sourceLocator, result.website.observedAt.toISOString(), result.website.officialSiteFound, result.website.confidence]),
+    fingerprint: fingerprint(['WEBSITE', result.website.sourceLocator, result.website.officialSiteFound, result.website.confidence]),
   },
   ...result.emails.map((email) => ({
     leadId,
     source: email.sourceType,
     reference: email.sourceLocator,
     evidenceType: 'BUSINESS_EMAIL',
-      verificationStatus: email.businessAssociation === 'PASS' && !email.inferred && isPublicSourceLocator(email.sourceLocator) ? 'VERIFIED' as const : 'UNVERIFIED' as const,
-    result: email.businessAssociation === 'PASS' && !email.inferred && isPublicSourceLocator(email.sourceLocator)
+      verificationStatus: email.businessAssociation === 'PASS' && !email.inferred && isBusinessEmailAddress(email.value) && email.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE && isPublicSourceLocator(email.sourceLocator) ? 'VERIFIED' as const : 'UNVERIFIED' as const,
+    result: email.businessAssociation === 'PASS' && !email.inferred && isBusinessEmailAddress(email.value) && email.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE && isPublicSourceLocator(email.sourceLocator)
       ? 'EMAIL_BUSINESS_ASSOCIATION_PASS'
       : 'EMAIL_BUSINESS_ASSOCIATION_UNVERIFIED',
     confidence: String(email.confidence),
     observedAt: email.observedAt,
-    fingerprint: fingerprint(['BUSINESS_EMAIL', email.value.trim().toLowerCase(), email.sourceLocator, email.observedAt.toISOString(), email.businessAssociation, email.inferred]),
+    fingerprint: fingerprint(['BUSINESS_EMAIL', email.value.trim().toLowerCase(), email.sourceLocator, email.businessAssociation, email.inferred]),
   })),
 ];
 
@@ -89,7 +91,7 @@ export async function recordLeadEnrichment(
     for (const email of result.emails) {
       const normalized = normalizeEmail(email.value);
       if (!normalized) continue;
-      const verified = email.businessAssociation === 'PASS' && !email.inferred && isPublicSourceLocator(email.sourceLocator);
+      const verified = email.businessAssociation === 'PASS' && !email.inferred && isBusinessEmailAddress(email.value) && email.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE && isPublicSourceLocator(email.sourceLocator);
       await tx.insert(leadContacts).values({
         leadId,
         type: 'EMAIL',

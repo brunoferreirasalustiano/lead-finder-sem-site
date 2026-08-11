@@ -34,6 +34,7 @@ describe('environment configuration', () => {
       API_BATCH_PROCESSING_ENABLED: false,
       COLLECTION_EGRESS_ENABLED: false,
       PROSPECTING_METRICS_ENABLED: false,
+      HML_SUPPRESSION_PROBE_ENABLED: false,
       PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
     });
@@ -65,6 +66,12 @@ describe('environment configuration', () => {
     expect(parseApiConfig(database).PROSPECTING_METRICS_ENABLED).toBe(false);
     expect(parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'true' }).PROSPECTING_METRICS_ENABLED).toBe(true);
     expect(() => parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'yes' })).toThrow('PROSPECTING_METRICS_ENABLED');
+  });
+
+  it('allows the suppression harness only in HML', () => {
+    expect(parseApiConfig({ ...database, DEPLOYMENT_ENVIRONMENT: 'homologation', HML_SUPPRESSION_PROBE_ENABLED: 'true' }).HML_SUPPRESSION_PROBE_ENABLED).toBe(true);
+    expect(() => parseApiConfig({ ...database, DEPLOYMENT_ENVIRONMENT: 'production', HML_SUPPRESSION_PROBE_ENABLED: 'true' })).toThrow('HML_SUPPRESSION_PROBE_ENABLED');
+    expect(() => parseApiConfig({ ...database, HML_SUPPRESSION_PROBE_ENABLED: 'yes' })).toThrow('HML_SUPPRESSION_PROBE_ENABLED');
   });
 
   it.each([

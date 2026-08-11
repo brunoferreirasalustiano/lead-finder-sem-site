@@ -34,6 +34,7 @@ export {
 } from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';
+export * from './hml-suppression-probe.js';
 export * from './deployment-processing.js';
 export * from './prospecting-metrics.js';
 

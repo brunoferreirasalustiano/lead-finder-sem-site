@@ -24,7 +24,8 @@ GRANT EXECUTE ON FUNCTION
   public.append_manual_email_open_event(uuid, text, character, text),
   public.get_manual_email_send_attempt(uuid, text),
   public.create_manual_email_send_attempt(uuid, text, character, character, character),
-  public.append_manual_email_send_event(uuid, text, text, character, text)
+  public.append_manual_email_send_event(uuid, text, text, character, text),
+  public.run_hml_suppression_probe(text, boolean)
 TO lead_finder_api_runtime;
 
 -- The bounded operator Gmail self-test reserves and replays attempts by reading

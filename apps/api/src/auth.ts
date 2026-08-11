@@ -109,6 +109,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('POST', '/operator-test-preparations/:id/confirm', 'operator-test:confirm'),
   policy('POST', '/operator-test-preparations/:id/response', 'operator-test:response'),
   policy('POST', '/operator-tests/email/send', 'operator-email-test:send'),
+  policy('POST', '/internal/hml/suppression-probe', 'hml-suppression-probe:run'),
   policy('POST', '/collect', 'collection:execute'),
   policy('GET', '/leads/export.csv', 'leads:export'),
 ];

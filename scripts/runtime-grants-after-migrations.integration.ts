@@ -25,6 +25,7 @@ const hmlFunctions = [
   'get_manual_email_send_attempt',
   'create_manual_email_send_attempt',
   'append_manual_email_send_event',
+  'run_hml_suppression_probe',
 ] as const;
 const restrictedTables = [
   'lead_contacts',

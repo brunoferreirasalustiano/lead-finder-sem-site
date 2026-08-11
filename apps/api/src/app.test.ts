@@ -108,12 +108,53 @@ describe('security-safe API output', () => {
       enqueueCollection: enqueue,
     });
     const response = await authenticatedInject(app, {
-      method: 'POST', url: '/collect', payload: { category: 'oficinas', city: 'Test' },
+      method: 'POST',
+      url: '/collect',
+      headers: { 'x-collection-identity': '2026-08-12|09|test-sp|daily6-v1' },
+      payload: { category: 'oficinas', city: 'Test', state: 'SP' },
     });
     expect(response.statusCode).toBe(202);
     expect(enqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       category: 'oficinas', city: 'Test',
-    }), { enabled: true, configurationVersion: 1 });
+    }), { enabled: true, configurationVersion: 1 }, '2026-08-12|09|test-sp|daily6-v1');
+    await app.close();
+  });
+
+  it('requires a versioned collection identity and binds it to the requested city', async () => {
+    const enqueue = vi.fn();
+    const app = buildApp({} as Database, {
+      collectionEgressEnabled: true,
+      authentication: { token: testToken, principalPermissions: permissions },
+      enqueueCollection: enqueue,
+    });
+    const missing = await authenticatedInject(app, { method: 'POST', url: '/collect', payload: { category: 'oficinas', city: 'Campinas', state: 'SP' } });
+    expect(missing.statusCode).toBe(400);
+    const mismatch = await authenticatedInject(app, {
+      method: 'POST',
+      url: '/collect',
+      headers: { 'x-collection-identity': '2026-08-12|09|campinas-sp|daily6-v1' },
+      payload: { category: 'oficinas', city: 'Valinhos', state: 'SP' },
+    });
+    expect(mismatch.statusCode).toBe(400);
+    expect(enqueue).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('returns 200 for an idempotent replay of the same collection identity', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'same-job', status: 'PENDING', replayed: true });
+    const app = buildApp({} as Database, {
+      collectionEgressEnabled: true,
+      authentication: { token: testToken, principalPermissions: permissions },
+      enqueueCollection: enqueue,
+    });
+    const response = await authenticatedInject(app, {
+      method: 'POST',
+      url: '/collect',
+      headers: { 'x-collection-identity': '2026-08-12|09|campinas-sp|daily6-v1' },
+      payload: { category: 'oficinas', city: 'Campinas', state: 'SP' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ id: 'same-job', status: 'PENDING', replayed: true });
     await app.close();
   });
 

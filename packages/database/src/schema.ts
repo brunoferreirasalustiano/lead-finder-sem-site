@@ -1,5 +1,6 @@
 import {
   boolean,
+  char,
   check,
   date,
   foreignKey,
@@ -74,6 +75,7 @@ export type Lead = typeof leads.$inferSelect;
 export type NewLead = typeof leads.$inferInsert;
 export const collectionJobs = pgTable('collection_jobs', {
   id: uuid('id').defaultRandom().primaryKey(),
+  requestIdentity: text('request_identity'),
   payload: jsonb('payload').notNull(),
   status: text('status').notNull().default('PENDING'),
   error: text('error'),
@@ -83,6 +85,50 @@ export const collectionJobs = pgTable('collection_jobs', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const daily6Batches = pgTable('daily6_batches', {
+  batchId: text('batch_id').primaryKey(),
+  batchDate: date('batch_date').notNull(),
+  slot: text('slot').notNull(),
+  cityId: text('city_id').notNull(),
+  policyVersion: text('policy_version').notNull(),
+  maxSendsPerBatch: integer('max_sends_per_batch').notNull().default(2),
+  maxSendsPerDay: integer('max_sends_per_day').notNull().default(6),
+  discovered: integer('discovered').notNull().default(0),
+  enriched: integer('enriched').notNull().default(0),
+  autoApproved: integer('auto_approved').notNull().default(0),
+  rejected: integer('rejected').notNull().default(0),
+  ready: integer('ready').notNull().default(0),
+  sent: integer('sent').notNull().default(0),
+  delivered: integer('delivered').notNull().default(0),
+  failed: integer('failed').notNull().default(0),
+  ambiguous: integer('ambiguous').notNull().default(0),
+  hardBounced: integer('hard_bounced').notNull().default(0),
+  replies: integer('replies').notNull().default(0),
+  positiveReplies: integer('positive_replies').notNull().default(0),
+  optOuts: integer('opt_outs').notNull().default(0),
+  status: text('status').notNull().default('PENDING'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('daily6_batches_identity_uidx').on(table.batchDate, table.slot, table.cityId, table.policyVersion),
+  index('daily6_batches_date_idx').on(table.batchDate, table.cityId, table.slot),
+]);
+
+export const daily6SendLedger = pgTable('daily6_send_ledger', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  batchId: text('batch_id').notNull().references(() => daily6Batches.batchId),
+  sendIdentity: text('send_identity').notNull(),
+  leadId: uuid('lead_id').notNull().references(() => leads.id),
+  recipientFingerprint: char('recipient_fingerprint', { length: 64 }).notNull(),
+  status: text('status').notNull(),
+  providerMessageFingerprint: char('provider_message_fingerprint', { length: 64 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('daily6_send_identity_uidx').on(table.sendIdentity),
+  index('daily6_send_ledger_batch_idx').on(table.batchId, table.status),
+]);
 export const leadEvidence = pgTable(
   'lead_evidence',
   {

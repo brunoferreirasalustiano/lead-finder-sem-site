@@ -206,6 +206,9 @@ try {
     1,
   );
   const lead = (await db.select().from(leads).limit(1))[0]!;
+  await db.update(leads)
+    .set({ websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED' })
+    .where(eq(leads.id, lead.id));
   const audit = { actor: 'integration-test', source: 'test', reason: 'phase-1 validation' };
   assert.equal(
     (

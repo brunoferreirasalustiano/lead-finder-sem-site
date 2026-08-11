@@ -34,6 +34,7 @@ export * from './manual-messaging.js';
 export {
   sendPreparedManualEmail,
   type RestrictedManualEmailDeliveryResult,
+  type Daily6EmailRuntime,
 } from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';
@@ -41,6 +42,7 @@ export * from './hml-suppression-probe.js';
 export * from './deployment-processing.js';
 export * from './prospecting-metrics.js';
 export * from './enrichment.js';
+export * from './daily6.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>
   lead.isClosed

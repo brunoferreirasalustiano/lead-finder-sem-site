@@ -25,6 +25,7 @@ export const apiAuthPermissions = [
   'manual-messaging:send',
   'manual-messaging:cloud-send',
   'manual-messaging:opt-out',
+  'daily6:send',
   'operator-test:prepare',
   'operator-test:open',
   'operator-test:confirm',
@@ -188,6 +189,7 @@ const apiSchema = commonSchema.extend({
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/, 'OPERATOR_TEST_RECIPIENT_BINDING_KEY must contain printable non-space ASCII characters only'),
   ),
   OPERATOR_EMAIL_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  DAILY6_PILOT_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_EMAIL_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   HML_SUPPRESSION_PROBE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_EMAIL_TEST_RECIPIENT: optionalEnvironmentString(
@@ -542,6 +544,9 @@ const apiSchema = commonSchema.extend({
     if (unsafe) context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render requires dry-run, shadow mode, disabled providers, collection egress, and only a one-send HML Cloud exception' });
     if (!configuration.INTERNAL_CRON_SECRET) context.addIssue({ code: 'custom', path: ['INTERNAL_CRON_SECRET'], message: 'INTERNAL_CRON_SECRET is required for supabase-render' });
   }
+  if (configuration.DAILY6_PILOT_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+    context.addIssue({ code: 'custom', path: ['DAILY6_PILOT_ENABLED'], message: 'DAILY6_PILOT_ENABLED is permitted only in homologation' });
+  }
 });
 
 const workerSchema = commonSchema.extend({
@@ -606,7 +611,15 @@ const workerSchema = commonSchema.extend({
   requireCollectionEndpoint(configuration, context);
   requireEnrichmentEndpoint(configuration, context);
   if (configuration.DEPLOYMENT_PROFILE === 'supabase-render') {
-    context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render must use the bounded API batch endpoint, not the continuous worker' });
+    if (configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+      context.addIssue({ code: 'custom', path: ['DEPLOYMENT_ENVIRONMENT'], message: 'supabase-render worker is HML-only' });
+    }
+    if (configuration.WORKER_MODE !== 'oneshot') {
+      context.addIssue({ code: 'custom', path: ['WORKER_MODE'], message: 'supabase-render worker must use bounded oneshot mode' });
+    }
+    if (configuration.MAX_JOBS_PER_RUN > 1) {
+      context.addIssue({ code: 'custom', path: ['MAX_JOBS_PER_RUN'], message: 'supabase-render worker may claim at most one job per run' });
+    }
   }
   if (!configuration.DRY_RUN || configuration.REAL_SEND_ENABLED || configuration.REAL_PROVIDERS_ENABLED) {
     context.addIssue({ code: 'custom', path: ['DRY_RUN'], message: 'real providers and sends are not implemented; DRY_RUN must remain true' });

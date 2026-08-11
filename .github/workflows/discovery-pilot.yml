@@ -55,7 +55,7 @@ jobs:
       DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       DEPLOYMENT_ENVIRONMENT: homologation
-      DEPLOYMENT_PROFILE: oracle-vps
+      DEPLOYMENT_PROFILE: supabase-render
       DATABASE_SSL_MODE: require
       COLLECTION_EGRESS_ENABLED: 'true'
       ENRICHMENT_EGRESS_ENABLED: 'true'

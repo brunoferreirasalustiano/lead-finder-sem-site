@@ -28,6 +28,7 @@ const hmlFunctions = [
   'append_manual_email_send_event',
   'run_hml_suppression_probe',
 ] as const;
+const daily6Functions = ['reserve_daily6_send', 'finalize_daily6_send'] as const;
 
 describe('post-migration HML runtime grant provisioning', () => {
   it('runs the generic deny-all descriptor before the HML supplement and fails closed', () => {
@@ -43,13 +44,15 @@ describe('post-migration HML runtime grant provisioning', () => {
     expect(provisioner).not.toContain('|| true');
     expect(provisioner).not.toContain('.catch(');
     for (const name of hmlFunctions) expect(provisioner).toContain(`'${name}'`);
+    for (const name of daily6Functions) expect(provisioner).toContain(`'${name}'`);
+    expect(provisioner).toContain('HML_RUNTIME_DAILY6_ALLOWLIST_INCOMPLETE');
   });
 
   it('reproduces 42501 before provisioning and verifies the post-fix allowlist', () => {
     expect(integration).toContain("assert.equal(before.some((row) => row.executable), false");
     expect(integration).toContain("code === '42501'");
     expect(integration).toContain("result: 'RUNTIME_GRANTS_AFTER_MIGRATIONS_PASS'");
-    expect(integration).toContain('await runProvision();\n  await runProvision();');
+    expect((integration.match(/await runProvision\(\);/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(integration).toContain("assert.equal(forbidden[0]?.executable, false)");
     expect(integration).toContain('publicExecute[0]?.executable === true');
     expect(integration).toContain('assertRestrictedTablesDenied');

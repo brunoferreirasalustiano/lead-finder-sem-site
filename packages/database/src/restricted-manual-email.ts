@@ -99,6 +99,11 @@ export type RestrictedManualEmailDeliveryResult = Readonly<{
   attemptId: string;
 }>;
 
+export type Daily6EmailRuntime = Readonly<{
+  batchId: string;
+  sendIdentity: string;
+}>;
+
 const canonical = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === 'object') {
@@ -146,7 +151,7 @@ const variablesFor = (leadName: string, contactSource: string) => ({
 
 const requirePermission = (
   auth: AuthorizationContext,
-  permission: 'manual-messaging:prepare' | 'manual-messaging:open' | 'manual-messaging:send',
+  permission: 'manual-messaging:prepare' | 'manual-messaging:open' | 'manual-messaging:send' | 'daily6:send',
 ) => {
   if (!isTrustedAuthorizationContext(auth) || !auth.permissions.has(permission)) {
     throw new ManualMessagingError('Manual email operation is not authorized', 'INELIGIBLE');
@@ -516,9 +521,10 @@ export async function sendPreparedManualEmail(
       body: string;
       recipient: string;
     }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+    daily6?: Daily6EmailRuntime;
   },
 ): Promise<RestrictedManualEmailDeliveryResult> {
-  requirePermission(auth, 'manual-messaging:send');
+  requirePermission(auth, runtime.daily6 ? 'daily6:send' : 'manual-messaging:send');
 
   const existingAttempt = await readExistingAttempt(db, preparationId, auth);
   if (existingAttempt) {
@@ -562,13 +568,31 @@ export async function sendPreparedManualEmail(
     `);
     const attempt = attempts[0];
     if (!attempt) throw new Error('MANUAL_EMAIL_ATTEMPT_RESULT_MISSING');
-    return { attempt, prepared, recipient };
+    let daily6Replayed = false;
+    if (runtime.daily6) {
+      const daily6Rows = await tx.execute<{ reserved: boolean; replayed: boolean; reason: string }>(sql`
+        select * from lead_finder_internal.reserve_daily6_send(
+          ${runtime.daily6.batchId},
+          ${runtime.daily6.sendIdentity},
+          ${context.lead_id}::uuid,
+          ${recipientFingerprint}::char(64),
+          'daily6-v1'
+        )
+      `);
+      const daily6 = daily6Rows[0];
+      if (!daily6) throw new Error('DAILY6_RESERVATION_RESULT_MISSING');
+      if (!daily6.reserved && !daily6.replayed) {
+        throw new ManualMessagingError('Daily-6 reservation was not granted', 'INELIGIBLE');
+      }
+      daily6Replayed = daily6.replayed;
+    }
+    return { attempt, prepared, recipient, daily6Replayed };
   }));
 
   const priorTerminal = terminalResult(reserved.attempt, true);
   if (priorTerminal) return priorTerminal;
 
-  if (reserved.attempt.replayed) {
+  if (reserved.attempt.replayed || reserved.daily6Replayed) {
     return {
       state: 'IN_PROGRESS',
       provider: 'GMAIL_API',
@@ -601,6 +625,17 @@ export async function sendPreparedManualEmail(
       messageIdFingerprint,
       undefined,
     );
+    if (runtime.daily6) {
+      await db.execute(sql`
+        select * from lead_finder_internal.finalize_daily6_send(
+          ${runtime.daily6.batchId},
+          ${runtime.daily6.sendIdentity},
+          'SENT',
+          ${messageIdFingerprint}::char(64),
+          null
+        )
+      `);
+    }
     return {
       state: terminal.event_type,
       provider: 'GMAIL_API',
@@ -619,6 +654,17 @@ export async function sendPreparedManualEmail(
         undefined,
         failure.errorCode,
       );
+      if (runtime.daily6) {
+        await db.execute(sql`
+          select * from lead_finder_internal.finalize_daily6_send(
+            ${runtime.daily6.batchId},
+            ${runtime.daily6.sendIdentity},
+            ${failure.eventType === 'AMBIGUOUS' ? 'AMBIGUOUS' : 'FAILED'},
+            null::char(64),
+            ${failure.errorCode}
+          )
+        `);
+      }
       return {
         state: terminal.event_type,
         provider: 'GMAIL_API',

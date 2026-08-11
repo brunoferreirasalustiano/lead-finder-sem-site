@@ -24,6 +24,10 @@ const hmlFunctions = [
   'append_manual_email_send_event',
   'run_hml_suppression_probe',
 ] as const;
+const daily6Functions = [
+  'reserve_daily6_send',
+  'finalize_daily6_send',
+] as const;
 
 const restrictedTables = [
   'lead_contacts',
@@ -73,6 +77,19 @@ const verify = async () => {
   const executable = functionRows.filter((row) => row.executable);
   if (executable.length !== hmlFunctions.length) {
     throw new Error(`HML_RUNTIME_FUNCTION_ALLOWLIST_INCOMPLETE:${executable.length}/${hmlFunctions.length}`);
+  }
+
+  const daily6FunctionRows = await sql<{ identity: string; executable: boolean }[]>`
+    select procedure_record.oid::regprocedure::text as identity,
+      has_function_privilege(${runtimeRole}, procedure_record.oid, 'EXECUTE') as executable
+    from pg_proc procedure_record
+    join pg_namespace namespace_record on namespace_record.oid=procedure_record.pronamespace
+    where namespace_record.nspname='lead_finder_internal'
+      and procedure_record.proname in ${sql(daily6Functions)}
+    order by identity
+  `;
+  if (daily6FunctionRows.length !== daily6Functions.length || daily6FunctionRows.some((row) => !row.executable)) {
+    throw new Error(`HML_RUNTIME_DAILY6_ALLOWLIST_INCOMPLETE:${daily6FunctionRows.filter((row) => row.executable).length}/${daily6Functions.length}`);
   }
 
   const publicExecute = await sql<{ executable: boolean | null }[]>`
@@ -131,6 +148,7 @@ const verify = async () => {
   return {
     role: runtimeRole,
     hmlFunctions: executable.length,
+    daily6Functions: daily6FunctionRows.length,
     restrictedTablesWithoutDirectAccess: directTablePrivileges.length,
   };
 };

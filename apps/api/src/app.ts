@@ -75,6 +75,9 @@ import {
   type WhatsAppCloudRuntime,
   type WhatsAppCloudDeliver,
   getProspectingCityMetricsSnapshot,
+  runDaily6Slot,
+  type Daily6SlotInput,
+  type Daily6SlotRuntime,
 } from '@lead-finder/database';
 import {
   collectSchema,
@@ -225,6 +228,10 @@ export function buildApp(db: Database, options: {
   manualEmailSender?: string;
   manualEmailFingerprintKey?: string;
   daily6PilotEnabled?: boolean;
+  discoveryAuthRequired?: boolean;
+  daily6AuthRequired?: boolean;
+  expectedOperationalSha?: string;
+  daily6SlotRuntime?: Daily6SlotRuntime;
   hmlSuppressionProbeEnabled?: boolean;
   deliverManualEmail?: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
@@ -825,6 +832,43 @@ export function buildApp(db: Database, options: {
     const daily6: Daily6EmailRuntime={batchId,sendIdentity};
     return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled&&Boolean(options.deliverManualEmail&&options.manualEmailSender&&options.manualEmailFingerprintKey),killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender??'',fingerprintKey:options.manualEmailFingerprintKey??'',deliver:options.deliverManualEmail??(()=>Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),daily6});request.log.info({event:'daily6_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed,attemptId:result.attemptId},'daily6_email_delivery_recorded');return reply.status(creationStatus(result.replayed)).send(safeManualEmailDeliveryDto(result));});
   });
+  app.post('/internal/daily6/run-slot', async (request, reply) => {
+    if (options.daily6AuthRequired
+      && request.principal?.authenticationSource !== 'HML_DAILY6_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    if (options.daily6PilotEnabled !== true || !options.daily6SlotRuntime) {
+      return reply.status(404).send({ error: 'Daily-6 pilot is disabled', code: 'DAILY6_DISABLED' });
+    }
+    const body = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+      slot: z.enum(['09', '13', '16']),
+      city: z.string().trim().min(1).max(100),
+      category: z.string().trim().min(1).max(100).optional(),
+      policyVersion: z.literal('daily6-v1'),
+      expectedOperationalSha: z.string().regex(/^[0-9a-f]{40}$/iu),
+    }).strict().safeParse(request.body);
+    if (!body.success || !options.expectedOperationalSha
+      || body.data.expectedOperationalSha.toLowerCase() !== options.expectedOperationalSha.toLowerCase()) {
+      return reply.status(400).send({ error: 'Invalid Daily-6 contract', code: 'DAILY6_CONTRACT_INVALID' });
+    }
+    try {
+      const result = await runDaily6Slot(db, body.data as Daily6SlotInput, authorizationContextFor(request), options.daily6SlotRuntime);
+      request.log.info({
+        event: 'daily6_slot_completed', batchId: result.batchId, discovered: result.discovered,
+        autoApproved: result.autoApproved, rejected: result.rejected, sent: result.sent,
+        providerCalls: result.providerCalls, replayed: result.replayed, principalId: request.principal!.id,
+      }, 'daily6_slot_completed');
+      return result;
+    } catch (error) {
+      const code = error instanceof Error && /^[A-Z0-9_]{1,80}$/u.test(error.message)
+        ? error.message : 'DAILY6_SLOT_FAILED';
+      const status = code === 'DAILY6_RUNTIME_DISABLED' || code === 'DAILY6_SENDER_MISMATCH' ? 503
+        : code === 'DAILY6_OPERATIONAL_CONTRACT_MISMATCH' ? 409 : 422;
+      request.log.warn({ event: 'daily6_slot_blocked', code, principalId: request.principal!.id }, 'daily6_slot_blocked');
+      return reply.status(status).send({ error: 'Daily-6 slot blocked', code });
+    }
+  });
   app.post('/manual-message-preparations/:id/whatsapp-cloud-send',async(request,reply)=>{
     const id=parseId(request.params);
     const key=idempotencyKey(request.headers);
@@ -843,6 +887,10 @@ export function buildApp(db: Database, options: {
     return manualMessagingRoute(reply,async()=>{const result=await sendPreparedWhatsAppCloud(db,id.data,authorizationContextFor(request),runtime,options.deliverWhatsAppCloud!,key.data);request.log.info({event:'manual_whatsapp_cloud_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed},'manual_whatsapp_cloud_delivery_recorded');return reply.status(creationStatus(result.replayed)).send({state:result.state,provider:result.provider,replayed:result.replayed,attemptId:result.attemptId,providerMessageFingerprint:result.providerMessageFingerprint});});
   });
   app.post('/collect', async (request, reply) => {
+    if (options.discoveryAuthRequired
+      && request.principal?.authenticationSource !== 'HML_DISCOVERY_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
     if (!collectionEgressEnabled) {
       request.log.info({
         event: 'COLLECTION_EGRESS_DISABLED',

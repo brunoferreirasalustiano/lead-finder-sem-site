@@ -364,6 +364,40 @@ describe('environment configuration', () => {
     })).toThrow('COLLECTION_EGRESS_ENABLED');
   });
 
+  it('keeps discovery and Daily-6 principals separate and least-privileged', () => {
+    const enabled = {
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_DISCOVERY_AUTH_ENABLED: 'true',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: 'd'.repeat(64),
+      HML_DISCOVERY_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-runner',
+      HML_DAILY6_AUTH_ENABLED: 'true',
+      HML_DAILY6_AUTH_TOKEN_HASH: 'e'.repeat(64),
+      HML_DAILY6_AUTH_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+      HML_DAILY6_AUTH_PRINCIPAL_ID: 'hml-daily6-runner',
+      DAILY6_PILOT_ENABLED: 'true',
+      EXPECTED_OPERATIONAL_SHA: 'a'.repeat(40),
+      MANUAL_EMAIL_SEND_ENABLED: 'true',
+      MANUAL_EMAIL_KILL_SWITCH_ENABLED: 'false',
+      MANUAL_EMAIL_SENDER: 'leadfinderbrasil@gmail.com',
+      MANUAL_EMAIL_GOOGLE_CLIENT_ID: 'client-id',
+      MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: 'client-secret-000000',
+      MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN: 'refresh-token-000000',
+      MANUAL_EMAIL_FINGERPRINT_KEY: 'fingerprint-key-000000000000000000000000000000',
+      CAMPAIGN_DAILY_LIMIT_EMAIL: '6',
+    };
+    expect(parseApiConfig(enabled)).toMatchObject({
+      HML_DISCOVERY_AUTH_ENABLED: true,
+      HML_DAILY6_AUTH_ENABLED: true,
+      EXPECTED_OPERATIONAL_SHA: 'a'.repeat(40),
+    });
+    expect(() => parseApiConfig({ ...enabled, DEPLOYMENT_ENVIRONMENT: 'production' })).toThrow('DEPLOYMENT_ENVIRONMENT');
+    expect(() => parseApiConfig({ ...enabled, HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-daily6-runner' })).toThrow('must differ');
+    expect(() => parseApiConfig({ ...enabled, HML_DAILY6_AUTH_EXPIRES_AT: new Date(Date.now() - 1_000).toISOString() })).toThrow('must be in the future');
+    expect(() => parseApiConfig({ ...enabled, EXPECTED_OPERATIONAL_SHA: undefined })).toThrow('EXPECTED_OPERATIONAL_SHA');
+  });
+
   it('keeps enrichment egress disabled by default and rejects unsafe production activation', () => {
     expect(parseWorkerConfig(database)).toMatchObject({ ENRICHMENT_EGRESS_ENABLED: false });
     expect(() => parseWorkerConfig({
@@ -406,7 +440,7 @@ describe('environment configuration', () => {
       API_BATCH_PROCESSING_ENABLED: false, REAL_SEND_ENABLED: false,
       REAL_PROVIDERS_ENABLED: false, COLLECTION_EGRESS_ENABLED: false });
     expect(() => parseApiConfig({ ...database, DAILY6_PILOT_ENABLED: 'true' })).toThrow('DAILY6_PILOT_ENABLED');
-    expect(parseApiConfig({ ...planB, DEPLOYMENT_ENVIRONMENT: 'homologation', DAILY6_PILOT_ENABLED: 'true' }).DAILY6_PILOT_ENABLED).toBe(true);
+    expect(() => parseApiConfig({ ...planB, DEPLOYMENT_ENVIRONMENT: 'homologation', DAILY6_PILOT_ENABLED: 'true', EXPECTED_OPERATIONAL_SHA: 'a'.repeat(40) })).toThrow('HML_DAILY6_AUTH_ENABLED');
     expect(parseApiConfig({
       ...planB,
       API_BATCH_PROCESSING_ENABLED: 'true',
@@ -436,6 +470,62 @@ describe('environment configuration', () => {
     })).toThrow('supabase-render requires');
     expect(() => parseApiConfig({ ...planB, DAILY_LEAD_LIMIT: '61' })).toThrow('DAILY_LEAD_LIMIT');
     expect(() => parseWorkerConfig({ ...database, DEPLOYMENT_PROFILE: 'supabase-render' })).toThrow('supabase-render worker is HML-only');
+  });
+
+  it('allows only the explicitly gated HML discovery egress exception', () => {
+    const discovery = {
+      ...database,
+      DEPLOYMENT_PROFILE: 'supabase-render',
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      SHADOW_MODE_ENABLED: 'true',
+      INTERNAL_CRON_SECRET: 'synthetic-internal-cron-secret-0001',
+      COLLECTION_EGRESS_ENABLED: 'true',
+      OVERPASS_API_URL: 'https://overpass-api.de/api/interpreter',
+      HML_DISCOVERY_AUTH_ENABLED: 'true',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_DISCOVERY_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-github',
+    } as const;
+    expect(parseApiConfig(discovery).COLLECTION_EGRESS_ENABLED).toBe(true);
+    expect(() => parseApiConfig({
+      ...discovery,
+      HML_DISCOVERY_AUTH_ENABLED: 'false',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: undefined,
+      HML_DISCOVERY_AUTH_EXPIRES_AT: undefined,
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: undefined,
+    })).toThrow('supabase-render requires');
+  });
+
+  it('allows Gmail only for the fully gated HML Daily-6 contract', () => {
+    const daily6 = {
+      ...database,
+      DEPLOYMENT_PROFILE: 'supabase-render',
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      SHADOW_MODE_ENABLED: 'true',
+      INTERNAL_CRON_SECRET: 'synthetic-internal-cron-secret-0001',
+      DAILY6_PILOT_ENABLED: 'true',
+      EXPECTED_OPERATIONAL_SHA: 'a'.repeat(40),
+      HML_DISCOVERY_AUTH_ENABLED: 'true',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: 'c'.repeat(64),
+      HML_DISCOVERY_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-github',
+      HML_DAILY6_AUTH_ENABLED: 'true',
+      HML_DAILY6_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_DAILY6_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_DAILY6_AUTH_PRINCIPAL_ID: 'hml-daily6-github',
+      REAL_SEND_ENABLED: 'true',
+      MANUAL_EMAIL_SEND_ENABLED: 'true',
+      MANUAL_EMAIL_KILL_SWITCH_ENABLED: 'false',
+      MANUAL_EMAIL_SENDER: 'leadfinderbrasil@gmail.com',
+      MANUAL_EMAIL_GOOGLE_CLIENT_ID: 'client-id',
+      MANUAL_EMAIL_GOOGLE_CLIENT_SECRET: 'client-secret-000000',
+      MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN: 'refresh-token-000000',
+      MANUAL_EMAIL_FINGERPRINT_KEY: 'fingerprint-key-000000000000000000000000000000',
+      CAMPAIGN_DAILY_LIMIT_EMAIL: '6',
+    } as const;
+    expect(parseApiConfig(daily6)).toMatchObject({ DAILY6_PILOT_ENABLED: true, REAL_SEND_ENABLED: true });
+    expect(() => parseApiConfig({ ...daily6, MANUAL_EMAIL_SENDER: 'other@example.com' })).toThrow('approved Lead Finder sender');
+    expect(() => parseApiConfig({ ...daily6, HML_DAILY6_AUTH_ENABLED: 'false', HML_DAILY6_AUTH_TOKEN_HASH: undefined, HML_DAILY6_AUTH_EXPIRES_AT: undefined, HML_DAILY6_AUTH_PRINCIPAL_ID: undefined })).toThrow('HML_DAILY6_AUTH_ENABLED');
   });
 
   it('allows only the bounded HML supabase-render discovery worker contract', () => {

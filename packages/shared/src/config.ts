@@ -26,6 +26,7 @@ export const apiAuthPermissions = [
   'manual-messaging:cloud-send',
   'manual-messaging:opt-out',
   'daily6:send',
+  'daily6:execute',
   'operator-test:prepare',
   'operator-test:open',
   'operator-test:confirm',
@@ -54,6 +55,16 @@ export const hmlOperatorAuthPermissions = [
   'manual-messaging:cancel',
   'manual-messaging:confirm',
   'manual-messaging:cloud-send',
+] as const satisfies readonly ApiAuthPermission[];
+
+// Dedicated HML principals. Their permission sets are fixed in code and
+// cannot be widened through environment configuration.
+export const hmlDiscoveryAuthPermissions = [
+  'collection:execute',
+] as const satisfies readonly ApiAuthPermission[];
+
+export const hmlDaily6AuthPermissions = [
+  'daily6:execute',
 ] as const satisfies readonly ApiAuthPermission[];
 
 const apiAuthPermissionSet = new Set<string>(apiAuthPermissions);
@@ -231,6 +242,29 @@ const apiSchema = commonSchema.extend({
   ),
   HML_OPERATOR_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
     z.string().trim().regex(/^hml-[a-z0-9-]{1,80}$/, 'HML_OPERATOR_AUTH_PRINCIPAL_ID must use an hml- prefix'),
+  ),
+  HML_DISCOVERY_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  HML_DISCOVERY_AUTH_TOKEN_HASH: optionalEnvironmentString(
+    z.string().regex(/^[0-9a-f]{64}$/i, 'HML_DISCOVERY_AUTH_TOKEN_HASH must be a SHA-256 hex digest').transform((value) => value.toLowerCase()),
+  ),
+  HML_DISCOVERY_AUTH_EXPIRES_AT: optionalEnvironmentString(
+    z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+  ),
+  HML_DISCOVERY_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^hml-discovery-[a-z0-9-]{1,80}$/, 'HML_DISCOVERY_AUTH_PRINCIPAL_ID must use the hml-discovery- prefix'),
+  ),
+  HML_DAILY6_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  HML_DAILY6_AUTH_TOKEN_HASH: optionalEnvironmentString(
+    z.string().regex(/^[0-9a-f]{64}$/i, 'HML_DAILY6_AUTH_TOKEN_HASH must be a SHA-256 hex digest').transform((value) => value.toLowerCase()),
+  ),
+  HML_DAILY6_AUTH_EXPIRES_AT: optionalEnvironmentString(
+    z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+  ),
+  HML_DAILY6_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^hml-daily6-[a-z0-9-]{1,80}$/, 'HML_DAILY6_AUTH_PRINCIPAL_ID must use the hml-daily6- prefix'),
+  ),
+  EXPECTED_OPERATIONAL_SHA: optionalEnvironmentString(
+    z.string().trim().regex(/^[0-9a-f]{40}$/i, 'EXPECTED_OPERATIONAL_SHA must be a full git SHA'),
   ),
   WHATSAPP_CLOUD_API_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WHATSAPP_CLOUD_PHONE_NUMBER_ID: optionalEnvironmentString(
@@ -538,14 +572,100 @@ const apiSchema = commonSchema.extend({
       && configuration.DEPLOYMENT_ENVIRONMENT === 'homologation'
       && configuration.REAL_SEND_ENABLED
       && configuration.WHATSAPP_CLOUD_MAX_SENDS === 1;
-    const unsafe = !configuration.DRY_RUN || (configuration.REAL_SEND_ENABLED && !hmlCloudSendOnly)
-      || configuration.REAL_PROVIDERS_ENABLED || configuration.COLLECTION_EGRESS_ENABLED
+    const hmlDiscoveryCollectionOnly = configuration.DEPLOYMENT_ENVIRONMENT === 'homologation'
+      && configuration.COLLECTION_EGRESS_ENABLED
+      && configuration.HML_DISCOVERY_AUTH_ENABLED
+      && !configuration.REAL_SEND_ENABLED
+      && !configuration.MANUAL_EMAIL_SEND_ENABLED;
+    const hmlDaily6GmailSendOnly = configuration.DEPLOYMENT_ENVIRONMENT === 'homologation'
+      && configuration.DAILY6_PILOT_ENABLED
+      && configuration.REAL_SEND_ENABLED
+      && configuration.MANUAL_EMAIL_SEND_ENABLED
+      && !configuration.MANUAL_EMAIL_KILL_SWITCH_ENABLED
+      && configuration.MANUAL_EMAIL_SENDER === 'leadfinderbrasil@gmail.com'
+      && configuration.HML_DISCOVERY_AUTH_ENABLED
+      && configuration.HML_DAILY6_AUTH_ENABLED
+      && configuration.EXPECTED_OPERATIONAL_SHA !== undefined
+      && configuration.CAMPAIGN_DAILY_LIMIT_EMAIL <= 6;
+    const collectionEgressAllowed = !configuration.COLLECTION_EGRESS_ENABLED
+      || hmlDiscoveryCollectionOnly
+      || hmlDaily6GmailSendOnly;
+    const unsafe = !configuration.DRY_RUN
+      || (configuration.REAL_SEND_ENABLED && !hmlCloudSendOnly && !hmlDaily6GmailSendOnly)
+      || configuration.REAL_PROVIDERS_ENABLED || !collectionEgressAllowed
       || !configuration.SHADOW_MODE_ENABLED;
     if (unsafe) context.addIssue({ code: 'custom', path: ['DEPLOYMENT_PROFILE'], message: 'supabase-render requires dry-run, shadow mode, disabled providers, collection egress, and only a one-send HML Cloud exception' });
     if (!configuration.INTERNAL_CRON_SECRET) context.addIssue({ code: 'custom', path: ['INTERNAL_CRON_SECRET'], message: 'INTERNAL_CRON_SECRET is required for supabase-render' });
   }
+  const dedicatedAuth = [
+    {
+      enabled: configuration.HML_DISCOVERY_AUTH_ENABLED,
+      fieldsConfigured: configuration.HML_DISCOVERY_AUTH_TOKEN_HASH !== undefined
+        || configuration.HML_DISCOVERY_AUTH_EXPIRES_AT !== undefined
+        || configuration.HML_DISCOVERY_AUTH_PRINCIPAL_ID !== undefined,
+      tokenHash: configuration.HML_DISCOVERY_AUTH_TOKEN_HASH,
+      expiresAt: configuration.HML_DISCOVERY_AUTH_EXPIRES_AT,
+      principalId: configuration.HML_DISCOVERY_AUTH_PRINCIPAL_ID,
+      enabledPath: 'HML_DISCOVERY_AUTH_ENABLED', tokenPath: 'HML_DISCOVERY_AUTH_TOKEN_HASH',
+      expiresPath: 'HML_DISCOVERY_AUTH_EXPIRES_AT', principalPath: 'HML_DISCOVERY_AUTH_PRINCIPAL_ID',
+      label: 'HML discovery authentication',
+    },
+    {
+      enabled: configuration.HML_DAILY6_AUTH_ENABLED,
+      fieldsConfigured: configuration.HML_DAILY6_AUTH_TOKEN_HASH !== undefined
+        || configuration.HML_DAILY6_AUTH_EXPIRES_AT !== undefined
+        || configuration.HML_DAILY6_AUTH_PRINCIPAL_ID !== undefined,
+      tokenHash: configuration.HML_DAILY6_AUTH_TOKEN_HASH,
+      expiresAt: configuration.HML_DAILY6_AUTH_EXPIRES_AT,
+      principalId: configuration.HML_DAILY6_AUTH_PRINCIPAL_ID,
+      enabledPath: 'HML_DAILY6_AUTH_ENABLED', tokenPath: 'HML_DAILY6_AUTH_TOKEN_HASH',
+      expiresPath: 'HML_DAILY6_AUTH_EXPIRES_AT', principalPath: 'HML_DAILY6_AUTH_PRINCIPAL_ID',
+      label: 'HML Daily-6 authentication',
+    },
+  ] as const;
+  for (const auth of dedicatedAuth) {
+    if (!auth.enabled) {
+      if (auth.fieldsConfigured) context.addIssue({ code: 'custom', path: [auth.enabledPath], message: `${auth.label} fields require ${auth.enabledPath}=true` });
+      continue;
+    }
+    if (configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+      context.addIssue({ code: 'custom', path: ['DEPLOYMENT_ENVIRONMENT'], message: `${auth.label} is permitted only in homologation` });
+    }
+    if (!auth.tokenHash) context.addIssue({ code: 'custom', path: [auth.tokenPath], message: `${auth.tokenPath} is required when ${auth.enabledPath}=true` });
+    if (!auth.expiresAt) context.addIssue({ code: 'custom', path: [auth.expiresPath], message: `${auth.expiresPath} is required when ${auth.enabledPath}=true` });
+    else if (auth.expiresAt.getTime() <= Date.now()) context.addIssue({ code: 'custom', path: [auth.expiresPath], message: `${auth.expiresPath} must be in the future` });
+    if (!auth.principalId) context.addIssue({ code: 'custom', path: [auth.principalPath], message: `${auth.principalPath} is required when ${auth.enabledPath}=true` });
+  }
+  if (configuration.HML_DISCOVERY_AUTH_PRINCIPAL_ID
+    && configuration.HML_DISCOVERY_AUTH_PRINCIPAL_ID === configuration.HML_DAILY6_AUTH_PRINCIPAL_ID) {
+    context.addIssue({ code: 'custom', path: ['HML_DISCOVERY_AUTH_PRINCIPAL_ID'], message: 'HML discovery and Daily-6 principals must differ' });
+  }
+  if (configuration.HML_DISCOVERY_AUTH_TOKEN_HASH
+    && configuration.HML_DISCOVERY_AUTH_TOKEN_HASH === configuration.HML_DAILY6_AUTH_TOKEN_HASH) {
+    context.addIssue({ code: 'custom', path: ['HML_DISCOVERY_AUTH_TOKEN_HASH'], message: 'HML discovery and Daily-6 token hashes must differ' });
+  }
+  if (configuration.DAILY6_PILOT_ENABLED && !configuration.EXPECTED_OPERATIONAL_SHA) {
+    context.addIssue({ code: 'custom', path: ['EXPECTED_OPERATIONAL_SHA'], message: 'EXPECTED_OPERATIONAL_SHA is required when DAILY6_PILOT_ENABLED=true' });
+  }
   if (configuration.DAILY6_PILOT_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({ code: 'custom', path: ['DAILY6_PILOT_ENABLED'], message: 'DAILY6_PILOT_ENABLED is permitted only in homologation' });
+  }
+  if (configuration.DAILY6_PILOT_ENABLED) {
+    if (!configuration.HML_DAILY6_AUTH_ENABLED) {
+      context.addIssue({ code: 'custom', path: ['HML_DAILY6_AUTH_ENABLED'], message: 'HML_DAILY6_AUTH_ENABLED is required when DAILY6_PILOT_ENABLED=true' });
+    }
+    if (!configuration.MANUAL_EMAIL_SEND_ENABLED) {
+      context.addIssue({ code: 'custom', path: ['MANUAL_EMAIL_SEND_ENABLED'], message: 'MANUAL_EMAIL_SEND_ENABLED is required when DAILY6_PILOT_ENABLED=true' });
+    }
+    if (configuration.MANUAL_EMAIL_KILL_SWITCH_ENABLED) {
+      context.addIssue({ code: 'custom', path: ['MANUAL_EMAIL_KILL_SWITCH_ENABLED'], message: 'MANUAL_EMAIL_KILL_SWITCH_ENABLED must be false only for an explicitly enabled Daily-6 HML run' });
+    }
+    if (configuration.MANUAL_EMAIL_SENDER !== 'leadfinderbrasil@gmail.com') {
+      context.addIssue({ code: 'custom', path: ['MANUAL_EMAIL_SENDER'], message: 'DAILY6_PILOT_ENABLED requires the approved Lead Finder sender' });
+    }
+    if (configuration.CAMPAIGN_DAILY_LIMIT_EMAIL > 6) {
+      context.addIssue({ code: 'custom', path: ['CAMPAIGN_DAILY_LIMIT_EMAIL'], message: 'DAILY6_PILOT_ENABLED cannot exceed the Daily-6 hard limit' });
+    }
   }
 });
 

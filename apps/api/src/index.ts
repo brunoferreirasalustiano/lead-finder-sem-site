@@ -1,5 +1,5 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
-import { assertApiKillSwitchReleased, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, hmlDaily6AuthPermissions, hmlDiscoveryAuthPermissions, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
@@ -57,6 +57,20 @@ const emailTemporary = (() => {
     return abortStartup('INVALID_CONFIGURATION');
   }
 })();
+const discoveryTemporary = config.HML_DISCOVERY_AUTH_ENABLED ? {
+  tokenHash: config.HML_DISCOVERY_AUTH_TOKEN_HASH!,
+  expiresAt: config.HML_DISCOVERY_AUTH_EXPIRES_AT!,
+  principalId: config.HML_DISCOVERY_AUTH_PRINCIPAL_ID!,
+  principalPermissions: hmlDiscoveryAuthPermissions,
+  environment: 'homologation' as const,
+} : undefined;
+const daily6Temporary = config.HML_DAILY6_AUTH_ENABLED ? {
+  tokenHash: config.HML_DAILY6_AUTH_TOKEN_HASH!,
+  expiresAt: config.HML_DAILY6_AUTH_EXPIRES_AT!,
+  principalId: config.HML_DAILY6_AUTH_PRINCIPAL_ID!,
+  principalPermissions: hmlDaily6AuthPermissions,
+  environment: 'homologation' as const,
+} : undefined;
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const executorId = `api:${hostname()}:${process.pid}`;
 const policy = { dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
@@ -64,12 +78,46 @@ const policy = { dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
   windowStartUtc: config.CAMPAIGN_WINDOW_START_UTC, windowEndUtc: config.CAMPAIGN_WINDOW_END_UTC,
   minSpacingMs: config.CAMPAIGN_MIN_SPACING_MS, maxAttempts: config.OUTBOX_RETRY_MAX_ATTEMPTS,
   retryBaseMs: config.OUTBOX_RETRY_BASE_MS, retryMaxMs: config.OUTBOX_RETRY_MAX_MS };
+const manualEmailConsumer = config.MANUAL_EMAIL_SEND_ENABLED
+  ? (() => {
+      try {
+        return createGmailApiManualEmailConsumer({
+          sender: config.MANUAL_EMAIL_SENDER!,
+          googleClientId: config.MANUAL_EMAIL_GOOGLE_CLIENT_ID!,
+          googleClientSecret: config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET!,
+          googleRefreshToken: config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN!,
+        });
+      } catch {
+        return abortStartup('INVALID_CONFIGURATION');
+      }
+    })()
+  : undefined;
+const deliverManualEmail = manualEmailConsumer
+  ? (message: { subject: string; body: string; recipient: string }) => manualEmailConsumer.sendManual(message)
+  : undefined;
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
   realProviderConfigured: config.REAL_PROVIDER_CONFIGURED,
   manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
   daily6PilotEnabled: config.DAILY6_PILOT_ENABLED,
+  discoveryAuthRequired: config.HML_DISCOVERY_AUTH_ENABLED,
+  daily6AuthRequired: config.HML_DAILY6_AUTH_ENABLED,
+  ...(config.EXPECTED_OPERATIONAL_SHA ? { expectedOperationalSha: config.EXPECTED_OPERATIONAL_SHA } : {}),
+  ...(config.EXPECTED_OPERATIONAL_SHA && config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY
+    ? {
+        daily6SlotRuntime: {
+          enabled: config.DAILY6_PILOT_ENABLED,
+          realSendEnabled: config.REAL_SEND_ENABLED,
+          manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
+          killSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
+          sender: config.MANUAL_EMAIL_SENDER,
+          fingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY,
+          operationalSha: config.EXPECTED_OPERATIONAL_SHA,
+          deliver: deliverManualEmail ?? (() => Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),
+        },
+      }
+    : {}),
    manualEmailKillSwitchEnabled: config.MANUAL_EMAIL_KILL_SWITCH_ENABLED,
    hmlSuppressionProbeEnabled: config.HML_SUPPRESSION_PROBE_ENABLED,
   ...(config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY ? { manualEmailSender: config.MANUAL_EMAIL_SENDER, manualEmailFingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY } : {}),
@@ -113,6 +161,8 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     } : {}),
     ...(metricsTemporary ? { metricsTemporary } : {}),
     ...(emailTemporary ? { emailTemporary } : {}),
+    ...(discoveryTemporary ? { discoveryTemporary } : {}),
+    ...(daily6Temporary ? { daily6Temporary } : {}),
   },
   prospectingMetricsEnabled: config.PROSPECTING_METRICS_ENABLED,
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
@@ -130,12 +180,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     }),
   } : {}),
   corsAllowedOrigins: config.CORS_ALLOWED_ORIGINS,
-  ...(config.MANUAL_EMAIL_SEND_ENABLED ? (() => {
-    try {
-      const consumer = createGmailApiManualEmailConsumer({ sender: config.MANUAL_EMAIL_SENDER!, googleClientId: config.MANUAL_EMAIL_GOOGLE_CLIENT_ID!, googleClientSecret: config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET!, googleRefreshToken: config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN! });
-      return { deliverManualEmail: (message: { subject: string; body: string; recipient: string }) => consumer.sendManual(message) };
-    } catch { return abortStartup('INVALID_CONFIGURATION'); }
-  })() : {}),
+  ...(deliverManualEmail ? { deliverManualEmail } : {}),
   ...(config.WHATSAPP_CLOUD_API_ENABLED && config.REAL_SEND_ENABLED ? (() => {
     try {
       const consumer = createWhatsAppCloudApiClient({

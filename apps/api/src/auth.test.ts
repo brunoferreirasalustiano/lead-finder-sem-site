@@ -204,6 +204,44 @@ describe('API authentication boundary', () => {
     await app.close();
   });
 
+  it('keeps discovery and Daily-6 bearer principals on separate route permissions', async () => {
+    const discoveryToken = 'hml-discovery-token-for-tests-only-00000000000000000000000000000000';
+    const daily6Token = 'hml-daily6-token-for-tests-only-000000000000000000000000000000000';
+    const app = Fastify({ logger: false });
+    installAuthorization(app, {
+      token,
+      principalPermissions: [],
+      discoveryTemporary: {
+        tokenHash: createHash('sha256').update(discoveryToken, 'utf8').digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        principalId: 'hml-discovery-runner',
+        principalPermissions: ['collection:execute'],
+        environment: 'homologation',
+      },
+      daily6Temporary: {
+        tokenHash: createHash('sha256').update(daily6Token, 'utf8').digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        principalId: 'hml-daily6-runner',
+        principalPermissions: ['daily6:execute'],
+        environment: 'homologation',
+      },
+    });
+    app.post('/collect', (request) => ({ id: request.principal?.id, permissions: [...(request.principal?.permissions ?? [])] }));
+    app.post('/internal/daily6/run-slot', (request) => ({ id: request.principal?.id, permissions: [...(request.principal?.permissions ?? [])] }));
+    await app.ready();
+    const discovery = await app.inject({ method: 'POST', url: '/collect', headers: { authorization: `Bearer ${discoveryToken}` } });
+    expect(discovery.statusCode).toBe(200);
+    expect(discovery.json()).toEqual({ id: 'hml-discovery-runner', permissions: ['collection:execute'] });
+    const discoveryOnDaily6 = await app.inject({ method: 'POST', url: '/internal/daily6/run-slot', headers: { authorization: `Bearer ${discoveryToken}` } });
+    expect(discoveryOnDaily6.statusCode).toBe(403);
+    const daily6 = await app.inject({ method: 'POST', url: '/internal/daily6/run-slot', headers: { authorization: `Bearer ${daily6Token}` } });
+    expect(daily6.statusCode).toBe(200);
+    expect(daily6.json()).toEqual({ id: 'hml-daily6-runner', permissions: ['daily6:execute'] });
+    const daily6OnCollect = await app.inject({ method: 'POST', url: '/collect', headers: { authorization: `Bearer ${daily6Token}` } });
+    expect(daily6OnCollect.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('rejects invalid, expired, and revoked HML operator tokens', async () => {
     const operatorToken = 'hml-operator-token-for-tests-only-00000000000000000000000000000000';
     const hash = createHash('sha256').update(operatorToken, 'utf8').digest('hex');

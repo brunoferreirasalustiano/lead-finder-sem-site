@@ -27,6 +27,10 @@ const hmlFunctions = [
 const daily6Functions = [
   'reserve_daily6_send',
   'finalize_daily6_send',
+  'list_daily6_candidates',
+  'prepare_daily6_pilot_context',
+  'ensure_daily6_batch',
+  'bump_daily6_batch_metrics',
 ] as const;
 
 const restrictedTables = [

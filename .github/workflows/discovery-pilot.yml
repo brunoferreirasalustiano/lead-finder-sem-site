@@ -50,7 +50,7 @@ jobs:
     environment: hml-discovery
     timeout-minutes: 20
     env:
-      HML_API_URL: ${{ secrets.HML_API_URL }}
+      HML_API_URL: ${{ vars.HML_API_URL }}
       HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
       DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}

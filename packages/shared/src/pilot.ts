@@ -34,7 +34,7 @@ export const pilotRunListSchema = z.object({
   status: pilotRunStatusSchema.optional(),
 }).strict();
 
-export const pilotLeadSources = ['SYNTHETIC', 'MANUAL_IMPORT', 'COLLECTION'] as const;
+export const pilotLeadSources = ['SYNTHETIC', 'MANUAL_IMPORT', 'COLLECTION', 'AUTOMATED_DISCOVERY'] as const;
 export const pilotLeadSourceSchema = z.enum(pilotLeadSources);
 export type PilotLeadSource = z.infer<typeof pilotLeadSourceSchema>;
 export const pilotLeadAddSchema = z.object({ ...commandFields, leadId: entityIdSchema, source: pilotLeadSourceSchema }).strict();

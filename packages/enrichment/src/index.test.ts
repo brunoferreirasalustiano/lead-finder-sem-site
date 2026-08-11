@@ -5,6 +5,7 @@ import {
   HttpBusinessEnrichmentProvider,
   isReadyForHumanReview,
   hasVerifiedBusinessEmail,
+  isBusinessEmailAddress,
   isPublicSourceLocator,
   type BusinessEnrichmentResult,
 } from './index.js';
@@ -37,6 +38,17 @@ describe('enrichment contracts', () => {
     expect(isPublicSourceLocator('file:///tmp/private')).toBe(false);
     expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, sourceLocator: 'file:///tmp/private' }] })).toBe(false);
     expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, businessAssociation: 'UNKNOWN' }] })).toBe(false);
+    expect(isPublicSourceLocator('http://127.0.0.1/internal')).toBe(false);
+    expect(isPublicSourceLocator('http://169.254.169.254/latest/meta-data')).toBe(false);
+    expect(isPublicSourceLocator('http://localhost:8080/internal')).toBe(false);
+    expect(isBusinessEmailAddress('contato@business.example')).toBe(true);
+    expect(isBusinessEmailAddress('owner@gmail.com')).toBe(false);
+  });
+
+  it('requires high-confidence evidence before human review', () => {
+    expect(isReadyForHumanReview({ ...base, identity: { ...base.identity, confidence: 0.5 } })).toBe(false);
+    expect(isReadyForHumanReview({ ...base, activity: { ...base.activity, confidence: 0.5 } })).toBe(false);
+    expect(isReadyForHumanReview({ ...base, emails: [{ ...base.emails[0]!, confidence: 0.5 }] })).toBe(false);
   });
 
   it('classifies 504 as temporary source unavailability without treating it as empty', async () => {

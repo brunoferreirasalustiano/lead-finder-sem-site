@@ -104,6 +104,8 @@ const commonSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.enum(['true', 'false']).default('false'),
   ).transform((value) => value === 'true'),
+  ENRICHMENT_PROVIDER: z.enum(['http', 'composite']).default('http'),
+  TAVILY_API_KEY: optionalEnvironmentString(z.string().trim().min(1).max(512)),
   ENRICHMENT_API_URL: optionalEnvironmentString(z.string().trim().url()),
 });
 
@@ -121,10 +123,10 @@ const requireCollectionEndpoint = (
 };
 
 const requireEnrichmentEndpoint = (
-  configuration: { ENRICHMENT_EGRESS_ENABLED: boolean; ENRICHMENT_API_URL?: string | undefined; DEPLOYMENT_ENVIRONMENT: 'development' | 'homologation' | 'production' },
+  configuration: { ENRICHMENT_EGRESS_ENABLED: boolean; ENRICHMENT_PROVIDER: 'http' | 'composite'; ENRICHMENT_API_URL?: string | undefined; DEPLOYMENT_ENVIRONMENT: 'development' | 'homologation' | 'production' },
   context: z.RefinementCtx,
 ) => {
-  if (configuration.ENRICHMENT_EGRESS_ENABLED && !configuration.ENRICHMENT_API_URL) {
+  if (configuration.ENRICHMENT_EGRESS_ENABLED && configuration.ENRICHMENT_PROVIDER === 'http' && !configuration.ENRICHMENT_API_URL) {
     context.addIssue({
       code: 'custom',
       path: ['ENRICHMENT_API_URL'],
@@ -591,6 +593,15 @@ const workerSchema = commonSchema.extend({
   OUTBOX_RETRY_MAX_MS: integerFromEnvironment(
     'OUTBOX_RETRY_MAX_MS', 1, 604_800_000, 60_000,
   ),
+  WORKER_MODE: z.enum(['continuous', 'oneshot']).default('continuous'),
+  MAX_JOBS_PER_RUN: integerFromEnvironment('MAX_JOBS_PER_RUN', 1, 10, 1),
+  MAX_CANDIDATES_PER_JOB: integerFromEnvironment('MAX_CANDIDATES_PER_JOB', 1, 50, 50),
+  MAX_ENRICHMENT_PER_JOB: integerFromEnvironment('MAX_ENRICHMENT_PER_JOB', 1, 10, 10),
+  TAVILY_MAX_QUERIES_PER_CANDIDATE: integerFromEnvironment('TAVILY_MAX_QUERIES_PER_CANDIDATE', 1, 6, 6),
+  TAVILY_MAX_RESULTS_PER_QUERY: integerFromEnvironment('TAVILY_MAX_RESULTS_PER_QUERY', 1, 5, 5),
+  TAVILY_MAX_RETRIES: integerFromEnvironment('TAVILY_MAX_RETRIES', 0, 2, 1),
+  TAVILY_MIN_INTERVAL_MS: integerFromEnvironment('TAVILY_MIN_INTERVAL_MS', 0, 60_000, 1_000),
+  CNPJ_PROVIDER_MAX_RPM: integerFromEnvironment('CNPJ_PROVIDER_MAX_RPM', 1, 60, 10),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
   requireEnrichmentEndpoint(configuration, context);

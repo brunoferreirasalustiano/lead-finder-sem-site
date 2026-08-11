@@ -1,6 +1,7 @@
 import { and, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { randomUUID } from 'node:crypto';
 import type { MessagingChannel } from '@lead-finder/messaging';
 import {
   normalizeAddress,
@@ -208,14 +209,37 @@ export async function enqueueCollection(
       .returning({ id: collectionJobs.id, status: collectionJobs.status })
   )[0];
 }
+const collectionLeaseMs = 30 * 60 * 1_000;
+const collectionMaxAttempts = 3;
+const safeCollectionError = (error?: string): string | null => {
+  if (!error) return null;
+  const code = error.split(':', 1)[0]?.trim() || 'COLLECTION_FAILED';
+  return /^[A-Z0-9_]{1,80}$/u.test(code) ? code : 'COLLECTION_FAILED';
+};
+
 export async function claimCollection(db: Database) {
   return db.transaction(async (tx) => {
+    const now = new Date();
+    await tx
+      .update(collectionJobs)
+      .set({
+        status: sql`case when ${collectionJobs.attemptCount} >= ${collectionMaxAttempts} then 'FAILED' else 'PENDING' end`,
+        error: sql`case when ${collectionJobs.attemptCount} >= ${collectionMaxAttempts} then 'COLLECTION_MAX_ATTEMPTS' else null end`,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(collectionJobs.status, 'PROCESSING'),
+        sql`${collectionJobs.leaseExpiresAt} is not null and ${collectionJobs.leaseExpiresAt} < ${now.toISOString()}`,
+      ));
     const job = (
       await tx
         .select()
         .from(collectionJobs)
         .where(and(
           eq(collectionJobs.status, 'PENDING'),
+          sql`${collectionJobs.attemptCount} < ${collectionMaxAttempts}`,
           sql`${collectionJobs.payload} @> ${JSON.stringify({ collectionEgress: collectionAuthorization })}::jsonb`,
         ))
         .orderBy(collectionJobs.createdAt)
@@ -223,17 +247,20 @@ export async function claimCollection(db: Database) {
         .for('update', { skipLocked: true })
     )[0];
     if (!job) return null;
+    const leaseToken = randomUUID();
     await tx
       .update(collectionJobs)
-      .set({ status: 'PROCESSING', updatedAt: new Date() })
+      .set({ status: 'PROCESSING', leaseToken, leaseExpiresAt: new Date(now.valueOf() + collectionLeaseMs), attemptCount: sql`${collectionJobs.attemptCount} + 1`, updatedAt: now })
       .where(eq(collectionJobs.id, job.id));
     const envelope = job.payload as { input: unknown };
-    return { ...job, payload: envelope.input };
+    return { ...job, payload: envelope.input, leaseToken };
   });
 }
-export async function finishCollection(db: Database, id: string, error?: string) {
-  await db
+export async function finishCollection(db: Database, id: string, error?: string, leaseToken?: string) {
+  const result = await db
     .update(collectionJobs)
-    .set({ status: error ? 'FAILED' : 'COMPLETED', error: error ?? null, updatedAt: new Date() })
-    .where(eq(collectionJobs.id, id));
+    .set({ status: error ? 'FAILED' : 'COMPLETED', error: safeCollectionError(error), leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+    .where(and(eq(collectionJobs.id, id), eq(collectionJobs.status, 'PROCESSING'), ...(leaseToken ? [eq(collectionJobs.leaseToken, leaseToken)] : [])))
+    .returning({ id: collectionJobs.id });
+  if (leaseToken && result.length !== 1) throw new Error('COLLECTION_LEASE_LOST');
 }

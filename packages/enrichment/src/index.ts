@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import type { NormalizedLead } from '@lead-finder/shared';
 
@@ -17,10 +18,19 @@ export type EvidenceVerificationStatus = (typeof evidenceVerificationStatuses)[n
 export const isPublicSourceLocator = (value: string): boolean => {
   try {
     const url = new URL(value);
-    return (url.protocol === 'https:' || url.protocol === 'http:')
-      && url.hostname.length > 0
-      && url.username === ''
-      && url.password === '';
+    if (!['https:', 'http:'].includes(url.protocol) || url.hostname.length === 0 || url.username !== '' || url.password !== '') return false;
+    const hostname = url.hostname.toLowerCase().replace(/\.$/u, '');
+    if (['localhost', 'metadata', 'metadata.google.internal'].includes(hostname)
+      || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname.endsWith('.internal')) return false;
+    const ipVersion = isIP(hostname);
+    if (ipVersion === 4) {
+      const octets = hostname.split('.').map(Number);
+      const first = octets[0] ?? -1;
+      const second = octets[1] ?? -1;
+      if (first === 10 || first === 127 || first === 169 && second === 254 || first === 192 && second === 168 || first === 172 && second >= 16 && second <= 31) return false;
+    }
+    if (ipVersion === 6 && (hostname === '::1' || hostname.startsWith('fe80:') || hostname.startsWith('fc') || hostname.startsWith('fd'))) return false;
+    return true;
   } catch {
     return false;
   }
@@ -46,7 +56,7 @@ const websiteSchema = sourceEvidenceSchema.extend({
 });
 
 const emailSchema = sourceEvidenceSchema.extend({
-  value: z.string().trim().min(3).max(320),
+  value: z.string().trim().email().max(320),
   businessAssociation: z.enum(['PASS', 'FAIL', 'UNKNOWN']),
   inferred: z.boolean(),
 });
@@ -59,6 +69,12 @@ export const businessEnrichmentResultSchema = z.object({
 }).strict();
 
 export type BusinessEnrichmentResult = z.infer<typeof businessEnrichmentResultSchema>;
+export const MIN_VERIFIED_EVIDENCE_CONFIDENCE = 0.85;
+const consumerEmailHosts = new Set(['gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'yahoo.com', 'icloud.com', 'proton.me', 'protonmail.com']);
+export const isBusinessEmailAddress = (value: string): boolean => {
+  const host = value.trim().toLowerCase().split('@')[1] ?? '';
+  return host !== '' && !consumerEmailHosts.has(host);
+};
 
 export type BusinessEnrichmentRequest = {
   lead: NormalizedLead;
@@ -69,7 +85,10 @@ export class EnrichmentError extends Error {
     message: string,
     public readonly code:
       | 'ENRICHMENT_EGRESS_DISABLED'
+      | 'ENRICHMENT_PROVIDER_DISABLED'
       | 'SOURCE_TEMPORARILY_UNAVAILABLE'
+      | 'SOURCE_RATE_LIMITED'
+      | 'REGISTRY_NOT_FOUND'
       | 'INVALID_SOURCE_RESPONSE',
   ) {
     super(message);
@@ -84,8 +103,13 @@ export interface BusinessContactEnrichmentProvider {
 export class DisabledBusinessEnrichmentProvider implements BusinessContactEnrichmentProvider {
   readonly name = 'disabled';
 
+  constructor(private readonly code: 'ENRICHMENT_EGRESS_DISABLED' | 'ENRICHMENT_PROVIDER_DISABLED' = 'ENRICHMENT_EGRESS_DISABLED') {}
+
   enrich(): Promise<BusinessEnrichmentResult> {
-    return Promise.reject(new EnrichmentError('Enrichment egress is disabled', 'ENRICHMENT_EGRESS_DISABLED'));
+    return Promise.reject(new EnrichmentError(
+      this.code === 'ENRICHMENT_PROVIDER_DISABLED' ? 'Enrichment provider credential is unavailable' : 'Enrichment egress is disabled',
+      this.code,
+    ));
   }
 }
 
@@ -175,13 +199,20 @@ export function classifyWebsite(result: Pick<BusinessEnrichmentResult, 'website'
 export function hasVerifiedBusinessEmail(result: Pick<BusinessEnrichmentResult, 'emails'>): boolean {
   return result.emails.some((email) => email.businessAssociation === 'PASS'
     && !email.inferred
+    && isBusinessEmailAddress(email.value)
+    && email.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE
     && isPublicSourceLocator(email.sourceLocator));
 }
 
 export function isReadyForHumanReview(result: BusinessEnrichmentResult): boolean {
   return result.identity.confirmed
+    && result.identity.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE
     && result.activity.status === 'ACTIVE'
+    && result.activity.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE
     && result.website.officialSiteFound === false
     && classifyWebsite(result) === 'NO_OFFICIAL_SITE_CONFIRMED'
+    && result.website.confidence >= MIN_VERIFIED_EVIDENCE_CONFIDENCE
     && hasVerifiedBusinessEmail(result);
 }
+
+export * from './providers.js';

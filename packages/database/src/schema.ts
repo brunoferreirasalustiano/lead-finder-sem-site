@@ -77,6 +77,9 @@ export const collectionJobs = pgTable('collection_jobs', {
   payload: jsonb('payload').notNull(),
   status: text('status').notNull().default('PENDING'),
   error: text('error'),
+  leaseToken: uuid('lease_token'),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  attemptCount: integer('attempt_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

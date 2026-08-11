@@ -96,7 +96,7 @@ export const pilotResultSchema = z.object({
 
 export const pilotReadinessFailureReasons = [
   'INVALID_RUN', 'NO_LEADS', 'TARGET_EXCEEDED', 'REVIEW_NOT_APPROVED', 'QUALIFICATION_REQUIRED',
-  'INVALID_CONTACT', 'LEAD_BLOCKED', 'DO_NOT_CONTACT', 'ACTIVE_OPT_OUT', 'CRM_DO_NOT_CONTACT',
+  'EVIDENCE_REQUIRED', 'INVALID_CONTACT', 'LEAD_BLOCKED', 'DO_NOT_CONTACT', 'ACTIVE_OPT_OUT', 'CRM_DO_NOT_CONTACT',
   'SHADOW_MODE_DISABLED', 'CAMPAIGN_NOT_SIMULATED', 'REAL_PROVIDER_CONFIGURED', 'COLLECTION_EGRESS_ENABLED',
   'VERSION_INCONSISTENCY',
 ] as const;
@@ -104,6 +104,7 @@ export type PilotReadinessFailureReason = (typeof pilotReadinessFailureReasons)[
 export interface PilotReadinessLead {
   reviewDecision: PilotReviewDecision | null; qualificationStatus: string;
   websiteStatus?: 'UNKNOWN' | 'OFFICIAL_SITE_FOUND' | 'NO_OFFICIAL_SITE_CONFIRMED';
+  hasRequiredEvidence: boolean;
   hasValidVerifiedContact: boolean;
   isBlocked: boolean; doNotContact: boolean; hasActiveOptOut: boolean; crmStage: string; versionConsistent: boolean;
 }
@@ -121,6 +122,7 @@ export function evaluatePilotReadiness(input: PilotReadinessInput): PilotReadine
   for (const lead of input.leads) {
     if (lead.reviewDecision !== 'APPROVED') reasons.add('REVIEW_NOT_APPROVED');
     if (lead.qualificationStatus !== 'SEM_SITE_CONFIRMADO' || lead.websiteStatus !== 'NO_OFFICIAL_SITE_CONFIRMED') reasons.add('QUALIFICATION_REQUIRED');
+    if (!lead.hasRequiredEvidence) reasons.add('EVIDENCE_REQUIRED');
     if (!lead.hasValidVerifiedContact) reasons.add('INVALID_CONTACT');
     if (lead.isBlocked) reasons.add('LEAD_BLOCKED');
     if (lead.doNotContact) reasons.add('DO_NOT_CONTACT');

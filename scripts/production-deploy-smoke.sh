@@ -76,13 +76,20 @@ rendered_config="$(docker compose --env-file .env -f docker-compose.yml -f docke
 [[ "$(jq -r '.services.api.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == false ]]
 [[ "$(jq -r '.services.worker.environment.SHADOW_MODE_ENABLED' <<<"$rendered_config")" == false ]]
 compose_tunnel exec -T api node --input-type=module -e '
-  import { addPilotLead, createDatabase, createPilotRun, leadContacts, leads, reviewPilotLead, updatePilotRunStatus } from "@lead-finder/database";
+  import { addPilotLead, createDatabase, createPilotRun, leadContacts, leadEvidence, leads, reviewPilotLead, updatePilotRunStatus } from "@lead-finder/database";
   import { createAuthorizationContext, parseApiConfig } from "@lead-finder/shared";
   const config=parseApiConfig(process.env); if(config.SHADOW_MODE_ENABLED) throw new Error("API did not receive false shadow mode");
   const {db,close}=createDatabase(config.DATABASE_URL); const auth=createAuthorizationContext({principalId:"deploy-smoke",permissions:new Set(["pilot:write","pilot:review"]),authenticationMethod:"deployment-smoke"});
   try { const key=`deploy-shadow-${crypto.randomUUID()}`; const run=await createPilotRun(db,{name:key,region:"Regiao Ficticia",category:"Categoria Ficticia",targetLeadCount:1,idempotencyKey:key},auth);
-    const lead=(await db.insert(leads).values({osmType:"node",osmId:key,category:"Categoria Ficticia",city:"Regiao Ficticia",score:1,status:"SEM_SITE_CADASTRADO",qualificationStatus:"SEM_SITE_CONFIRMADO"}).returning())[0];
+    const lead=(await db.insert(leads).values({osmType:"node",osmId:key,category:"Categoria Ficticia",city:"Regiao Ficticia",score:1,status:"SEM_SITE_CADASTRADO",qualificationStatus:"SEM_SITE_CONFIRMADO",websiteStatus:"NO_OFFICIAL_SITE_CONFIRMED"}).returning())[0];
     await db.insert(leadContacts).values({leadId:lead.id,type:"EMAIL",originalValue:"shadow@example.invalid",normalizedValue:"shadow@example.invalid",source:"SYNTHETIC",confidence:"1",verifiedAt:new Date(),isValid:true});
+    const observedAt=new Date();
+    await db.insert(leadEvidence).values([
+      {leadId:lead.id,source:"synthetic-deploy-smoke",reference:`https://example.invalid/deploy-smoke/${key}/identity`,evidenceType:"BUSINESS_IDENTITY",verificationStatus:"VERIFIED",result:"BUSINESS_IDENTITY_CONFIRMED",confidence:"1",observedAt,fingerprint:`${key}-identity`},
+      {leadId:lead.id,source:"synthetic-deploy-smoke",reference:`https://example.invalid/deploy-smoke/${key}/activity`,evidenceType:"BUSINESS_ACTIVITY",verificationStatus:"VERIFIED",result:"ACTIVE",confidence:"1",observedAt,fingerprint:`${key}-activity`},
+      {leadId:lead.id,source:"synthetic-deploy-smoke",reference:`https://example.invalid/deploy-smoke/${key}/website`,evidenceType:"WEBSITE",verificationStatus:"VERIFIED",result:"NO_OFFICIAL_SITE_CONFIRMED",confidence:"1",observedAt,fingerprint:`${key}-website`},
+      {leadId:lead.id,source:"synthetic-deploy-smoke",reference:`https://example.invalid/deploy-smoke/${key}/email`,evidenceType:"BUSINESS_EMAIL",verificationStatus:"VERIFIED",result:"EMAIL_BUSINESS_ASSOCIATION_PASS",confidence:"1",observedAt,fingerprint:`${key}-email`},
+    ]);
     await addPilotLead(db,run.data.id,{leadId:lead.id,source:"SYNTHETIC",expectedVersion:1,idempotencyKey:`${key}-lead`},auth); await reviewPilotLead(db,run.data.id,lead.id,{decision:"APPROVED",expectedVersion:0,idempotencyKey:`${key}-review`},auth);
     let blocked=false; try { await updatePilotRunStatus(db,run.data.id,{status:"READY",expectedVersion:2,idempotencyKey:`${key}-false`},auth,{shadowModeEnabled:config.SHADOW_MODE_ENABLED,realProviderConfigured:config.REAL_PROVIDER_CONFIGURED,collectionEgressEnabled:config.COLLECTION_EGRESS_ENABLED}); } catch(error) { blocked=error?.code==="INVALID_STATE"; } if(!blocked) throw new Error("false shadow mode did not block READY");
   } finally { await close(); }

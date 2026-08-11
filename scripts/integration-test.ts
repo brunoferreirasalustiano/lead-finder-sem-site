@@ -271,6 +271,33 @@ try {
   ]);
   assert.equal((await listOutreachEligibleLeads(db)).length, 1);
 
+  const statusOnlyLead = (await db.insert(leads).values({
+    osmType: 'node',
+    osmId: 'legacy-status-only',
+    category: 'oficinas',
+    score: 10,
+    status: 'SEM_SITE_CADASTRADO',
+    qualificationStatus: 'PENDENTE',
+    websiteStatus: 'NO_OFFICIAL_SITE_CONFIRMED',
+    crmStage: 'NOVO',
+  }).returning())[0]!;
+  await db.insert(leadContacts).values({
+    leadId: statusOnlyLead.id,
+    type: 'EMAIL',
+    originalValue: 'legacy-status-only@example.test',
+    normalizedValue: 'legacy-status-only@example.test',
+    source: 'legacy-fixture',
+    confidence: '1',
+    verifiedAt: new Date('2026-07-11T12:00:00Z'),
+    isValid: true,
+    possibleWhatsapp: false,
+  });
+  assert.equal(
+    (await listOutreachEligibleLeads(db)).some((candidate) => candidate.id === statusOnlyLead.id),
+    false,
+    'legacy website status without identity/activity/email evidence must remain ineligible',
+  );
+
   const actor = 'crm-integration';
   const opportunityPayload = {
     title: 'Website rebuild',

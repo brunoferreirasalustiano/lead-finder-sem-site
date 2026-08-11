@@ -17,7 +17,7 @@ const addLeadInput = {
   idempotencyKey: 'pilot-lead-conflict-test',
 };
 
-const addLeadWithInsertError = (insertError: unknown) => {
+const addLeadWithInsertError = (insertError: unknown, hasRequiredEvidence = true) => {
   let selectCall = 0;
   const tx = {
     execute: () => Promise.resolve(selectCall === 2 ? [{
@@ -31,6 +31,7 @@ const addLeadWithInsertError = (insertError: unknown) => {
       category: 'Categoria Ficticia',
       has_contact: true,
       has_opt_out: false,
+      has_required_evidence: hasRequiredEvidence,
     }] : []),
     select: () => {
       selectCall += 1;
@@ -80,6 +81,9 @@ describe('pilot persistence primitives', () => {
   });
   it('exposes stable sanitized persistence error codes', () => {
     expect(new PilotPersistenceError('conflict', 'VERSION_CONFLICT')).toMatchObject({ name: 'PilotPersistenceError', code: 'VERSION_CONFLICT' });
+  });
+  it('rejects a legacy no-site status without required evidence', async () => {
+    await expect(addLeadWithInsertError(new Error('insert should not be reached'), false)).rejects.toMatchObject({ code: 'INELIGIBLE_LEAD' });
   });
   it.each([
     [{ code: '23505' }],

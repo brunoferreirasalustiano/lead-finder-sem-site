@@ -8,7 +8,7 @@ import {
 } from './pilot.js';
 import { createDatabase } from './index.js';
 import {
-  campaignOptOuts, campaigns, crmTimelineEvents, leadContacts, leads, pilotIdempotencyKeys,
+  campaignOptOuts, campaigns, crmTimelineEvents, leadContacts, leadEvidence, leads, pilotIdempotencyKeys,
   pilotLeads, pilotManualContacts, pilotResults, pilotReviews, pilotRuns, pilotTimelineEvents,
 } from './schema.js';
 
@@ -71,6 +71,13 @@ export async function runPilotPersistenceIntegration(databaseUrl: string) {
       {leadId:lead.id,type:'EMAIL',originalValue:`${label}@example.invalid`,normalizedValue:`${label}@example.invalid`,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
       {leadId:lead.id,type:'TELEFONE',originalValue:phone,normalizedValue:phone,source:'SYNTHETIC',confidence:'1',verifiedAt:new Date(),isValid:true},
     ]).returning();
+    const evidenceObservedAt=new Date();
+    await db.insert(leadEvidence).values([
+      {leadId:lead.id,source:'synthetic-pilot',reference:`https://example.invalid/pilot/${suffix}/${label}/identity`,evidenceType:'BUSINESS_IDENTITY',verificationStatus:'VERIFIED',result:'BUSINESS_IDENTITY_CONFIRMED',confidence:'1',observedAt:evidenceObservedAt,fingerprint:`pilot-${suffix}-${label}-identity`},
+      {leadId:lead.id,source:'synthetic-pilot',reference:`https://example.invalid/pilot/${suffix}/${label}/activity`,evidenceType:'BUSINESS_ACTIVITY',verificationStatus:'VERIFIED',result:'ACTIVE',confidence:'1',observedAt:evidenceObservedAt,fingerprint:`pilot-${suffix}-${label}-activity`},
+      {leadId:lead.id,source:'synthetic-pilot',reference:`https://example.invalid/pilot/${suffix}/${label}/website`,evidenceType:'WEBSITE',verificationStatus:'VERIFIED',result:'NO_OFFICIAL_SITE_CONFIRMED',confidence:'1',observedAt:evidenceObservedAt,fingerprint:`pilot-${suffix}-${label}-website`},
+      {leadId:lead.id,source:'synthetic-pilot',reference:`https://example.invalid/pilot/${suffix}/${label}/email`,evidenceType:'BUSINESS_EMAIL',verificationStatus:'VERIFIED',result:'EMAIL_BUSINESS_ASSOCIATION_PASS',confidence:'1',observedAt:evidenceObservedAt,fingerprint:`pilot-${suffix}-${label}-email`},
+    ]);
     return {lead,email:contacts[0]!,phone:contacts[1]!};
   };
   const metricFixtureFingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');

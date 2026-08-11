@@ -18,6 +18,7 @@ RUN npm prune --omit=dev \
   && test ! -d node_modules/tsx \
   && test ! -d node_modules/typescript \
   && test -f packages/shared/dist/index.js \
+  && test -f packages/enrichment/dist/index.js \
   && test -f packages/database/dist/index.js \
   && test -f packages/prospecting-orchestrator/dist/index.js \
   && test -f packages/messaging/dist/index.js \
@@ -25,7 +26,7 @@ RUN npm prune --omit=dev \
   && test -f packages/whatsapp/dist/index.js \
   && test -f packages/batch-processor/dist/index.js \
   && test -f database/migrations/0001_initial.sql \
-  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor')"
+  && node --input-type=module -e "await import('@lead-finder/shared'); await import('@lead-finder/enrichment'); await import('@lead-finder/messaging'); await import('@lead-finder/email'); await import('@lead-finder/whatsapp'); await import('@lead-finder/database'); await import('@lead-finder/prospecting-orchestrator'); await import('@lead-finder/batch-processor')"
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
@@ -39,6 +40,8 @@ COPY --from=build --chown=node:node /app/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node:node /app/packages/enrichment/package.json ./packages/enrichment/package.json
+COPY --from=build --chown=node:node /app/packages/enrichment/dist ./packages/enrichment/dist
 COPY --from=build --chown=node:node /app/packages/database/package.json ./packages/database/package.json
 COPY --from=build --chown=node:node /app/packages/database/dist ./packages/database/dist
 COPY --from=build --chown=node:node /app/packages/prospecting-orchestrator/package.json ./packages/prospecting-orchestrator/package.json

@@ -10,14 +10,16 @@ This file is the resume point after model capacity errors, disconnects, context 
 PROJECT=Lead Finder Brasil
 REPO=brunoferreirasalustiano/lead-finder-sem-site
 HML_BRANCH=hml/render-supabase-plan-b
-HML_SHA=8f6841fd840e3d03efe340bed8dc22e5024050d4
+HML_SHA=5792eecb307fa2287f2e1df1c95da9751f265741
 MAIN_SHA=8181c3e007ef8dee7117f81fc7f07ca16a05d002
-LAST_MERGED_PR=259
-PR259_HEAD=0d0d799c0902682643b452e556edc1f9e79e1305
-PR259_MERGE=8f6841fd840e3d03efe340bed8dc22e5024050d4
-EXACT_SHA_CI_RUN=31642639040
+LAST_MERGED_PR=260
+PR260_HEAD=ac67c5b1804944d2269dd642f67546eed9f77cf0
+PR260_MERGE=5792eecb307fa2287f2e1df1c95da9751f265741
+EXACT_SHA_CI_RUN=31645554495
 EXACT_SHA_CI=PASS
 ```
+
+PR #260 was merged while one valid P1 review thread remained unresolved. Autonomous mode MUST NOT repeat that promotion mistake.
 
 ## Supabase HML
 
@@ -26,10 +28,11 @@ PROJECT_ID=ondvzdvlwntrnieodifi
 REGION=sa-east-1
 POSTGRES=17.6
 MIGRATION_0057=APPLIED_NATIVE_REGISTRY
+MIGRATION_0058=APPLIED_NATIVE_REGISTRY
 PUBLIC_SCHEMA_MIGRATION_HISTORY=HISTORICALLY_DIVERGENT_DO_NOT_FABRICATE
 ```
 
-Hosted ACL facts for `lead_finder_api_runtime`:
+Hosted ACL facts for `lead_finder_api_runtime` remain least-privilege:
 
 ```text
 DAILY6_BATCHES_SELECT=false
@@ -52,11 +55,9 @@ SERVICE=lead-finder-api-hml
 SERVICE_ID=srv-d9fbpp6rnols73bko9f0
 WORKSPACE=Bruno's workspace
 WORKSPACE_ID=tea-d72o44oule4c73cut1l0
-RENDER_SHA=8f6841fd840e3d03efe340bed8dc22e5024050d4
-RENDER_DEPLOY_ID=dep-d9uefplbedkc73a49psg
+RENDER_SHA=5792eecb307fa2287f2e1df1c95da9751f265741
+RENDER_DEPLOY_ID=dep-d9uf2mu417fc73d7sfig
 RENDER_STATUS=LIVE
-HEALTH=200
-READINESS=200
 ```
 
 Discovery-only hosted profile remains the intended state until canary authorization gates are satisfied.
@@ -73,41 +74,38 @@ RUN_3=31617067686  # failed: API runtime direct daily6_batches privilege boundar
 
 No provider discovery calls occurred in those failed runs. No email/WhatsApp was sent.
 
-`HML_DATABASE_URL` is now present in the correct GitHub Environment `hml-discovery`.
+`HML_DATABASE_URL` is present in the GitHub Environment `hml-discovery`.
 
-## Fixed blocker
+## Fixed blockers
 
-PR #259 fixed the direct-table least-privilege incompatibility by adding:
+PR #259 fixed the direct-table least-privilege incompatibility by adding the narrow `lead_finder_internal.enqueue_collection_job(text,jsonb)` function.
 
-```text
-lead_finder_internal.enqueue_collection_job(text,jsonb)
-```
+PR #260 / migration 0058 closed the original nullable-JSON fail-open and most normalization drift by adding explicit null-safe authorization checks and an incremental function replacement.
 
-The API runtime receives EXECUTE only; direct access to `daily6_batches` and `collection_jobs` remains denied.
+## Current blocker — valid unresolved P1 after PR #260
 
-## Current blocker — P2 hardening required
+The merged migration 0058 still has a valid normalization defect for an uppercase accented city such as `Águas de Lindóia`.
 
-Two valid P2 findings remain in migration/function 0057 and MUST be fixed before the next discovery dispatch.
+Current SQL effectively translates accented characters before lowercasing, but its translation map contains only lowercase accented characters. Canonical TypeScript `collectionCityId()` lowercases/normalizes the city first. The two paths can therefore disagree and produce `COLLECTION_IDENTITY_CITY_MISMATCH` for otherwise valid input.
 
-### P2-A NULL fail-open
+Required remediation:
 
-Nullable JSON comparisons use `<>` for authorization fields. Missing/null values can produce SQL NULL and avoid the fail-closed branch.
-
-Required fix: incremental migration 0058 using null-safe validation (`IS DISTINCT FROM` or equivalent) and explicit object/field presence checks before any INSERT.
-
-### P2-B normalization drift
-
-SQL city/state normalization does not exactly reproduce canonical TypeScript `collectionCityId(city,state)` semantics for accented/separator state names.
-
-Required fix: 0058 must make database validation semantically identical to the canonical shared implementation and test accented/separator cases.
+- DO NOT edit applied migrations 0057 or 0058;
+- create incremental migration 0059;
+- make SQL city normalization exactly match canonical `collectionCityId()` for uppercase/lowercase Portuguese accents and separators;
+- add canonical TypeScript-generated test cases, including `Águas de Lindóia / SP`;
+- preserve all null-safe authorization checks from 0058;
+- preserve least-privilege ACLs;
+- validate replay/concurrency/rollback and invalid input;
+- resolve the outstanding P1 thread with evidence after hosted validation.
 
 ## Immediate next gate
 
 ```text
 NEXT_PHASE=A
-NEXT_TASK=P2_HARDENING_0058
-BASE_SHA=8f6841fd840e3d03efe340bed8dc22e5024050d4
-DISCOVERY_E2E=BLOCKED_UNTIL_0058_PASS
+NEXT_TASK=P1_NORMALIZATION_HARDENING_0059
+BASE_SHA=5792eecb307fa2287f2e1df1c95da9751f265741
+DISCOVERY_E2E=BLOCKED_UNTIL_0059_PASS
 REAL_OUTREACH_BLOCKED=true
 ```
 
@@ -141,8 +139,8 @@ DAILY_6_PILOT_ENABLED=false
 
 An autonomous coordinator resuming work must:
 
-1. verify HML/Main/Render/Supabase current state instead of trusting this file blindly;
+1. revalidate HML/Main/Render/Supabase/GitHub state;
 2. update this file if facts changed;
-3. solve P2-A and P2-B first;
-4. do not dispatch discovery until Phase A exit criteria are PASS;
+3. fix the current P1 via 0059 first;
+4. do not dispatch discovery until Phase A has no valid unresolved P0/P1/P2 affecting enqueue;
 5. then continue through MASTER_PLAN without asking merely for permission to continue.

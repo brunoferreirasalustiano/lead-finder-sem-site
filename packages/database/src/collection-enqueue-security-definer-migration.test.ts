@@ -5,6 +5,10 @@ const migration = readFileSync(
   new URL('../../../database/migrations/0057_collection_enqueue_security_definer.sql', import.meta.url),
   'utf8',
 );
+const hardeningMigration = readFileSync(
+  new URL('../../../database/migrations/0058_collection_enqueue_fail_closed_hardening.sql', import.meta.url),
+  'utf8',
+);
 const hmlSupplement = readFileSync(
   new URL('../../../database/security/create_lead_finder_api_runtime_hml.sql', import.meta.url),
   'utf8',
@@ -27,5 +31,23 @@ describe('collection enqueue security-definer boundary', () => {
   it('grants only execution to the API runtime supplement', () => {
     expect(hmlSupplement).toContain('lead_finder_internal.enqueue_collection_job(text, jsonb)');
     expect(hmlSupplement).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+TABLE\s+public\.(?:daily6_batches|collection_jobs)/i);
+  });
+
+  it('keeps the follow-up hardening null-safe and out of the original migration', () => {
+    expect(hardeningMigration).toContain('CREATE OR REPLACE FUNCTION lead_finder_internal.enqueue_collection_job');
+    expect(hardeningMigration).toContain('SECURITY DEFINER');
+    expect(hardeningMigration).toContain('SET search_path = pg_catalog, public');
+    expect(hardeningMigration).toContain("jsonb_typeof(p_payload->'collectionEgress') IS DISTINCT FROM 'object'");
+    expect(hardeningMigration).toContain("jsonb_typeof(p_payload->'collectionEgress'->'enabled') IS DISTINCT FROM 'boolean'");
+    expect(hardeningMigration).toContain("(p_payload->'collectionEgress'->'enabled') IS DISTINCT FROM 'true'::jsonb");
+    expect(hardeningMigration).toContain("jsonb_typeof(p_payload->'collectionEgress'->'configurationVersion') IS DISTINCT FROM 'number'");
+    expect(hardeningMigration).toContain("(p_payload->'collectionEgress'->'configurationVersion') IS DISTINCT FROM '1'::jsonb");
+    expect(hardeningMigration).toContain("(p_payload->>'collectionRequestIdentity') IS DISTINCT FROM p_request_identity");
+    expect(hardeningMigration).toContain("jsonb_typeof(p_payload->'input') IS DISTINCT FROM 'object'");
+    expect(hardeningMigration).toContain('collectionCityId');
+    expect(hardeningMigration).toContain('COLLECTION_IDENTITY_CITY_MISMATCH');
+    expect(hardeningMigration).toContain('REVOKE ALL ON FUNCTION lead_finder_internal.enqueue_collection_job');
+    expect(hardeningMigration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON\s+TABLE\s+public\.(?:daily6_batches|collection_jobs)/i);
+    expect(migration).not.toContain('IS DISTINCT FROM');
   });
 });

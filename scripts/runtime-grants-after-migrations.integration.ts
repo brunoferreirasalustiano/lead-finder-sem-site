@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import postgres from 'postgres';
+import { collectionCityId } from '@lead-finder/shared';
 
 const execFileAsync = promisify(execFile);
 const databaseUrl = process.env['DATABASE_URL'];
@@ -18,6 +19,7 @@ const migrationVersions = [
   '0047_restricted_manual_email_final_review',
   '0056_daily6_automated_compliance',
   '0057_collection_enqueue_security_definer',
+  '0058_collection_enqueue_fail_closed_hardening',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',
@@ -217,16 +219,21 @@ try {
   }
 
   const runtimeDb = postgres(roleUrl.toString(), { max: 4 });
-  const identity = `2099-12-31|09|synthetic-city-${process.pid}-sp|daily6-v1`;
-  const rollbackIdentity = `2099-12-30|09|rollback-city-${process.pid}-sp|daily6-v1`;
+  const identityCity = `Synthetic City ${process.pid}`;
+  const identityState = 'SP';
+  const identity = `2099-12-31|09|${collectionCityId(identityCity, identityState)}|daily6-v1`;
+  const rollbackCity = `Rollback City ${process.pid}`;
+  const rollbackState = 'SP';
+  const rollbackIdentity = `2099-12-30|09|${collectionCityId(rollbackCity, rollbackState)}|daily6-v1`;
+  const normalizationIdentities: string[] = [];
   const payload = {
-    input: { city: `Synthetic City ${process.pid}`, state: 'SP', country: 'Brasil', category: 'oficinas', limit: 1 },
+    input: { city: identityCity, state: identityState, country: 'Brasil', category: 'oficinas', limit: 1 },
     collectionEgress: { enabled: true, configurationVersion: 1 },
     collectionRequestIdentity: identity,
   };
   const rollbackPayload = {
     ...payload,
-    input: { ...payload.input, city: `Rollback City ${process.pid}` },
+    input: { ...payload.input, city: rollbackCity, state: rollbackState },
     collectionRequestIdentity: rollbackIdentity,
   };
   const payloadShape = await owner<{ input_type: string; identity: string; enabled: string; config_version: string }[]>`
@@ -245,6 +252,19 @@ try {
   });
   const enqueue = () => runtimeDb<{ id: string; status: string; replayed: boolean }[]>`
     select * from lead_finder_internal.enqueue_collection_job(${identity}, ${runtimeDb.json(payload)}::jsonb)`;
+  const assertRejectedPayload = async (label: string, invalidPayload: Parameters<typeof runtimeDb.json>[0]) => {
+    await assert.rejects(
+      runtimeDb`select * from lead_finder_internal.enqueue_collection_job(${identity}, ${runtimeDb.json(invalidPayload)}::jsonb)`,
+      (error: unknown) => (error as { code?: unknown }).code === '22023',
+      label,
+    );
+    const counts = await owner<{ batches: number; jobs: number }[]>`
+      select
+        (select count(*)::int from public.daily6_batches where batch_id=${identity}) as batches,
+        (select count(*)::int from public.collection_jobs where request_identity=${identity}) as jobs`;
+    assert.equal(counts[0]?.batches, 0, `${label}: no batch may remain`);
+    assert.equal(counts[0]?.jobs, 0, `${label}: no job may remain`);
+  };
   try {
     const first = (await enqueue())[0];
     assert.equal(first?.replayed, false);
@@ -259,6 +279,122 @@ try {
         (select count(*)::int from public.collection_jobs where request_identity=${identity}) as jobs`;
     assert.equal(counts[0]?.batches, 1);
     assert.equal(counts[0]?.jobs, 1);
+
+    // Use a fresh identity for rejection tests so every invalid authorization
+    // case is proven to leave both tables empty before any INSERT.
+    await owner`delete from public.collection_jobs where request_identity=${identity}`;
+    await owner`delete from public.daily6_batches where batch_id=${identity}`;
+    const validInput = payload.input;
+    const validEgress = payload.collectionEgress;
+    await assertRejectedPayload('missing collectionEgress', {
+      input: validInput,
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('null collectionEgress', {
+      input: validInput,
+      collectionEgress: null,
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('missing egress enabled', {
+      input: validInput,
+      collectionEgress: { configurationVersion: 1 },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('null egress enabled', {
+      input: validInput,
+      collectionEgress: { enabled: null, configurationVersion: 1 },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('wrong egress enabled', {
+      input: validInput,
+      collectionEgress: { enabled: false, configurationVersion: 1 },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('string egress enabled', {
+      input: validInput,
+      collectionEgress: { enabled: 'true', configurationVersion: 1 },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('missing egress version', {
+      input: validInput,
+      collectionEgress: { enabled: true },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('null egress version', {
+      input: validInput,
+      collectionEgress: { enabled: true, configurationVersion: null },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('wrong egress version', {
+      input: validInput,
+      collectionEgress: { enabled: true, configurationVersion: 2 },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('string egress version', {
+      input: validInput,
+      collectionEgress: { enabled: true, configurationVersion: '1' },
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('missing payload identity', {
+      input: validInput,
+      collectionEgress: validEgress,
+    });
+    await assertRejectedPayload('null payload identity', {
+      input: validInput,
+      collectionEgress: validEgress,
+      collectionRequestIdentity: null,
+    });
+    await assertRejectedPayload('mismatched payload identity', {
+      input: validInput,
+      collectionEgress: validEgress,
+      collectionRequestIdentity: '2099-12-31|09|other-city|daily6-v1',
+    });
+    await assertRejectedPayload('missing input', {
+      collectionEgress: validEgress,
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('null input', {
+      input: null,
+      collectionEgress: validEgress,
+      collectionRequestIdentity: identity,
+    });
+    await assertRejectedPayload('non-object input', {
+      input: [],
+      collectionEgress: validEgress,
+      collectionRequestIdentity: identity,
+    });
+    await assert.rejects(
+      runtimeDb`select * from lead_finder_internal.enqueue_collection_job(${null}::text, ${runtimeDb.json(payload)}::jsonb)`,
+      (error: unknown) => (error as { code?: unknown }).code === '22023',
+      'null request identity',
+    );
+    await assert.rejects(
+      runtimeDb`select * from lead_finder_internal.enqueue_collection_job(${'2099-02-30|09|campinas-sp|daily6-v1'}, ${runtimeDb.json(payload)}::jsonb)`,
+      (error: unknown) => (error as { code?: unknown }).code === '22023',
+      'invalid request identity date',
+    );
+
+    const normalizationCases = [
+      { date: '2099-12-20', slot: '09', city: 'Campinas', state: 'SP' },
+      { date: '2099-12-21', slot: '13', city: 'São José dos Campos', state: 'SP' },
+      { date: '2099-12-22', slot: '16', city: 'Campinas', state: 'São Paulo' },
+      { date: '2099-12-23', slot: '09', city: 'Cidade / Centro', state: 'SP / Região' },
+    ] as const;
+    for (const normalizationCase of normalizationCases) {
+      const caseCityId = collectionCityId(normalizationCase.city, normalizationCase.state);
+      const caseIdentity = `${normalizationCase.date}|${normalizationCase.slot}|${caseCityId}|daily6-v1`;
+      normalizationIdentities.push(caseIdentity);
+      const result = await runtimeDb<{ id: string; status: string; replayed: boolean }[]>`
+        select * from lead_finder_internal.enqueue_collection_job(
+          ${caseIdentity},
+          ${runtimeDb.json({
+            input: { city: normalizationCase.city, state: normalizationCase.state, country: 'Brasil', category: 'oficinas', limit: 1 },
+            collectionEgress: { enabled: true, configurationVersion: 1 },
+            collectionRequestIdentity: caseIdentity,
+          })}::jsonb
+        )`;
+      assert.equal(result[0]?.replayed, false, `canonical normalization: ${caseIdentity}`);
+    }
 
     await assert.rejects(
       runtimeDb`select * from lead_finder_internal.enqueue_collection_job(${identity}, ${runtimeDb.json({ ...payload, collectionRequestIdentity: '2099-12-31|09|other-city|daily6-v1' })}::jsonb)`,
@@ -297,6 +433,10 @@ try {
     await owner`delete from public.daily6_batches where batch_id=${identity}`;
     await owner`delete from public.collection_jobs where request_identity=${rollbackIdentity}`;
     await owner`delete from public.daily6_batches where batch_id=${rollbackIdentity}`;
+    for (const normalizationIdentity of normalizationIdentities) {
+      await owner`delete from public.collection_jobs where request_identity=${normalizationIdentity}`;
+      await owner`delete from public.daily6_batches where batch_id=${normalizationIdentity}`;
+    }
   }
 
   console.log(JSON.stringify({

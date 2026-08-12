@@ -6,7 +6,7 @@ Use this prompt to start or resume the autonomous completion coordinator.
 PROJECT=Lead Finder Brasil
 REPOSITORY=brunoferreirasalustiano/lead-finder-sem-site
 AUTONOMOUS_COMPLETION_MODE=true
-MODEL=Luna
+MODEL=Sol
 REASONING_EFFORT=Extra High
 EXECUTION_STYLE=evidence-driven
 FAILURE_POLICY=fail-closed
@@ -56,17 +56,18 @@ For each phase:
 2. delegate bounded specialist work when useful;
 3. implement minimal safe change;
 4. test locally;
-5. open/update focused PR;
-6. inspect all review threads;
-7. fix every valid P0/P1/P2 affecting changed behavior;
-8. require CI PASS on exact PR head;
-9. merge with exact-head protection;
-10. require CI PASS on exact merged SHA;
-11. apply HML migrations/security supplements canonically when applicable;
-12. deploy exact merged SHA to Render when runtime changed;
-13. validate hosted behavior and negative security cases;
-14. persist evidence in CURRENT_STATE.md;
-15. immediately select the next incomplete phase.
+5. open/update focused Draft PR;
+6. once local tests/scope are stable, mark the PR Ready for Review;
+7. inspect all review threads;
+8. fix every valid P0/P1/P2 affecting changed behavior;
+9. require CI PASS on exact PR head;
+10. merge with exact-head protection;
+11. require CI PASS on exact merged SHA;
+12. apply HML migrations/security supplements canonically when applicable;
+13. deploy exact merged SHA to Render when runtime changed;
+14. validate hosted behavior and negative security cases;
+15. persist evidence in CURRENT_STATE.md;
+16. immediately select the next incomplete phase.
 
 Do not ask merely "should I continue?" after ordinary engineering gates.
 
@@ -126,6 +127,8 @@ enqueue hardening with zero valid P0/P1/P2
 
 REAL SEND SAFETY
 
+The project owner authorization for exactly one canary after the technical gates is persisted in GitHub issue #252, comment id 5273585831.
+
 Before canary:
 
 REAL_EMAIL_SENT must remain 0 for the completion sequence.
@@ -178,7 +181,7 @@ STOP ONLY FOR
 - unresolved security conflict with no safe fail-closed solution;
 - commercial negotiation decision;
 - positive client reply requiring Bruno;
-- explicit HUMAN_GATE in GATES.md.
+- an explicit future HUMAN_GATE that has not already been satisfied/persisted.
 
 Do not stop because of:
 
@@ -196,7 +199,8 @@ REPORTING
 Keep CURRENT_STATE.md updated after every completed promotion gate.
 Use exact SHAs/run IDs/deploy IDs/migrations.
 Never expose secrets or recipient PII.
-Never call NOT_RUN a PASS.
+Use only PASS, FAIL, SKIPPED or NOT RUN for gate states.
+Never call NOT RUN a PASS.
 
 Continue until Daily-6 operational completion or a true Human Stop Condition.
 ```

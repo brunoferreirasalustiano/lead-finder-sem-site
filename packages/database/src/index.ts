@@ -12,7 +12,7 @@ import {
   type LeadStatus,
   type NormalizedLead,
 } from '@lead-finder/shared';
-import { collectionJobs, daily6Batches, leads, type NewLead } from './schema.js';
+import { collectionJobs, leads, type NewLead } from './schema.js';
 import { safeLeadSelection } from './safe-projections.js';
 import {
   prepareManualMessage as prepareLegacyManualMessage,
@@ -210,33 +210,22 @@ export async function enqueueCollection(
   }
   const parsedIdentity = collectionRequestIdentitySchema.safeParse(requestIdentity);
   if (!parsedIdentity.success) throw new Error('COLLECTION_IDENTITY_REQUIRED');
-  const batch = parseCollectionRequestIdentity(parsedIdentity.data);
-  if (!batch) throw new Error('COLLECTION_IDENTITY_REQUIRED');
-  return db.transaction(async (tx) => {
-    await tx.insert(daily6Batches).values([{
-      batchId: parsedIdentity.data,
-      batchDate: batch.date,
-      slot: batch.slot,
-      cityId: batch.cityId,
-      policyVersion: batch.policyVersion,
-    }]).onConflictDoNothing();
-    const inserted = await tx
-      .insert(collectionJobs)
-      .values({
-        requestIdentity: parsedIdentity.data,
-        payload: { input: payload, collectionEgress: collectionAuthorization, collectionRequestIdentity: parsedIdentity.data },
-      })
-      .onConflictDoNothing()
-      .returning({ id: collectionJobs.id, status: collectionJobs.status });
-    if (inserted[0]) return { ...inserted[0], replayed: false };
-    const existing = (await tx
-      .select({ id: collectionJobs.id, status: collectionJobs.status })
-      .from(collectionJobs)
-      .where(eq(collectionJobs.requestIdentity, parsedIdentity.data))
-      .limit(1))[0];
-    if (!existing) throw new Error('COLLECTION_IDEMPOTENCY_RACE');
-    return { ...existing, replayed: true };
-  });
+  if (!parseCollectionRequestIdentity(parsedIdentity.data)) throw new Error('COLLECTION_IDENTITY_REQUIRED');
+  const envelope = {
+    input: payload,
+    collectionEgress: collectionAuthorization,
+    collectionRequestIdentity: parsedIdentity.data,
+  };
+  const rows = await db.execute<{ id: string; status: string; replayed: boolean }>(sql`
+    SELECT id, status, replayed
+    FROM lead_finder_internal.enqueue_collection_job(
+      ${parsedIdentity.data},
+      ${JSON.stringify(envelope)}::jsonb
+    )
+  `);
+  const row = rows[0];
+  if (!row) throw new Error('COLLECTION_ENQUEUE_RESULT_MISSING');
+  return { id: row.id, status: row.status, replayed: row.replayed };
 }
 const collectionLeaseMs = 30 * 60 * 1_000;
 const collectionMaxAttempts = 3;

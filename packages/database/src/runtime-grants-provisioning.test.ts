@@ -35,6 +35,7 @@ const daily6Functions = [
   'prepare_daily6_pilot_context',
   'ensure_daily6_batch',
   'bump_daily6_batch_metrics',
+  'enqueue_collection_job',
 ] as const;
 
 describe('post-migration HML runtime grant provisioning', () => {

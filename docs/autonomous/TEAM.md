@@ -80,7 +80,7 @@ Owns:
 - quota and replay tests;
 - canary evidence.
 
-Cannot convert `NOT_RUN` into PASS.
+Cannot convert `NOT RUN` into PASS.
 
 ## 6. Outreach Safety Specialist
 
@@ -146,16 +146,16 @@ When multiple Codex agents run simultaneously:
 
 ## Model allocation
 
-Use the cheapest model that safely handles the task, but security/architecture may be escalated.
+Use the cheapest supported repository model that safely handles the task, and escalate when security/architecture requires it.
 
 Recommended operational mapping:
 
 ```text
-Coordinator: Luna/Extra High when complex cross-system state is active
-Database/Security: Luna/Extra High for critical migrations and authorization
-CI/Infra: Terra or equivalent unless incident is complex
-QA: Terra for deterministic tests; Luna for concurrency/security ambiguity
-Documentation/state updates: Lua/Terra
+Coordinator: Sol for cross-system completion/security sequencing
+Database/Security: Sol for critical migrations, ACL and concurrency
+CI/Infra: Terra unless incident/root cause is complex
+QA: Terra for deterministic tests; Sol for concurrency/security ambiguity
+Documentation/state updates: Lua or Terra
 ```
 
-Model capacity failure is recoverable: persist/reload state and resume with an available capable model.
+Model capacity failure is recoverable: persist/reload state and resume with another available supported model capable of the task.

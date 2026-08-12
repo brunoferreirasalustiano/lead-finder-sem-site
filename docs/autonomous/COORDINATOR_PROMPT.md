@@ -85,22 +85,36 @@ Never allow parallel migrations or overlapping mutations to the same security/wo
 
 CURRENT PRIORITY
 
-At the time this control plane was created, the next expected task is Phase A: P2 hardening after PR #259, starting from HML SHA 8f6841fd840e3d03efe340bed8dc22e5024050d4.
+The persisted current state should be treated as the starting hint, not blindly trusted.
 
-Do not trust that SHA blindly. Revalidate current state first.
+At the last control-plane reconciliation:
 
-The two known P2s are:
+HML_SHA=5792eecb307fa2287f2e1df1c95da9751f265741
+PR260_MERGED=true
+MIGRATION_0058=APPLIED
+RENDER_SHA=5792eecb307fa2287f2e1df1c95da9751f265741
 
-A. nullable JSON authorization comparisons in enqueue_collection_job can fail open;
-B. PostgreSQL city/state normalization can drift from canonical TypeScript collectionCityId().
+One valid P1 review finding remained after PR #260 was merged:
 
-If still present, fix them with a new incremental migration, not by editing already-applied migration 0057.
+- uppercase accented city normalization in migration 0058 can diverge from canonical TypeScript collectionCityId(); e.g. `Águas de Lindóia / SP` may be rejected with COLLECTION_IDENTITY_CITY_MISMATCH.
+
+If this finding is still present after current-state revalidation, Phase A starts by fixing it with a NEW incremental migration 0059. Do not edit applied migrations 0057 or 0058.
+
+The fix must:
+
+- preserve all null-safe authorization validation from 0058;
+- exactly match canonical TypeScript `collectionCityId` behavior for uppercase/lowercase Portuguese accents and separators;
+- include canonical TypeScript-generated PostgreSQL integration cases;
+- keep API runtime direct table access denied;
+- preserve replay/concurrency/rollback;
+- resolve the outstanding P1 with evidence;
+- complete PR -> CI -> exact-head merge -> exact-merged-SHA CI -> Supabase HML -> Render HML before discovery.
 
 OUTREACH PROMOTION ORDER
 
 Never skip:
 
-P2 hardening
+enqueue hardening with zero valid P0/P1/P2
 -> discovery E2E
 -> accuracy audit
 -> automated compliance hosted

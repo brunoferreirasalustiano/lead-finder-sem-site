@@ -23,28 +23,33 @@ WHATSAPP_AUTOMATION=false
 
 ## Sequência obrigatória
 
-### Fase A — P2 hardening do enqueue
+### Fase A — Hardening completo do enqueue
 
-Objetivo: fechar os dois P2 remanescentes da migration 0057 sem reescrever migration aplicada.
+Objetivo: deixar o boundary de enqueue least-privilege, fail-closed e semanticamente idêntico aos contratos canônicos do TypeScript antes de qualquer novo discovery E2E.
 
-Entregas:
+Esta fase inclui as migrations 0057/0058 já aplicadas e qualquer migration incremental corretiva subsequente necessária. Nunca reescrever migration aplicada.
 
-- migration incremental 0058;
-- validação fail-closed de campos JSON ausentes/null;
-- paridade exata da normalização `collectionCityId` entre TypeScript e PostgreSQL;
+Entregas obrigatórias antes de sair da fase:
+
+- API runtime sem acesso direto a `daily6_batches` ou `collection_jobs`;
+- enqueue exclusivamente pelo boundary interno autorizado;
+- validação null-safe de todos os campos de autorização/identidade;
+- paridade exata da normalização `collectionCityId` entre TypeScript e PostgreSQL, inclusive acentos maiúsculos/minúsculos e separadores;
 - testes de replay, concorrência e rollback;
 - ACL least-privilege inalterada;
+- todos os P0/P1/P2 válidos sobre o comportamento alterado resolvidos;
 - PR/CI/merge exact-head;
 - exact merged SHA CI PASS;
-- migration HML aplicada canonicamente;
+- migrations HML aplicadas canonicamente;
 - Render HML LIVE no mesmo SHA;
-- P2 threads resolvidas com evidência.
+- hosted negative/positive security tests PASS.
 
 Exit criteria:
 
 ```text
-P2_NULL_FAIL_OPEN=CLOSED
-P2_NORMALIZATION_DRIFT=CLOSED
+ENQUEUE_NULL_FAIL_OPEN=CLOSED
+ENQUEUE_NORMALIZATION_PARITY=PASS
+ENQUEUE_VALID_REVIEW_FINDINGS=0
 API_RUNTIME_DIRECT_TABLE_ACCESS=false
 API_RUNTIME_ENQUEUE_EXECUTE=true
 HEALTH=200
@@ -215,7 +220,7 @@ Nunca negociar automaticamente preço, desconto, escopo, pagamento, promessa ou 
 Esta etapa do projeto é considerada concluída quando:
 
 ```text
-P2_HARDENING=PASS
+ENQUEUE_HARDENING=PASS
 DISCOVERY_E2E=PASS
 ACCURACY=PASS
 AUTOMATED_COMPLIANCE=PASS

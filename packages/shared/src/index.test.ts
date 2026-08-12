@@ -15,6 +15,8 @@ describe('collectSchema', () => {
 describe('collection request identity', () => {
   it('distinguishes the supported daily slots and binds the city slug', () => {
     expect(collectionCityId('Campinas', 'SP')).toBe('campinas-sp');
+    expect(collectionCityId('\u00c1guas de Lind\u00f3ia', 'SP')).toBe('aguas-de-lindoia-sp');
+    expect(collectionCityId('Sa\u0303o Jose\u0301', 'SP')).toBe('sao-jose-sp');
     expect(parseCollectionRequestIdentity('2026-08-12|09|campinas-sp|daily6-v1')).toEqual({ date: '2026-08-12', slot: '09', cityId: 'campinas-sp', policyVersion: 'daily6-v1' });
     expect(collectionRequestIdentitySchema.safeParse('2026-08-12|13|campinas-sp|daily6-v1').success).toBe(true);
     expect(collectionRequestIdentitySchema.safeParse('2026-08-12|10|campinas-sp|daily6-v1').success).toBe(false);

@@ -20,6 +20,7 @@ const migrationVersions = [
   '0056_daily6_automated_compliance',
   '0057_collection_enqueue_security_definer',
   '0058_collection_enqueue_fail_closed_hardening',
+  '0059_collection_enqueue_city_normalization_parity',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',
@@ -379,6 +380,8 @@ try {
       { date: '2099-12-21', slot: '13', city: 'São José dos Campos', state: 'SP' },
       { date: '2099-12-22', slot: '16', city: 'Campinas', state: 'São Paulo' },
       { date: '2099-12-23', slot: '09', city: 'Cidade / Centro', state: 'SP / Região' },
+      { date: '2099-12-24', slot: '13', city: '\u00c1guas de Lind\u00f3ia', state: 'SP' },
+      { date: '2099-12-25', slot: '16', city: 'Sa\u0303o Jose\u0301', state: 'SP' },
     ] as const;
     for (const normalizationCase of normalizationCases) {
       const caseCityId = collectionCityId(normalizationCase.city, normalizationCase.state);

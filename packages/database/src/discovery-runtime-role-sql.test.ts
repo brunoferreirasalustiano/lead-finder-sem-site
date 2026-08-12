@@ -13,6 +13,7 @@ describe('HML discovery runtime role provisioning', () => {
     expect(sql).toContain('NOCREATEROLE');
     expect(sql).toContain('NOBYPASSRLS');
     expect(sql).not.toMatch(/GRANT\s+(postgres|service_role)\s+TO\s+lead_finder_discovery_runtime/i);
+    expect(sql).not.toMatch(/GRANT\s+lead_finder_discovery_runtime\s+TO\s+postgres/i);
   });
 
   it('does not grant delivery, suppression, or DDL surfaces', () => {
@@ -20,5 +21,15 @@ describe('HML discovery runtime role provisioning', () => {
     expect(sql).toContain('public.lead_evidence');
     expect(executableSql).not.toMatch(/daily6_send_ledger|manual_email|gmail|contact_delivery_suppressions|\bSUPERUSER\b/i);
     expect(executableSql).not.toMatch(/GRANT\s+ALL\s+ON\s+ALL\s+(TABLES|FUNCTIONS)/i);
+  });
+
+  it('requires RLS and scopes policies to the discovery role only', () => {
+    expect(executableSql).toContain('relrowsecurity');
+    expect(executableSql).not.toMatch(/DISABLE\s+ROW\s+LEVEL\s+SECURITY/i);
+    for (const table of ['schema_migrations', 'collection_jobs', 'leads', 'lead_contacts', 'lead_evidence']) {
+      expect(executableSql).toMatch(new RegExp(`CREATE POLICY[\\s\\S]+ON public\\.${table}[\\s\\S]+TO lead_finder_discovery_runtime`, 'i'));
+    }
+    expect(executableSql).not.toMatch(/FOR\s+DELETE/i);
+    expect(executableSql).not.toMatch(/TO\s+(PUBLIC|authenticated|anon)\b/i);
   });
 });

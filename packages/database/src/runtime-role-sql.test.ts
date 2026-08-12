@@ -28,6 +28,7 @@ const hmlRuntimeFunctions = [
   'public.append_manual_email_send_event(uuid, text, text, character, text)',
   'lead_finder_internal.reserve_daily6_send(text, text, uuid, char(64), text)',
   'lead_finder_internal.finalize_daily6_send(text, text, text, char(64), text)',
+  'lead_finder_internal.enqueue_collection_job(text, jsonb)',
 ] as const;
 
 const operatorEmailSelfTestReadTables = [

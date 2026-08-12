@@ -53,7 +53,7 @@ jobs:
     environment: hml-discovery
     timeout-minutes: 20
     env:
-      HML_API_URL: ${{ vars.HML_API_URL }}
+      HML_API_URL: https://lead-finder-api-hml.onrender.com
       HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
       DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
@@ -97,10 +97,29 @@ jobs:
           set -Eeuo pipefail
           test "$EXPECTED_SHA" = "$APPROVED_OPERATIONAL_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          test -n "$HML_API_URL"
           test -n "$HML_COLLECTION_TOKEN"
           test -n "$DATABASE_URL"
           test -n "$TAVILY_API_KEY"
+
+      - name: Verify hosted HML readiness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail-with-body --silent --show-error --max-time 15 \
+            "$HML_API_URL/health/ready" >/dev/null
+
+      - name: Verify collection auth and egress without enqueueing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'rm -f collection-preflight.json' EXIT
+          status="$(curl --silent --show-error --max-time 15 \
+            -o collection-preflight.json -w '%{http_code}' \
+            -X POST "$HML_API_URL/collect" \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data '{}')"
+          test "$status" = '400'
 
       - uses: actions/setup-node@v4
         with:

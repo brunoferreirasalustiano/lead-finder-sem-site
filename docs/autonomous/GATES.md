@@ -4,16 +4,14 @@ This document defines non-negotiable promotion gates for autonomous work.
 
 ## Gate states
 
-Allowed states:
+Allowed reporting states are exactly:
 
 - `PASS`
-- `PASS_WITH_NOTES`
 - `FAIL`
-- `BLOCKED`
-- `NOT_RUN`
-- `NOT_APPLICABLE`
+- `SKIPPED`
+- `NOT RUN`
 
-`NOT_RUN` is never equivalent to `PASS`.
+`NOT RUN` is never equivalent to `PASS`. When the project cannot advance, keep the affected gate as `FAIL` or `NOT RUN` and report the blocker separately, e.g. `PROJECT_BLOCKED=true` plus a factual reason.
 
 ## G0 — State reconciliation
 
@@ -157,9 +155,11 @@ concurrency => hard limits never exceeded
 synthetic cleanup => 0 leftovers
 ```
 
-## G10 — HUMAN_GATE: one real canary
+## G10 — Owner-authorized one real canary
 
-This gate is special. The project owner has authorized the completion path toward real sends, but the coordinator must still prove G0-G9 immediately before creating exactly one real provider call.
+The project owner explicitly authorized this controlled promotion path on 2026-08-12. The authorization is persisted in GitHub issue #252, comment id `5273585831`.
+
+This is not an outstanding `HUMAN_GATE`. The coordinator may execute exactly one real canary only after G0-G9 are revalidated immediately beforehand and all applicable gates PASS.
 
 Requirements:
 
@@ -175,6 +175,8 @@ Requirements:
 - provider call count begins at zero for the canary transaction.
 
 On timeout/ambiguous provider/persistence state: STOP, no retry.
+
+The persisted owner authorization does NOT cover purchases/upgrades, irreversible production changes, WhatsApp automation or commercial negotiation.
 
 ## G11 — Canary replay/no duplicate
 
@@ -225,7 +227,7 @@ Stop only when one of these applies:
 - unresolved security conflict;
 - commercial negotiation/price/scope/contract decision;
 - positive reply requiring Bruno;
-- action explicitly marked HUMAN_GATE.
+- action explicitly marked HUMAN_GATE in a future gate definition.
 
 ## Non-stop conditions
 

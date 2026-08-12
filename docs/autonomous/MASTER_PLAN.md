@@ -129,9 +129,9 @@ Provar:
 - concorrência não excede limites;
 - limpeza das fixtures deixa zero resíduos sintéticos.
 
-### Fase F — Um canário real
+### Fase F — Um canário real já autorizado pelo proprietário
 
-HUMAN_GATE de autorização já satisfeita para exatamente um canário somente quando A-E estiverem PASS; o coordenador deve revalidar imediatamente antes do envio.
+A autorização do proprietário para exatamente um canário após os gates técnicos está persistida na issue central #252, comment id `5273585831`. Não é necessária nova confirmação apenas para continuar até esse canário, desde que A-E estejam PASS imediatamente antes do provider call.
 
 Requisitos:
 
@@ -156,6 +156,8 @@ CANARY_PERSISTENCE=PASS
 CANARY_REPLAY_PROVIDER_CALLS=0
 CANARY_DUPLICATES=0
 ```
+
+A autorização não cobre compras/upgrades, mudanças irreversíveis de produção, WhatsApp automático ou negociação comercial.
 
 ### Fase G — Scheduler Daily-6
 

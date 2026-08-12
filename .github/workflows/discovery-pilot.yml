@@ -37,6 +37,9 @@ on:
           - '13'
           - '16'
 
+env:
+  APPROVED_OPERATIONAL_SHA: 9490009217d9c587869eb6b069586ab64fefd33a
+
 permissions:
   contents: read
 
@@ -72,6 +75,14 @@ jobs:
       SHADOW_MODE_ENABLED: 'true'
 
     steps:
+      - name: Validate requested SHA against approved operational SHA
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$REQUESTED_SHA" = "$APPROVED_OPERATIONAL_SHA"
+
       - name: Checkout exact approved SHA
         uses: actions/checkout@v4
         with:
@@ -84,6 +95,7 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -Eeuo pipefail
+          test "$EXPECTED_SHA" = "$APPROVED_OPERATIONAL_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           test -n "$HML_API_URL"
           test -n "$HML_COLLECTION_TOKEN"

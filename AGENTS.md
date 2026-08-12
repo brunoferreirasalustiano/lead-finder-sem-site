@@ -104,13 +104,15 @@ Nesse modo, o agente coordenador NÃO deve parar apenas porque terminou uma corr
 6. manter no máximo duas frentes mutantes simultâneas e nunca duas migrations concorrentes;
 7. registrar SHAs, run IDs, deploy IDs, migrations e provider call accounting antes de avançar.
 
-No Autonomous Completion Mode, a regra "parar após abrir PR" é substituída por este fluxo controlado:
+No Autonomous Completion Mode, as regras de parada/transição do modo padrão são substituídas por este fluxo controlado:
 
-`implementação -> testes -> PR -> review -> CI -> merge por SHA exato -> CI do SHA merged -> migration/deploy HML -> validação hospedada -> atualização de estado -> próximo gate`.
+`implementação -> testes locais -> Draft PR -> Ready for Review -> review -> CI -> merge por SHA exato -> CI do SHA merged -> migration/deploy HML -> validação hospedada -> atualização de estado -> próximo gate`.
+
+O coordenador está explicitamente autorizado a marcar a própria PR como **Ready for Review** quando os testes locais aplicáveis estiverem PASS, o escopo estiver estável e a descrição da PR registrar segurança/validação. Essa transição não autoriza merge por si só.
 
 O coordenador pode fazer merge somente quando TODOS os requisitos abaixo forem verdadeiros:
 
-- PR não é draft;
+- PR está Ready for Review e não é draft;
 - CI obrigatório está verde no HEAD exato;
 - não existem threads P0/P1/P2 válidas e não resolvidas sobre o escopo alterado;
 - diff não contém mudanças não relacionadas;
@@ -139,6 +141,8 @@ Mesmo em `AUTONOMOUS_COMPLETION_MODE=true`, nenhum agente pode habilitar envio r
 A sequência obrigatória é:
 
 `discovery E2E -> accuracy -> automated compliance -> quota/idempotency -> exatamente 1 canário real -> replay/no-duplicate -> scheduler Daily-6`.
+
+A autorização do proprietário para esse caminho, incluindo exatamente um canário após os gates técnicos, está persistida na issue central #252. Ela não cobre compras, risco irreversível, WhatsApp automático ou negociação comercial.
 
 Antes do canário, manter:
 

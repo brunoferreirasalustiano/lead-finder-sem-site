@@ -1,0 +1,32 @@
+name: PR257 lockfile repair artifact
+
+on:
+  push:
+    branches:
+      - ops/default-branch-discovery-launcher
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate non-forced lockfile security repair
+        run: npm audit fix --package-lock-only --audit-level=high
+      - name: Verify high-severity audit is clean
+        run: npm audit --audit-level=high
+      - name: Show bounded diff stats only
+        run: git diff --stat -- package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr257-package-lock-repair
+          path: package-lock.json
+          if-no-files-found: error

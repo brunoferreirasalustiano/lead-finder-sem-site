@@ -1,6 +1,6 @@
 # Lead Finder Brasil — Current Autonomous State
 
-Last reconciled: 2026-08-13T12:48Z.
+Last reconciled: 2026-08-13T12:52Z.
 
 This file is the resume point after model capacity errors, disconnects, context compaction or agent handoff. Current external state always wins over this file; update this file after every completed gate.
 
@@ -22,7 +22,7 @@ PR275_MERGE=3ac05d56610cd860d0560a7e26fc9554011ed95a
 PR275_EXACT_HEAD_CI_RUN=31701150328
 PR275_EXACT_HEAD_CI=PASS
 PR275_POSTMERGE_CI_RUN=31701587730
-PR275_POSTMERGE_CI=IN_PROGRESS_AT_RECONCILIATION
+PR275_POSTMERGE_CI=PASS
 PR272_POSTMERGE_CI_RUN=31696445463
 PR272_POSTMERGE_CI=PASS
 PR273_POSTMERGE_CI_RUN=31698068105
@@ -160,7 +160,7 @@ CNPJ_WS_OPERATIONAL_SAFE_RPM=2
 HTTP_429_RETRY=false
 ```
 
-The policy preserves any stricter configured limit. It has unit coverage and exact-head CI. It does not authorize a new provider call or a new discovery dispatch.
+The policy preserves any stricter configured limit. It has unit coverage, exact-head CI and successful merged-SHA CI. It does not authorize a new provider call or a new discovery dispatch.
 
 ## Current gates
 

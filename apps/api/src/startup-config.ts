@@ -1,26 +1,27 @@
 import { parseApiConfig } from '@lead-finder/shared';
 
-const dedicatedExpiryPaths = new Set([
+const dedicatedExpiryPaths = [
   'HML_DISCOVERY_AUTH_EXPIRES_AT',
   'HML_DAILY6_AUTH_EXPIRES_AT',
-] as const);
+] as const;
 
-type DedicatedExpiryPath = 'HML_DISCOVERY_AUTH_EXPIRES_AT' | 'HML_DAILY6_AUTH_EXPIRES_AT';
+type DedicatedExpiryPath = (typeof dedicatedExpiryPaths)[number];
 
 const expiredDedicatedPathsFromError = (error: unknown): DedicatedExpiryPath[] | undefined => {
-  if (!error || typeof error !== 'object' || !('issues' in error)) return undefined;
-  const issues = (error as { issues?: unknown }).issues;
-  if (!Array.isArray(issues) || issues.length === 0) return undefined;
+  if (!(error instanceof Error)) return undefined;
+  const prefix = 'Invalid environment configuration: ';
+  if (!error.message.startsWith(prefix)) return undefined;
+
+  const details = error.message.slice(prefix.length).split('; ');
+  if (details.length === 0) return undefined;
 
   const expiredPaths = new Set<DedicatedExpiryPath>();
-  for (const issue of issues) {
-    if (!issue || typeof issue !== 'object') return undefined;
-    const path = (issue as { path?: unknown }).path;
-    const message = (issue as { message?: unknown }).message;
-    if (!Array.isArray(path) || path.length !== 1 || typeof path[0] !== 'string') return undefined;
-    if (!dedicatedExpiryPaths.has(path[0] as DedicatedExpiryPath)) return undefined;
-    if (message !== `${path[0]} must be in the future`) return undefined;
-    expiredPaths.add(path[0] as DedicatedExpiryPath);
+  for (const detail of details) {
+    const path = dedicatedExpiryPaths.find(
+      (candidate) => detail === `${candidate}: ${candidate} must be in the future`,
+    );
+    if (!path) return undefined;
+    expiredPaths.add(path);
   }
   return [...expiredPaths];
 };
@@ -36,10 +37,10 @@ const restoreValidatedExpiredDate = (rawValue: string | undefined) => {
  * make the public health/readiness process unavailable.
  *
  * The shared parser remains the source of truth. We first run it unchanged and only
- * recover when every validation issue is exactly the dedicated "must be in the
- * future" refinement. This proves syntax and every unrelated configuration rule
- * before any sentinel is substituted. The original expired Date objects are then
- * restored immediately, so request authorization stays fail-closed.
+ * recover when its complete formatted error contains exclusively the dedicated
+ * "must be in the future" refinements. This proves syntax and every unrelated
+ * configuration rule before any sentinel is substituted. The original expired Date
+ * objects are then restored immediately, so request authorization stays fail-closed.
  */
 export const parseApiStartupConfig = (environment: NodeJS.ProcessEnv) => {
   try {

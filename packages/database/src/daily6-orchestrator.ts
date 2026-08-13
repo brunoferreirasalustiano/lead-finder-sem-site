@@ -124,8 +124,14 @@ export type Daily6SlotReport = Readonly<{
   providerCalls: number;
 }>;
 
-const cityId = (city: string) => city.trim().toLowerCase().normalize('NFKD')
-  .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const daily6CityAliases = new Set(['campinas', 'campinas-sp', 'campinas/sp', 'campinas, sp']);
+
+const daily6CityContract = (city: string): { cityId: 'campinas-sp'; queryCity: 'Campinas' } | undefined => {
+  const normalized = city.trim().toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '');
+  if (!daily6CityAliases.has(normalized)) return undefined;
+  return { cityId: 'campinas-sp', queryCity: 'Campinas' };
+};
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/u;
 const shaPattern = /^[0-9a-f]{40}$/iu;
@@ -295,8 +301,10 @@ export async function runDaily6Slot(
     throw new Error('DAILY6_OPERATIONAL_CONTRACT_MISMATCH');
   }
 
-  const normalizedCity = cityId(input.city);
-  if (!normalizedCity || normalizedCity !== 'campinas-sp') throw new Error('DAILY6_CITY_NOT_ALLOWED');
+  const cityContract = daily6CityContract(input.city);
+  if (!cityContract) throw new Error('DAILY6_CITY_NOT_ALLOWED');
+  const normalizedCity = cityContract.cityId;
+  const queryCity = cityContract.queryCity;
   const batchId = `${input.date}|${input.slot}|${normalizedCity}|${input.policyVersion}`;
   await db.execute(sql`
     select lead_finder_internal.ensure_daily6_batch(
@@ -305,12 +313,12 @@ export async function runDaily6Slot(
   `);
   const rows = await db.execute<CandidateRow>(sql`
     select * from lead_finder_internal.list_daily6_candidates(
-      ${input.city},${input.category ?? null},${DAILY6_PROGRESSIVE_LIMITS.maxDiscoveredPerSlot}
+      ${queryCity},${input.category ?? null},${DAILY6_PROGRESSIVE_LIMITS.maxDiscoveredPerSlot}
     )
   `);
   const candidates = rows.map(asCandidate);
   const internalAuth = internalAuthorization(authorization.requestId);
-  const selection = await selectProgressiveDaily6Candidates(candidates, input.city, (candidate) => {
+  const selection = await selectProgressiveDaily6Candidates(candidates, queryCity, (candidate) => {
     const compliance = evaluateAutomatedCompliance({
       businessIdentityConfirmed: candidate.business_identity_confirmed,
       businessActive: candidate.business_active_pass ? 'PASS' : 'UNCERTAIN',

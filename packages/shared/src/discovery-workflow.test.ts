@@ -20,6 +20,10 @@ describe('discovery one-shot workflow contract', () => {
     expect(workflow).toContain('COLLECTION_STATUS=FAILED');
     expect(workflow).toContain('PENDING|PROCESSING|\'\'');
     expect(workflow).toContain('CNPJ_PROVIDER_MAX_RPM: \'3\'');
+    expect(workflow).toContain('[[ ! "$request_identity" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\\|(09|13|16)\\|[a-z0-9-]+\\|daily6-v1$ ]]');
+    expect(workflow).toContain("where request_identity = '$request_identity'");
+    expect(workflow).toContain("where request_identity = '$REQUEST_IDENTITY'");
+    expect(workflow).not.toContain("where request_identity = :'request_identity'");
     expect(workflow).not.toMatch(/GMAIL_(ACCESS|REFRESH|CLIENT)|EMAIL_PROVIDER_SECRET/u);
   });
 });

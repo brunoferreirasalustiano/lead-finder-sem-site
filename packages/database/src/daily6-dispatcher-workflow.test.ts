@@ -9,7 +9,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '0 16 * * *'");
     expect(workflow).toContain("cron: '0 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 4f350da21d8ead3cbff6c356ed37c31bb2a0ec0a');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 1ddb2327955c8cbabd32e106f24d126d5f3c5e2a');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 

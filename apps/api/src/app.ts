@@ -856,8 +856,12 @@ export function buildApp(db: Database, options: {
       const result = await runDaily6Slot(db, body.data as Daily6SlotInput, authorizationContextFor(request), options.daily6SlotRuntime);
       request.log.info({
         event: 'daily6_slot_completed', batchId: result.batchId, discovered: result.discovered,
-        autoApproved: result.autoApproved, rejected: result.rejected, sent: result.sent,
-        providerCalls: result.providerCalls, replayed: result.replayed, principalId: request.principal!.id,
+        cheapFilterRejected: result.cheapFilterRejected, ranked: result.ranked,
+        finalistsEvaluated: result.finalistsEvaluated, enriched: result.enriched,
+        autoApproved: result.autoApproved, rejected: result.rejected, unknown: result.unknown,
+        blocked: result.blocked, targetReached: result.targetReached, stopReason: result.stopReason,
+        sent: result.sent, providerCalls: result.providerCalls, replayed: result.replayed,
+        principalId: request.principal!.id,
       }, 'daily6_slot_completed');
       return result;
     } catch (error) {

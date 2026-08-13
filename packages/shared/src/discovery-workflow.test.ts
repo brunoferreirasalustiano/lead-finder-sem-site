@@ -10,6 +10,7 @@ describe('discovery one-shot workflow contract', () => {
     expect(workflow).toContain('permissions:\n  contents: read');
     expect(workflow).toContain('ref: ${{ inputs.expected_sha }}');
     expect(workflow).toContain('WORKER_MODE: oneshot');
+    expect(workflow).toContain('timeout-minutes: 45');
     expect(workflow).toContain('DEPLOYMENT_PROFILE: supabase-render');
     expect(workflow).not.toContain('DEPLOYMENT_PROFILE: oracle-vps');
     expect(workflow).toContain('ENRICHMENT_PROVIDER: composite');

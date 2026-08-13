@@ -4,6 +4,7 @@ import {
   getLeadByOsmIdentity,
   recordLeadEnrichment,
   insertLeads,
+  renewCollectionLease,
   type Database,
 } from '@lead-finder/database';
 import { calculateLeadScore } from '@lead-finder/lead-scoring';
@@ -34,6 +35,7 @@ export async function processNextJob(
     await insertLeads(db, normalized.map((lead) => ({ ...lead, score: calculateLeadScore(lead) })));
     if (enrichmentProvider) {
       for (const lead of normalized.slice(0, maxEnrichmentCandidates)) {
+        if (!(await renewCollectionLease(db, job.id, job.leaseToken))) throw new Error('COLLECTION_LEASE_LOST');
         const persisted = await getLeadByOsmIdentity(db, lead.osmType, lead.osmId);
         if (!persisted) continue;
         providerCallInFlight = true;
@@ -41,6 +43,7 @@ export async function processNextJob(
         providerCallInFlight = false;
         await recordLeadEnrichment(db, persisted.id, result);
       }
+      if (!(await renewCollectionLease(db, job.id, job.leaseToken))) throw new Error('COLLECTION_LEASE_LOST');
     }
     await finishCollection(db, job.id, undefined, job.leaseToken);
   } catch (error) {
@@ -54,6 +57,7 @@ export async function processNextJob(
       ...(enrichmentProvider === undefined || !providerCallInFlight ? {} : { provider: enrichmentProvider.name }),
       ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
     });
+    if (code === 'COLLECTION_LEASE_LOST') throw error;
     await finishCollection(db, job.id, code, job.leaseToken);
   }
   return true;

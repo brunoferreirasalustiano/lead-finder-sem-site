@@ -207,7 +207,10 @@ jobs:
     needs: provider-health
     runs-on: ubuntu-latest
     environment: hml-discovery
-    timeout-minutes: 20
+    # The bounded worker may perform up to ten enrichment candidates with the
+    # enforced two-RPM CNPJ.ws safety pacing. Keep the job bounded, but longer
+    # than the provider worst case so it can finalize the collection lease.
+    timeout-minutes: 45
     env:
       HML_API_URL: ${{ vars.HML_API_URL }}
       HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}

@@ -16,6 +16,7 @@ import { hostname } from 'node:os';
 import { createGracefulStop } from './graceful-stop.js';
 import { createConsoleOperationalLogger } from './operational-observability.js';
 import { runOneShot } from './oneshot.js';
+import { safeCnpjWsPublicRpm } from './provider-policy.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const operationalLogger = createConsoleOperationalLogger();
@@ -37,7 +38,7 @@ const enrichmentProvider: BusinessContactEnrichmentProvider | undefined = config
           registryProvider: new CnpjWsBusinessRegistryProvider({
             timeoutMs: config.ENRICHMENT_TIMEOUT_MS,
             maxRetries: config.ENRICHMENT_MAX_RETRIES,
-            maxRpm: config.CNPJ_PROVIDER_MAX_RPM,
+            maxRpm: safeCnpjWsPublicRpm(config.CNPJ_PROVIDER_MAX_RPM),
             onCall: (event) => providerCallAccounting.record(event),
           }),
         })

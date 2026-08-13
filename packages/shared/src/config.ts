@@ -726,7 +726,8 @@ const workerSchema = commonSchema.extend({
   TAVILY_MAX_RESULTS_PER_QUERY: integerFromEnvironment('TAVILY_MAX_RESULTS_PER_QUERY', 1, 5, 5),
   TAVILY_MAX_RETRIES: integerFromEnvironment('TAVILY_MAX_RETRIES', 0, 2, 1),
   TAVILY_MIN_INTERVAL_MS: integerFromEnvironment('TAVILY_MIN_INTERVAL_MS', 0, 60_000, 1_000),
-  CNPJ_PROVIDER_MAX_RPM: integerFromEnvironment('CNPJ_PROVIDER_MAX_RPM', 1, 60, 10),
+  TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: integerFromEnvironment('TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS', 0, 60_000, 10_000),
+  CNPJ_PROVIDER_MAX_RPM: integerFromEnvironment('CNPJ_PROVIDER_MAX_RPM', 1, 3, 3),
 }).superRefine((configuration, context) => {
   requireCollectionEndpoint(configuration, context);
   requireEnrichmentEndpoint(configuration, context);

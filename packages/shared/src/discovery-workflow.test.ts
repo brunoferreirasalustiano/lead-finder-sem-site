@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-const workflow = await readFile(new URL('../../../.github/workflows/discovery-pilot.yml', import.meta.url), 'utf8');
+const workflow = (await readFile(new URL('../../../.github/workflows/discovery-pilot.yml', import.meta.url), 'utf8')).replace(/\r\n/gu, '\n');
 
 describe('discovery one-shot workflow contract', () => {
   it('is dispatch-only, exact-SHA pinned, and cannot access Gmail credentials', () => {
@@ -14,6 +14,12 @@ describe('discovery one-shot workflow contract', () => {
     expect(workflow).not.toContain('DEPLOYMENT_PROFILE: oracle-vps');
     expect(workflow).toContain('ENRICHMENT_PROVIDER: composite');
     expect(workflow).toContain('TZ=America/Sao_Paulo date +%F');
+    expect(workflow).toContain('PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS');
+    expect(workflow).toContain('PROVIDER_CALL_ACCOUNTING=PASS');
+    expect(workflow).toContain('COLLECTION_STATUS=COMPLETED');
+    expect(workflow).toContain('COLLECTION_STATUS=FAILED');
+    expect(workflow).toContain('PENDING|PROCESSING|\'\'');
+    expect(workflow).toContain('CNPJ_PROVIDER_MAX_RPM: \'3\'');
     expect(workflow).not.toMatch(/GMAIL_(ACCESS|REFRESH|CLIENT)|EMAIL_PROVIDER_SECRET/u);
   });
 });

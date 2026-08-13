@@ -80,18 +80,72 @@ export type BusinessEnrichmentRequest = {
   lead: NormalizedLead;
 };
 
+export const providerCallProviders = ['TAVILY', 'CNPJ_WS', 'ENRICHMENT_HTTP'] as const;
+export type ProviderCallProvider = (typeof providerCallProviders)[number];
+export type ProviderCallOutcome = 'ATTEMPT' | 'SUCCESS' | 'RATE_LIMITED_429' | 'FAILED';
+export type ProviderCallTelemetry = {
+  provider: ProviderCallProvider;
+  outcome: ProviderCallOutcome;
+  retryAfterSeconds?: number;
+};
+
+export type ProviderCallAccountingEntry = {
+  provider: ProviderCallProvider;
+  attemptedCalls: number;
+  successfulCalls: number;
+  rateLimited429Calls: number;
+  retryAfterSeconds?: number;
+};
+
+export class ProviderCallAccounting {
+  private readonly entries = new Map<ProviderCallProvider, ProviderCallAccountingEntry>(
+    providerCallProviders.map((provider) => [provider, {
+      provider,
+      attemptedCalls: 0,
+      successfulCalls: 0,
+      rateLimited429Calls: 0,
+    }]),
+  );
+
+  record(event: ProviderCallTelemetry): void {
+    const entry = this.entries.get(event.provider);
+    if (!entry) return;
+    if (event.outcome === 'ATTEMPT') entry.attemptedCalls += 1;
+    if (event.outcome === 'SUCCESS') entry.successfulCalls += 1;
+    if (event.outcome === 'RATE_LIMITED_429') {
+      entry.rateLimited429Calls += 1;
+      if (event.retryAfterSeconds !== undefined) entry.retryAfterSeconds = event.retryAfterSeconds;
+    }
+  }
+
+  snapshot(): ProviderCallAccountingEntry[] {
+    return providerCallProviders.map((provider) => {
+      const entry = this.entries.get(provider)!;
+      return entry.retryAfterSeconds === undefined ? { ...entry } : { ...entry, retryAfterSeconds: entry.retryAfterSeconds };
+    });
+  }
+}
+
 export class EnrichmentError extends Error {
+  readonly retryAfterSeconds?: number;
+
   constructor(
     message: string,
     public readonly code:
       | 'ENRICHMENT_EGRESS_DISABLED'
       | 'ENRICHMENT_PROVIDER_DISABLED'
       | 'SOURCE_TEMPORARILY_UNAVAILABLE'
+      | 'TAVILY_RATE_LIMITED'
+      | 'CNPJ_WS_RATE_LIMITED'
       | 'SOURCE_RATE_LIMITED'
       | 'REGISTRY_NOT_FOUND'
       | 'INVALID_SOURCE_RESPONSE',
+    retryAfterSeconds?: number,
   ) {
     super(message);
+    if (retryAfterSeconds !== undefined && Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
+      this.retryAfterSeconds = retryAfterSeconds;
+    }
   }
 }
 
@@ -120,6 +174,7 @@ export interface HttpBusinessEnrichmentProviderOptions {
   minIntervalMs?: number;
   fetchFn?: typeof fetch;
   sleepFn?: (ms: number) => Promise<void>;
+  onCall?: (event: ProviderCallTelemetry) => void;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -144,6 +199,12 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
       this.lastRequestAt = Date.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+      this.options.onCall?.({ provider: 'ENRICHMENT_HTTP', outcome: 'ATTEMPT' });
+      let resultRecorded = false;
+      const recordResult = (event: ProviderCallTelemetry): void => {
+        resultRecorded = true;
+        this.options.onCall?.(event);
+      };
       try {
         const response = await this.fetchFn(this.options.endpoint, {
           method: 'POST',
@@ -162,22 +223,35 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
           signal: controller.signal,
         });
         if (!response.ok) {
-          if (![429, 502, 504].includes(response.status)) {
+          if (response.status === 429) {
+            const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
+            recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
+            throw new EnrichmentError('Enrichment provider rate limit reached', 'SOURCE_RATE_LIMITED', retryAfterSeconds);
+          }
+          if (![502, 503, 504].includes(response.status)) {
+            recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
             throw new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
           }
+          recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
           lastError = new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
         } else {
           let payload: unknown;
           try {
             payload = await response.json();
           } catch {
+            recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
             throw new EnrichmentError('Enrichment provider response is not valid JSON', 'INVALID_SOURCE_RESPONSE');
           }
           const parsed = businessEnrichmentResultSchema.safeParse(payload);
-          if (!parsed.success) throw new EnrichmentError('Enrichment provider response is invalid', 'INVALID_SOURCE_RESPONSE');
+          if (!parsed.success) {
+            recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
+            throw new EnrichmentError('Enrichment provider response is invalid', 'INVALID_SOURCE_RESPONSE');
+          }
+          recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'SUCCESS' });
           return parsed.data;
         }
       } catch (error) {
+        if (!resultRecorded) recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
         lastError = error;
         if (error instanceof EnrichmentError && error.code === 'INVALID_SOURCE_RESPONSE') throw error;
       } finally {
@@ -190,6 +264,12 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
       : new EnrichmentError('Enrichment provider is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE');
   }
 }
+
+export const parseRetryAfterSeconds = (value: string | null): number | undefined => {
+  if (!value || !/^\d+(?:\.\d+)?$/u.test(value.trim())) return undefined;
+  const seconds = Number(value.trim());
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+};
 
 export function classifyWebsite(result: Pick<BusinessEnrichmentResult, 'website'>): WebsiteStatus {
   if (result.website.officialSiteFound) return 'OFFICIAL_SITE_FOUND';

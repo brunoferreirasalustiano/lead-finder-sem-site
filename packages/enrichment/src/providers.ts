@@ -3,9 +3,11 @@ import {
   EnrichmentError,
   isPublicSourceLocator,
   isBusinessEmailAddress,
+  parseRetryAfterSeconds,
   type BusinessContactEnrichmentProvider,
   type BusinessEnrichmentRequest,
   type BusinessEnrichmentResult,
+  type ProviderCallTelemetry,
 } from './index.js';
 
 const TAVILY_ENDPOINT = 'https://api.tavily.com/search';
@@ -67,6 +69,8 @@ export interface TavilyBusinessSearchProviderOptions {
   fetchFn?: typeof fetch;
   sleepFn?: (ms: number) => Promise<void>;
   now?: () => Date;
+  onCall?: (event: ProviderCallTelemetry) => void;
+  rateLimitRecoveryMaxWaitMs?: number;
 }
 
 export interface CnpjWsBusinessRegistryProviderOptions {
@@ -76,6 +80,7 @@ export interface CnpjWsBusinessRegistryProviderOptions {
   fetchFn?: typeof fetch;
   sleepFn?: (ms: number) => Promise<void>;
   now?: () => Date;
+  onCall?: (event: ProviderCallTelemetry) => void;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -198,6 +203,12 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
       this.lastRequestAt = Date.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+      this.options.onCall?.({ provider: 'TAVILY', outcome: 'ATTEMPT' });
+      let resultRecorded = false;
+      const recordResult = (event: ProviderCallTelemetry): void => {
+        resultRecorded = true;
+        this.options.onCall?.(event);
+      };
       try {
         const response = await this.fetchFn(TAVILY_ENDPOINT, {
           method: 'POST',
@@ -205,15 +216,38 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
           body: JSON.stringify({ api_key: this.options.apiKey!.trim(), query, search_depth: 'basic', max_results: Math.min(this.options.maxResultsPerQuery ?? 5, 5), include_answer: false, include_raw_content: false }),
           signal: controller.signal,
         });
-        if (response.status === 429) throw new EnrichmentError('Tavily rate limit reached', 'SOURCE_RATE_LIMITED');
-        if ([502, 503, 504].includes(response.status)) throw new EnrichmentError(`Tavily responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
-        if (!response.ok) throw new EnrichmentError(`Tavily responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+        if (response.status === 429) {
+          const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
+          recordResult({ provider: 'TAVILY', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
+          throw new EnrichmentError('Tavily rate limit reached', 'TAVILY_RATE_LIMITED', retryAfterSeconds);
+        }
+        if ([502, 503, 504].includes(response.status)) {
+          recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
+          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
+        }
+        if (!response.ok) {
+          recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
+          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+        }
         const payload = await response.json() as { results?: unknown };
-        if (!Array.isArray(payload.results)) throw new EnrichmentError('Tavily response is malformed', 'INVALID_SOURCE_RESPONSE');
+        if (!Array.isArray(payload.results)) {
+          recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
+          throw new EnrichmentError('Tavily response is malformed', 'INVALID_SOURCE_RESPONSE');
+        }
+        recordResult({ provider: 'TAVILY', outcome: 'SUCCESS' });
         return payload.results as TavilyResult[];
       } catch (error) {
+        if (!resultRecorded) recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
         lastError = error;
-        if (error instanceof EnrichmentError && ['SOURCE_RATE_LIMITED', 'INVALID_SOURCE_RESPONSE'].includes(error.code)) throw error;
+        if (error instanceof EnrichmentError && error.code === 'TAVILY_RATE_LIMITED') {
+          const maxWaitMs = Math.max(0, this.options.rateLimitRecoveryMaxWaitMs ?? 0);
+          if (attempt < maxRetries && error.retryAfterSeconds !== undefined && maxWaitMs > 0) {
+            await this.sleepFn(Math.min(error.retryAfterSeconds * 1_000, maxWaitMs));
+            continue;
+          }
+          throw error;
+        }
+        if (error instanceof EnrichmentError && error.code === 'INVALID_SOURCE_RESPONSE') throw error;
       } finally {
         clearTimeout(timer);
       }
@@ -281,7 +315,9 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
     const locator = `${CNPJ_WS_ENDPOINT}/${cnpj}`;
     let lastError: unknown;
     const maxRetries = Math.min(this.options.maxRetries ?? 1, 2);
-    const rpm = Math.max(1, Math.min(this.options.maxRpm ?? 10, 60));
+    // The public CNPJ.ws API documents a hard limit of three requests per minute per IP.
+    // Keep the adapter fail-safe even if a caller supplies a larger value.
+    const rpm = Math.max(1, Math.min(this.options.maxRpm ?? 3, 3));
     const minIntervalMs = Math.ceil(60_000 / rpm);
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       const elapsed = Date.now() - this.lastRequestAt;
@@ -289,18 +325,42 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
       this.lastRequestAt = Date.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+      this.options.onCall?.({ provider: 'CNPJ_WS', outcome: 'ATTEMPT' });
+      let resultRecorded = false;
+      const recordResult = (event: ProviderCallTelemetry): void => {
+        resultRecorded = true;
+        this.options.onCall?.(event);
+      };
       try {
         const response = await this.fetchFn(locator, { method: 'GET', headers: { accept: 'application/json', 'user-agent': 'lead-finder-sem-site/0.1' }, signal: controller.signal });
-        if (response.status === 429) throw new EnrichmentError('CNPJ.ws rate limit reached', 'SOURCE_RATE_LIMITED');
-        if (response.status === 404) throw new EnrichmentError('CNPJ.ws record was not found', 'REGISTRY_NOT_FOUND');
-        if ([502, 503, 504].includes(response.status)) throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
-        if (!response.ok) throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+        if (response.status === 429) {
+          const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
+          recordResult({ provider: 'CNPJ_WS', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
+          throw new EnrichmentError('CNPJ.ws rate limit reached', 'CNPJ_WS_RATE_LIMITED', retryAfterSeconds);
+        }
+        if (response.status === 404) {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError('CNPJ.ws record was not found', 'REGISTRY_NOT_FOUND');
+        }
+        if ([502, 503, 504].includes(response.status)) {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
+        }
+        if (!response.ok) {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+        }
         const record = parseRegistryPayload(await response.json(), cnpj, locator, this.now());
-        if (record.cnpj !== cnpj) throw new EnrichmentError('CNPJ.ws returned a different company identifier', 'INVALID_SOURCE_RESPONSE');
+        if (record.cnpj !== cnpj) {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError('CNPJ.ws returned a different company identifier', 'INVALID_SOURCE_RESPONSE');
+        }
+        recordResult({ provider: 'CNPJ_WS', outcome: 'SUCCESS' });
         return record;
       } catch (error) {
+        if (!resultRecorded) recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
         lastError = error;
-        if (error instanceof EnrichmentError && ['SOURCE_RATE_LIMITED', 'REGISTRY_NOT_FOUND', 'INVALID_SOURCE_RESPONSE'].includes(error.code)) throw error;
+        if (error instanceof EnrichmentError && ['CNPJ_WS_RATE_LIMITED', 'REGISTRY_NOT_FOUND', 'INVALID_SOURCE_RESPONSE'].includes(error.code)) throw error;
       } finally {
         clearTimeout(timer);
       }

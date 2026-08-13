@@ -1,18 +1,18 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-const migration = await readFile(
+const migration = (await readFile(
   new URL('../../../database/migrations/0056_daily6_automated_compliance.sql', import.meta.url),
   'utf8',
-);
-const workflow = await readFile(
+)).replace(/\r\n/gu, '\n');
+const workflow = (await readFile(
   new URL('../../../.github/workflows/discovery-pilot.yml', import.meta.url),
   'utf8',
-);
-const daily6Workflow = await readFile(
+)).replace(/\r\n/gu, '\n');
+const daily6Workflow = (await readFile(
   new URL('../../../.github/workflows/daily6-slot.yml', import.meta.url),
   'utf8',
-);
+)).replace(/\r\n/gu, '\n');
 
 describe('Daily-6 automated compliance contract', () => {
   it('keeps machine decisions distinct from human decisions', () => {

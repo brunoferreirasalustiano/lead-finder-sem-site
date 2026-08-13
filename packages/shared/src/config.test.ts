@@ -551,7 +551,14 @@ describe('environment configuration', () => {
       DEPLOYMENT_ENVIRONMENT: 'homologation',
       COLLECTION_EGRESS_ENABLED: true,
       ENRICHMENT_EGRESS_ENABLED: true,
+      TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: 10_000,
+      CNPJ_PROVIDER_MAX_RPM: 3,
     });
+    expect(parseWorkerConfig({ ...hmlOneShot, TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '60000', CNPJ_PROVIDER_MAX_RPM: '3' })).toMatchObject({
+      TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: 60_000,
+      CNPJ_PROVIDER_MAX_RPM: 3,
+    });
+    expect(() => parseWorkerConfig({ ...hmlOneShot, CNPJ_PROVIDER_MAX_RPM: '4' })).toThrow('CNPJ_PROVIDER_MAX_RPM');
     expect(() => parseWorkerConfig({ ...hmlOneShot, WORKER_MODE: 'continuous' })).toThrow('bounded oneshot mode');
     expect(() => parseWorkerConfig({ ...hmlOneShot, DEPLOYMENT_ENVIRONMENT: 'production' })).toThrow('HML-only');
     expect(() => parseWorkerConfig({

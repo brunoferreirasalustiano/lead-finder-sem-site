@@ -1,40 +1,66 @@
 import { parseApiConfig } from '@lead-finder/shared';
 
-const restoredExpiredDate = (rawValue: string | undefined, now: number) => {
-  if (!rawValue) return undefined;
-  const parsed = new Date(rawValue);
-  return Number.isFinite(parsed.getTime()) && parsed.getTime() <= now ? parsed : undefined;
+const dedicatedExpiryPaths = new Set([
+  'HML_DISCOVERY_AUTH_EXPIRES_AT',
+  'HML_DAILY6_AUTH_EXPIRES_AT',
+] as const);
+
+type DedicatedExpiryPath = 'HML_DISCOVERY_AUTH_EXPIRES_AT' | 'HML_DAILY6_AUTH_EXPIRES_AT';
+
+const expiredDedicatedPathsFromError = (error: unknown): DedicatedExpiryPath[] | undefined => {
+  if (!error || typeof error !== 'object' || !('issues' in error)) return undefined;
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return undefined;
+
+  const expiredPaths = new Set<DedicatedExpiryPath>();
+  for (const issue of issues) {
+    if (!issue || typeof issue !== 'object') return undefined;
+    const path = (issue as { path?: unknown }).path;
+    const message = (issue as { message?: unknown }).message;
+    if (!Array.isArray(path) || path.length !== 1 || typeof path[0] !== 'string') return undefined;
+    if (!dedicatedExpiryPaths.has(path[0] as DedicatedExpiryPath)) return undefined;
+    if (message !== `${path[0]} must be in the future`) return undefined;
+    expiredPaths.add(path[0] as DedicatedExpiryPath);
+  }
+  return [...expiredPaths];
+};
+
+const restoreValidatedExpiredDate = (rawValue: string | undefined) => {
+  if (!rawValue) throw new Error('validated dedicated expiry is unexpectedly absent');
+  return new Date(rawValue);
 };
 
 /**
- * Dedicated HML discovery/Daily-6 bearer credentials are long-lived configuration
- * slots whose tokens are independently rejected by the request authenticator once
- * their expiresAt timestamp passes. An expired slot therefore must not make the
- * public health/readiness process unavailable.
+ * Dedicated HML discovery/Daily-6 bearer credentials are rejected by request
+ * authentication once their expiresAt timestamp passes. Expiry therefore must not
+ * make the public health/readiness process unavailable.
  *
- * We still run the complete shared configuration schema. For syntactically valid,
- * already-expired dedicated timestamps only, a short-lived parse sentinel avoids
- * the startup-only "must be in the future" refinement; the original expired Date
- * is restored immediately in the returned configuration. Missing/malformed fields,
- * wrong environments, permission/profile constraints and every other validation
- * continue to fail closed.
+ * The shared parser remains the source of truth. We first run it unchanged and only
+ * recover when every validation issue is exactly the dedicated "must be in the
+ * future" refinement. This proves syntax and every unrelated configuration rule
+ * before any sentinel is substituted. The original expired Date objects are then
+ * restored immediately, so request authorization stays fail-closed.
  */
 export const parseApiStartupConfig = (environment: NodeJS.ProcessEnv) => {
-  const now = Date.now();
-  const expiredDiscovery = restoredExpiredDate(environment.HML_DISCOVERY_AUTH_EXPIRES_AT, now);
-  const expiredDaily6 = restoredExpiredDate(environment.HML_DAILY6_AUTH_EXPIRES_AT, now);
+  try {
+    return parseApiConfig(environment);
+  } catch (error) {
+    const expiredPaths = expiredDedicatedPathsFromError(error);
+    if (!expiredPaths) throw error;
 
-  if (!expiredDiscovery && !expiredDaily6) return parseApiConfig(environment);
+    const parseEnvironment: NodeJS.ProcessEnv = { ...environment };
+    const parseSentinel = new Date(Date.now() + 60_000).toISOString();
+    for (const path of expiredPaths) parseEnvironment[path] = parseSentinel;
 
-  const parseEnvironment: NodeJS.ProcessEnv = { ...environment };
-  const parseSentinel = new Date(now + 60_000).toISOString();
-  if (expiredDiscovery) parseEnvironment.HML_DISCOVERY_AUTH_EXPIRES_AT = parseSentinel;
-  if (expiredDaily6) parseEnvironment.HML_DAILY6_AUTH_EXPIRES_AT = parseSentinel;
-
-  const parsed = parseApiConfig(parseEnvironment);
-  return {
-    ...parsed,
-    ...(expiredDiscovery ? { HML_DISCOVERY_AUTH_EXPIRES_AT: expiredDiscovery } : {}),
-    ...(expiredDaily6 ? { HML_DAILY6_AUTH_EXPIRES_AT: expiredDaily6 } : {}),
-  };
+    const parsed = parseApiConfig(parseEnvironment);
+    return {
+      ...parsed,
+      ...(expiredPaths.includes('HML_DISCOVERY_AUTH_EXPIRES_AT')
+        ? { HML_DISCOVERY_AUTH_EXPIRES_AT: restoreValidatedExpiredDate(environment.HML_DISCOVERY_AUTH_EXPIRES_AT) }
+        : {}),
+      ...(expiredPaths.includes('HML_DAILY6_AUTH_EXPIRES_AT')
+        ? { HML_DAILY6_AUTH_EXPIRES_AT: restoreValidatedExpiredDate(environment.HML_DAILY6_AUTH_EXPIRES_AT) }
+        : {}),
+    };
+  }
 };

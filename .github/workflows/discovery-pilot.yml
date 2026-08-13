@@ -252,6 +252,31 @@ jobs:
           test -n "$DATABASE_URL"
           test -n "$TAVILY_API_KEY"
 
+      - name: Verify hosted HML readiness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail-with-body --silent --show-error --max-time 15 \
+            "$HML_API_URL/health/ready" >/dev/null
+          echo 'HML_READINESS=PASS'
+
+      - name: Verify collection auth and egress without enqueueing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          preflight_body="$(mktemp)"
+          trap 'rm -f "$preflight_body"' EXIT
+          status="$(curl --silent --show-error --max-time 15 \
+            -o "$preflight_body" -w '%{http_code}' \
+            -X POST "$HML_API_URL/collect" \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data '{}')"
+          test "$status" = '400'
+          jq -e '.error == "Invalid collection parameters" and (.details | type == "object")' "$preflight_body" >/dev/null
+          echo 'COLLECTION_AUTH_EGRESS_PREFLIGHT=PASS'
+          echo 'PREFLIGHT_ENQUEUE=false'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { NormalizedLead } from '@lead-finder/shared';
 import {
   EnrichmentError,
@@ -149,7 +150,7 @@ const buildQueries = (lead: NormalizedLead): string[] => {
 };
 
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
-const cnpjPattern = /(?<![A-Z0-9])(?:[A-Z0-9]{12}\d{2}|[A-Z0-9]{2}\.[A-Z0-9]{3}\.[A-Z0-9]{3}\/[A-Z0-9]{4}-\d{2})(?![A-Z0-9])/giu;
+const cnpjPattern = /(?<![A-Z0-9])(?:[A-Z0-9]{12}\d{2}|[A-Z0-9]{2}[.\s][A-Z0-9]{3}[.\s][A-Z0-9]{3}[/\s][A-Z0-9]{4}[-\s]\d{2})(?![A-Z0-9])/giu;
 
 type TavilyResult = { url?: unknown; title?: unknown; content?: unknown; published_date?: unknown };
 
@@ -291,9 +292,29 @@ const nestedText = (value: unknown, ...keys: string[]): string | null => {
   return text || null;
 };
 
+const registryBranchSchema = z.object({
+  cnpj: z.string().trim().min(1).optional(),
+  razao_social: z.string().trim().min(1).optional(),
+  situacao_cadastral: z.string().trim().min(1).optional(),
+}).passthrough();
+
+const registryPayloadSchema = z.object({
+  cnpj: z.string().trim().min(1).optional(),
+  razao_social: z.string().trim().min(1).optional(),
+  situacao_cadastral: z.string().trim().min(1).optional(),
+  estabelecimento: registryBranchSchema.optional(),
+}).passthrough().refine((payload) => (
+  payload.cnpj !== undefined
+  || payload.razao_social !== undefined
+  || payload.situacao_cadastral !== undefined
+  || payload.estabelecimento !== undefined
+), 'registry payload has no recognized fields');
+
 const parseRegistryPayload = (payload: unknown, cnpj: string, sourceLocator: string, observedAt: Date): BusinessRegistryRecord => {
-  const root = asRecord(payload);
-  const establishment = asRecord(root.estabelecimento ?? root);
+  const parsed = registryPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+  const root = parsed.data;
+  const establishment = root.estabelecimento ?? root;
   const responseCnpj = normalizeCnpj(nestedText(establishment, 'cnpj') ?? nestedText(root, 'cnpj') ?? '');
   const businessName = nestedText(root, 'razao_social') ?? nestedText(establishment, 'razao_social') ?? '';
   const status = normalizeText(nestedText(establishment, 'situacao_cadastral') ?? nestedText(root, 'situacao_cadastral'));

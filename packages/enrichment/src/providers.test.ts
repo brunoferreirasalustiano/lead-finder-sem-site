@@ -135,6 +135,19 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(fetchFn.mock.calls[0]?.[0]).toBe('https://publica.cnpj.ws/cnpj/12ABC34501DE35');
   });
 
+  it('extracts a valid whitespace-separated numeric CNPJ from public results', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://public.example/all-beauty', title: 'All Beauty', content: 'CNPJ 12 345 678 0001 95',
+    }] }), { status: 200 }));
+    const provider = new TavilyBusinessSearchProvider({
+      apiKey: 'test-key', timeoutMs: 50, maxQueries: 1,
+      fetchFn,
+    });
+    const evidence = await provider.search({ lead });
+    expect(evidence.cnpjCandidates).toEqual(['12345678000195']);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps registry rate limits and missing records explicit', async () => {
     const accounting = new ProviderCallAccounting();
     const rateLimited = new CnpjWsBusinessRegistryProvider({

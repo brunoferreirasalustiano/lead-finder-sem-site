@@ -1,6 +1,6 @@
 # Lead Finder Brasil — Current Autonomous State
 
-Last reconciled: 2026-08-13T02:06Z.
+Last reconciled: 2026-08-13T02:39Z.
 
 This file is the resume point after model capacity errors, disconnects, context compaction or agent handoff. Current external state always wins over this file; update this file after every completed gate.
 
@@ -10,9 +10,9 @@ This file is the resume point after model capacity errors, disconnects, context 
 PROJECT=Lead Finder Brasil
 REPO=brunoferreirasalustiano/lead-finder-sem-site
 HML_BRANCH=hml/render-supabase-plan-b
-HML_SHA=894c136dba8e869d8a27433efd256f40d5062331
+HML_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
 MAIN_SHA=8181c3e007ef8dee7117f81fc7f07ca16a05d002
-LAST_MERGED_PR=265
+LAST_MERGED_PR=266
 PR262_HEAD=f8203dac4b25ca67755e1f76f5feec6620aac0dc
 PR262_MERGE=d7c4181fa1a661cf9323e455642598fddcf96a27
 PR263_HEAD=2313198cd465acb7fd47d27e67bc422de2c85f01
@@ -21,8 +21,12 @@ PR264_HEAD=b997bc5d9227549f5c9aecd0ecf2db3f71c3aee5
 PR264_MERGE=f23bb6962c0435cd97c0f13ffdca5c6e40cf038e
 PR265_HEAD=b9fca0b30383e863ac945feffe60f1e1d3e62b38
 PR265_MERGE=894c136dba8e869d8a27433efd256f40d5062331
-EXACT_SHA_CI_RUN=31659193151
+PR266_HEAD=9de93fc17b8a4d0b8c3e129d0f583d9d1bf93815
+PR266_MERGE=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
+EXACT_SHA_CI_RUN=31661064775
 EXACT_SHA_CI=PASS
+PR266_EXACT_HEAD_CI_RUN=31660764607
+PR266_EXACT_HEAD_CI=PASS
 PR262_CI_RUN=31649854222
 DEPLOYMENT_SMOKE_RUN=31649840784
 POSTMERGE_DEPLOYMENT_SMOKE_RUN=31652985173
@@ -67,11 +71,11 @@ SERVICE=lead-finder-api-hml
 SERVICE_ID=srv-d9fbpp6rnols73bko9f0
 WORKSPACE=Bruno's workspace
 WORKSPACE_ID=tea-d72o44oule4c73cut1l0
-RENDER_SHA=d7c4181fa1a661cf9323e455642598fddcf96a27
-RENDER_DEPLOY_ID=dep-d9ug3ndbedkc73a3u180
-RENDER_STATUS=STARTUP_BLOCKED_INVALID_CONFIGURATION
-RENDER_HEALTH=NOT RUN (latest probe timeout at 2026-08-13T02:00Z)
-RENDER_READINESS=NOT RUN (latest prior 200 logged 2026-08-12T23:48Z)
+RENDER_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
+RENDER_DEPLOY_ID=dep-d9uir57qj5pc73fn1m20
+RENDER_STATUS=UPDATE_FAILED_STARTUP_INVALID_CONFIGURATION
+RENDER_HEALTH=NOT RUN (deploy dep-d9uir57qj5pc73fn1m20 exited status 1 at 2026-08-13T02:36:54Z)
+RENDER_READINESS=NOT RUN (startup emitted INVALID_CONFIGURATION; last prior 200 logged 2026-08-12T23:48Z)
 ```
 
 Discovery-only hosted profile remains the intended state until canary authorization gates are satisfied.
@@ -113,10 +117,11 @@ The single controlled discovery dispatch passed all preflight and enqueue checks
 
 Recovery is executable and fail-closed:
 
-1. merge the provider telemetry/accounting and terminal-status workflow fix through exact-head CI;
-2. validate HML and the provider health/usage probes;
-3. dispatch exactly one fresh Campinas/SP identity after checking it does not already exist;
-4. require complete PII-safe accounting and terminal `COMPLETED`; never requeue the failed identity.
+1. recover the reviewed HML runtime configuration or obtain authorized configuration evidence; do not change secrets ad hoc;
+2. revalidate health/readiness on the deployed merge SHA;
+3. validate the provider health/usage probes;
+4. dispatch exactly one fresh Campinas/SP identity after checking it does not already exist;
+5. require complete PII-safe accounting and terminal `COMPLETED`; never requeue the failed identity.
 
 Pacing evidence used by the bounded policy: Tavily search is paced at least 1 second between calls, with retry-after honored only up to the explicit 10-second discovery cap; CNPJ.ws public API is capped at 3 requests/minute. These limits are not reused for Gmail or commercial email.
 
@@ -124,8 +129,8 @@ Pacing evidence used by the bounded policy: Tavily search is paced at least 1 se
 
 ```text
 NEXT_PHASE=B
-NEXT_TASK=MERGE_RECOVERY_FIX_THEN_HEALTH_PROBE_AND_ONE_FRESH_DISCOVERY
-BASE_SHA=894c136dba8e869d8a27433efd256f40d5062331
+NEXT_TASK=RECOVER_HML_INVALID_CONFIGURATION_THEN_HEALTH_PROBE_AND_ONE_FRESH_DISCOVERY
+BASE_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
 DISCOVERY_E2E=FAIL_PROVIDER_RATE_LIMITED
 ACCURACY=NOT_RUN_PROVIDER_UNKNOWN
 AUTOMATED_COMPLIANCE=NOT_RUN
@@ -138,7 +143,7 @@ RATE_LIMIT_PROVIDER_IDENTIFIABLE=NOT RUN
 PROVIDER_CALL_ACCOUNTING=NOT RUN
 PROVIDER_HEALTH_OR_USAGE_EVIDENCE=NOT RUN
 FAILED_JOB_REQUEUE=false
-STOP_CONDITION=RENDER_STARTUP_INVALID_CONFIGURATION_RECOVERABLE
+STOP_CONDITION=RENDER_STARTUP_INVALID_CONFIGURATION_MISSING_AUTHORIZED_CONFIG
 ```
 
 ## Commercial/operation invariants

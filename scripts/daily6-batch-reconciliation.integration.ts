@@ -60,8 +60,9 @@ try {
   const replay = await sql<{ updated: boolean; reason: string }[]>`
     select * from lead_finder_internal.sync_daily6_batch_from_collection(${identities[0]})`;
   assert.deepEqual(replay[0], { updated: false, reason: 'ALREADY_TERMINAL' });
+  const failedCityId = `daily6-reconcile-failed-${process.pid}`;
   await assert.rejects(
-    sql`select lead_finder_internal.ensure_daily6_batch(${identities[0]}, ${identities[0].slice(0, 10)}::date, '09', 'daily6-reconcile-failed-${process.pid}', 'daily6-v1')`,
+    sql`select lead_finder_internal.ensure_daily6_batch(${identities[0]}, ${identities[0].slice(0, 10)}::date, '09', ${failedCityId}, 'daily6-v1')`,
     (error: unknown) => (error as { code?: string }).code === '55000',
   );
   await sql`delete from public.collection_jobs where request_identity=${identities[0]}`;

@@ -159,7 +159,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
           sender: config.MANUAL_EMAIL_SENDER,
           fingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY,
           operationalSha: config.EXPECTED_OPERATIONAL_SHA,
-          deliver: deliverManualEmail ?? (() => Promise.reject(new Error('MANUAL_EMAIL_DISABLED')),
+          deliver: deliverManualEmail ?? (() => Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),
         },
       }
     : {}),

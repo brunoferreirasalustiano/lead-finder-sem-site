@@ -273,7 +273,7 @@ jobs:
             -H 'Content-Type: application/json' \
             --data '{}')"
           test "$status" = '400'
-          jq -e '.code == "INVALID_REQUEST"' "$preflight_body" >/dev/null
+          jq -e '.error == "Invalid collection parameters" and (.details | type == "object")' "$preflight_body" >/dev/null
           echo 'COLLECTION_AUTH_EGRESS_PREFLIGHT=PASS'
           echo 'PREFLIGHT_ENQUEUE=false'
 

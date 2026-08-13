@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DAILY6_PROGRESSIVE_LIMITS,
   selectProgressiveDaily6Candidates,
+  shouldStopDaily6SlotAfterDelivery,
   type Daily6CandidateForSelection,
 } from './daily6-orchestrator.js';
 
@@ -34,6 +35,22 @@ const candidate = (id: string, overrides: Partial<Daily6CandidateForSelection> =
 });
 
 describe('progressive Daily-6 candidate selection', () => {
+  it('stops the slot after the first ambiguous delivery without processing the next approval', () => {
+    const approved = ['approved-1', 'approved-2'];
+    const processed: string[] = [];
+    let providerCalls = 0;
+
+    for (const candidateId of approved) {
+      processed.push(candidateId);
+      providerCalls += 1;
+      const delivery = candidateId === 'approved-1' ? 'AMBIGUOUS' as const : 'DELIVERED' as const;
+      if (shouldStopDaily6SlotAfterDelivery(delivery)) break;
+    }
+
+    expect(processed).toEqual(['approved-1']);
+    expect(providerCalls).toBe(1);
+  });
+
   it('continues after rejects and stops immediately at the second approval', async () => {
     const calls: string[] = [];
     const result = await selectProgressiveDaily6Candidates(

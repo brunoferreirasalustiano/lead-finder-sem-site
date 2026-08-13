@@ -91,6 +91,16 @@ export type Daily6ProgressiveSelection = Readonly<{
   targetReached: boolean;
 }>;
 
+export type Daily6DeliveryState = 'DELIVERED' | 'FAILED' | 'AMBIGUOUS' | 'IN_PROGRESS';
+
+/**
+ * An unresolved provider result fences the rest of the slot.  The provider
+ * call may have succeeded even when persistence could not confirm it, so a
+ * subsequent candidate must never be sent from the same slot.
+ */
+export const shouldStopDaily6SlotAfterDelivery = (state: Daily6DeliveryState): boolean =>
+  state === 'AMBIGUOUS';
+
 export type Daily6SlotReport = Readonly<{
   batchId: string;
   discovered: number;
@@ -393,6 +403,7 @@ export async function runDaily6Slot(
         report.failed += 1;
       } else if (delivery.state === 'AMBIGUOUS') {
         report.ambiguous += 1;
+        if (shouldStopDaily6SlotAfterDelivery(delivery.state)) break;
       }
     } catch (error) {
       const code = errorCode(error);

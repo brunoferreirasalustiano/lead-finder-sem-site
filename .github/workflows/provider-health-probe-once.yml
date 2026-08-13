@@ -50,13 +50,36 @@ jobs:
             -H "Authorization: Bearer $TAVILY_API_KEY" \
             https://api.tavily.com/usage)"
           test "$tavily_status" = 200
-          tavily_usage="$(jq -er '.key.usage | numbers' "$tavily_usage_file")"
-          tavily_limit="$(jq -er '.key.limit | numbers' "$tavily_usage_file")"
+
+          tavily_schema="$(jq -c '{
+            top: (keys | sort),
+            key_keys: (.key | if type == "object" then keys | sort else [] end),
+            account_keys: (.account | if type == "object" then keys | sort else [] end),
+            key_usage_type: (.key.usage | type),
+            key_limit_type: (.key.limit | type),
+            account_plan_usage_type: (.account.plan_usage | type),
+            account_plan_limit_type: (.account.plan_limit | type)
+          }' "$tavily_usage_file")"
+          echo "tavily_usage_schema=$tavily_schema"
+
+          if jq -e '(.key.usage | type) == "number" and (.key.limit | type) == "number"' "$tavily_usage_file" >/dev/null; then
+            tavily_usage="$(jq -er '.key.usage' "$tavily_usage_file")"
+            tavily_limit="$(jq -er '.key.limit' "$tavily_usage_file")"
+            tavily_scope='key'
+          elif jq -e '(.account.plan_usage | type) == "number" and (.account.plan_limit | type) == "number"' "$tavily_usage_file" >/dev/null; then
+            tavily_usage="$(jq -er '.account.plan_usage' "$tavily_usage_file")"
+            tavily_limit="$(jq -er '.account.plan_limit' "$tavily_usage_file")"
+            tavily_scope='account_plan'
+          else
+            echo 'TAVILY_USAGE_SCHEMA_UNSUPPORTED' >&2
+            exit 1
+          fi
           test "$tavily_usage" -le "$tavily_limit"
+
           cnpj_status="$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' \
             https://publica.cnpj.ws/cnpj/42064856000170)"
           test "$cnpj_status" = 200
-          echo "provider_health_evidence provider=TAVILY usage=$tavily_usage limit=$tavily_limit"
+          echo "provider_health_evidence provider=TAVILY scope=$tavily_scope usage=$tavily_usage limit=$tavily_limit"
           echo "provider_health_evidence provider=CNPJ_WS status=200"
           echo 'PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS'
           echo 'DISCOVERY_DISPATCHED=false'

@@ -65,6 +65,9 @@ jobs:
       MAX_JOBS_PER_RUN: '1'
       MAX_CANDIDATES_PER_JOB: '40'
       MAX_ENRICHMENT_PER_JOB: '10'
+      TAVILY_MIN_INTERVAL_MS: '1000'
+      TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '10000'
+      CNPJ_PROVIDER_MAX_RPM: '3'
       PILOT_KILL_SWITCH_ENABLED: 'false'
       DRY_RUN: 'true'
       REAL_SEND_ENABLED: 'false'
@@ -98,6 +101,30 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      - name: Verify provider health, usage and bounded pacing policy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$TAVILY_MIN_INTERVAL_MS" -ge 1000
+          test "$TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS" -le 60000
+          test "$CNPJ_PROVIDER_MAX_RPM" -le 3
+          tavily_usage_file="$(mktemp)"
+          trap 'rm -f "$tavily_usage_file"' EXIT
+          tavily_status="$(curl --silent --show-error --max-time 20 \
+            -o "$tavily_usage_file" -w '%{http_code}' \
+            -H "Authorization: Bearer $TAVILY_API_KEY" \
+            https://api.tavily.com/usage)"
+          test "$tavily_status" = 200
+          tavily_usage="$(jq -er '.key.usage | numbers' "$tavily_usage_file")"
+          tavily_limit="$(jq -er '.key.limit | numbers' "$tavily_usage_file")"
+          test "$tavily_usage" -le "$tavily_limit"
+          cnpj_status="$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' \
+            https://publica.cnpj.ws/cnpj/42064856000170)"
+          test "$cnpj_status" = 200
+          echo "provider_health_evidence provider=TAVILY usage=$tavily_usage limit=$tavily_limit"
+          echo "provider_health_evidence provider=CNPJ_WS status=200"
+          echo 'PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS'
+
       - name: Enqueue one idempotent collection request
         shell: bash
         env:
@@ -109,6 +136,9 @@ jobs:
           set -Eeuo pipefail
           city_id="$(printf '%s-%s' "$CITY" "$STATE" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-//;s/-$//')"
           request_identity="$(printf '%s|%s|%s|daily6-v1' "$(TZ=America/Sao_Paulo date +%F)" "$SLOT" "$city_id")"
+          existing_rows="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v request_identity="$request_identity" -Atqc \
+            "select count(*) from public.collection_jobs where request_identity = :'request_identity'")"
+          test "$existing_rows" = 0
           response="$(curl --fail-with-body --silent --show-error --max-time 30 \
             -X POST "$HML_API_URL/collect" \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
@@ -116,7 +146,50 @@ jobs:
             -H 'Content-Type: application/json' \
             --data "{\"city\":\"$CITY\",\"state\":\"$STATE\",\"country\":\"Brasil\",\"category\":\"$CATEGORY\",\"limit\":40}")"
           printf '%s' "$response" | jq -e '.id and (.status == "PENDING" or .status == "PROCESSING" or .status == "COMPLETED")' >/dev/null
+          echo "REQUEST_IDENTITY=$request_identity" >> "$GITHUB_ENV"
           echo "collection_request_identity=$request_identity"
 
       - name: Run bounded discovery/enrichment worker
-        run: node apps/worker/dist/index.js
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node apps/worker/dist/index.js 2>&1 | tee worker.log
+          accounting_line="$(grep -F '"event":"provider_call_accounting"' worker.log | tail -n 1)"
+          test -n "$accounting_line"
+          printf '%s' "$accounting_line" | jq -e '
+            .event == "provider_call_accounting"
+            and (.providers | type == "array")
+            and ([.providers[] | select(.provider == "TAVILY")] | length == 1)
+            and ([.providers[] | select(.provider == "CNPJ_WS")] | length == 1)
+            and all(.providers[]; (.attemptedCalls | type == "number") and (.successfulCalls | type == "number") and (.rateLimited429Calls | type == "number")
+              and (.successfulCalls <= .attemptedCalls) and (.rateLimited429Calls <= .attemptedCalls)
+              and ((.retryAfterSeconds // 0) | type == "number") and ((.retryAfterSeconds // 0) >= 0))
+          ' >/dev/null
+          echo 'PROVIDER_CALL_ACCOUNTING=PASS'
+
+      - name: Verify terminal collection status
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          collection_status="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v request_identity="$REQUEST_IDENTITY" -Atqc \
+            "select status from public.collection_jobs where request_identity = :'request_identity'")"
+          case "$collection_status" in
+            COMPLETED)
+              echo 'COLLECTION_STATUS=COMPLETED'
+              ;;
+            FAILED)
+              echo 'COLLECTION_STATUS=FAILED'
+              echo 'bounded collection failed closed' >&2
+              exit 1
+              ;;
+            PENDING|PROCESSING|'')
+              echo "COLLECTION_STATUS=${collection_status:-UNKNOWN}"
+              echo 'bounded collection did not reach a terminal success state' >&2
+              exit 1
+              ;;
+            *)
+              echo 'COLLECTION_STATUS=UNKNOWN'
+              echo 'bounded collection returned an unsupported status' >&2
+              exit 1
+              ;;
+          esac

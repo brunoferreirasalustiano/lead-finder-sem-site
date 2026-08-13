@@ -3,6 +3,7 @@ import {
   CnpjWsBusinessRegistryProvider,
   CompositeBusinessEnrichmentProvider,
   EnrichmentError,
+  ProviderCallAccounting,
   matchRegistryToLead,
   TavilyBusinessSearchProvider,
   type BusinessEnrichmentRequest,
@@ -64,9 +65,30 @@ describe('Tavily adapter', () => {
     expect(result.cnpjCandidates).toEqual(['12345678000190']);
   });
 
-  it('maps rate limiting to a source state, never to no data', async () => {
-    const provider = new TavilyBusinessSearchProvider({ apiKey: 'test', timeoutMs: 50, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 429 })), sleepFn: () => Promise.resolve() });
-    await expect(provider.search({ lead })).rejects.toMatchObject({ code: 'SOURCE_RATE_LIMITED' });
+  it('identifies rate limiting and records a numeric retry-after without payload data', async () => {
+    const accounting = new ProviderCallAccounting();
+    const provider = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50,
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '12' } })),
+      sleepFn: () => Promise.resolve(), onCall: (event) => accounting.record(event),
+    });
+    await expect(provider.search({ lead })).rejects.toMatchObject({ code: 'TAVILY_RATE_LIMITED', retryAfterSeconds: 12 });
+    expect(accounting.snapshot()).toEqual(expect.arrayContaining([
+      { provider: 'TAVILY', attemptedCalls: 1, successfulCalls: 0, rateLimited429Calls: 1, retryAfterSeconds: 12 },
+    ]));
+  });
+
+  it('bounds Tavily retry-after handling to the discovery policy', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '60' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const provider = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 1,
+      rateLimitRecoveryMaxWaitMs: 1_000, fetchFn, sleepFn,
+    });
+    await expect(provider.search({ lead })).resolves.toMatchObject({ queryCount: 1 });
+    expect(sleepFn).toHaveBeenCalledWith(1_000);
   });
 });
 
@@ -79,8 +101,16 @@ describe('CNPJ.ws adapter and composite', () => {
   });
 
   it('keeps registry rate limits and missing records explicit', async () => {
-    const rateLimited = new CnpjWsBusinessRegistryProvider({ timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 429 })), sleepFn: () => Promise.resolve() });
-    await expect(rateLimited.lookup('12345678000190')).rejects.toMatchObject({ code: 'SOURCE_RATE_LIMITED' });
+    const accounting = new ProviderCallAccounting();
+    const rateLimited = new CnpjWsBusinessRegistryProvider({
+      timeoutMs: 50, maxRpm: 60,
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '60' } })),
+      sleepFn: () => Promise.resolve(), onCall: (event) => accounting.record(event),
+    });
+    await expect(rateLimited.lookup('12345678000190')).rejects.toMatchObject({ code: 'CNPJ_WS_RATE_LIMITED', retryAfterSeconds: 60 });
+    expect(accounting.snapshot()).toEqual(expect.arrayContaining([
+      { provider: 'CNPJ_WS', attemptedCalls: 1, successfulCalls: 0, rateLimited429Calls: 1, retryAfterSeconds: 60 },
+    ]));
     const missing = new CnpjWsBusinessRegistryProvider({ timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 404 })), sleepFn: () => Promise.resolve() });
     await expect(missing.lookup('12345678000190')).rejects.toMatchObject({ code: 'REGISTRY_NOT_FOUND' });
   });

@@ -7,6 +7,7 @@ import {
   CompositeBusinessEnrichmentProvider,
   DisabledBusinessEnrichmentProvider,
   HttpBusinessEnrichmentProvider,
+  ProviderCallAccounting,
   TavilyBusinessSearchProvider,
   type BusinessContactEnrichmentProvider,
 } from '@lead-finder/enrichment';
@@ -18,6 +19,7 @@ import { runOneShot } from './oneshot.js';
 const config = parseWorkerConfig(process.env);
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const operationalLogger = createConsoleOperationalLogger();
+const providerCallAccounting = new ProviderCallAccounting();
 const enrichmentProvider: BusinessContactEnrichmentProvider | undefined = config.ENRICHMENT_EGRESS_ENABLED
   ? config.ENRICHMENT_PROVIDER === 'composite'
     ? config.TAVILY_API_KEY
@@ -29,11 +31,14 @@ const enrichmentProvider: BusinessContactEnrichmentProvider | undefined = config
             maxResultsPerQuery: config.TAVILY_MAX_RESULTS_PER_QUERY,
             maxRetries: config.TAVILY_MAX_RETRIES,
             minIntervalMs: config.TAVILY_MIN_INTERVAL_MS,
+            rateLimitRecoveryMaxWaitMs: config.TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS,
+            onCall: (event) => providerCallAccounting.record(event),
           }),
           registryProvider: new CnpjWsBusinessRegistryProvider({
             timeoutMs: config.ENRICHMENT_TIMEOUT_MS,
             maxRetries: config.ENRICHMENT_MAX_RETRIES,
             maxRpm: config.CNPJ_PROVIDER_MAX_RPM,
+            onCall: (event) => providerCallAccounting.record(event),
           }),
         })
       : new DisabledBusinessEnrichmentProvider('ENRICHMENT_PROVIDER_DISABLED')
@@ -42,6 +47,7 @@ const enrichmentProvider: BusinessContactEnrichmentProvider | undefined = config
         timeoutMs: config.ENRICHMENT_TIMEOUT_MS,
         maxRetries: config.ENRICHMENT_MAX_RETRIES,
         minIntervalMs: config.ENRICHMENT_MIN_INTERVAL_MS,
+        onCall: (event) => providerCallAccounting.record(event),
       })
   : undefined;
 const processCollection = createCollectionProcessor(db, {
@@ -55,6 +61,11 @@ const processCollection = createCollectionProcessor(db, {
   enrichmentProvider,
   config.MAX_ENRICHMENT_PER_JOB,
   config.MAX_CANDIDATES_PER_JOB,
+  (failure) => console.error('collection_source_failure', {
+    code: failure.code,
+    ...(failure.provider === undefined ? {} : { provider: failure.provider }),
+    ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
+  }),
 ));
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
@@ -85,6 +96,12 @@ const fatal = (kind: string, error: unknown) => {
 const requestGracefulStop = () => {
   gracefulStop.request();
 };
+let providerAccountingReported = false;
+const reportProviderCallAccounting = () => {
+  if (providerAccountingReported) return;
+  providerAccountingReported = true;
+  console.info(JSON.stringify({ event: 'provider_call_accounting', providers: providerCallAccounting.snapshot() }));
+};
 process.on('SIGTERM', requestGracefulStop);
 process.on('SIGINT', requestGracefulStop);
 process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error));
@@ -92,6 +109,7 @@ process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
   if (config.WORKER_MODE === 'oneshot') {
     await runOneShot(processCollection, config.MAX_JOBS_PER_RUN, () => gracefulStop.running);
+    reportProviderCallAccounting();
     await shutdown();
     break;
   }
@@ -109,4 +127,5 @@ while (gracefulStop.running) {
     await gracefulStop.wait(config.WORKER_POLL_INTERVAL_MS);
   }
 }
+reportProviderCallAccounting();
 await shutdown();

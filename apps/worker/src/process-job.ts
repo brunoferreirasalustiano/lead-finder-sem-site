@@ -8,8 +8,14 @@ import {
 } from '@lead-finder/database';
 import { calculateLeadScore } from '@lead-finder/lead-scoring';
 import type { OverpassClient } from '@lead-finder/overpass-client';
-import type { BusinessContactEnrichmentProvider } from '@lead-finder/enrichment';
+import { EnrichmentError, type BusinessContactEnrichmentProvider } from '@lead-finder/enrichment';
 import { collectSchema } from '@lead-finder/shared';
+
+export type CollectionFailureTelemetry = {
+  code: string;
+  provider?: string;
+  retryAfterSeconds?: number;
+};
 
 export async function processNextJob(
   db: Database,
@@ -17,9 +23,11 @@ export async function processNextJob(
   enrichmentProvider?: BusinessContactEnrichmentProvider,
   maxEnrichmentCandidates = 10,
   maxCandidatesPerJob = 50,
+  onFailure?: (telemetry: CollectionFailureTelemetry) => void,
 ): Promise<boolean> {
   const job = await claimCollection(db);
   if (!job) return false;
+  let providerCallInFlight = false;
   try {
     const input = collectSchema.parse(job.payload);
     const normalized = (await overpass.collect(input)).slice(0, maxCandidatesPerJob);
@@ -28,7 +36,9 @@ export async function processNextJob(
       for (const lead of normalized.slice(0, maxEnrichmentCandidates)) {
         const persisted = await getLeadByOsmIdentity(db, lead.osmType, lead.osmId);
         if (!persisted) continue;
+        providerCallInFlight = true;
         const result = await enrichmentProvider.enrich({ lead });
+        providerCallInFlight = false;
         await recordLeadEnrichment(db, persisted.id, result);
       }
     }
@@ -38,6 +48,12 @@ export async function processNextJob(
       && typeof (error as { code?: unknown }).code === 'string'
       ? (error as { code: string }).code
       : 'COLLECTION_FAILED';
+    const retryAfterSeconds = error instanceof EnrichmentError ? error.retryAfterSeconds : undefined;
+    onFailure?.({
+      code,
+      ...(enrichmentProvider === undefined || !providerCallInFlight ? {} : { provider: enrichmentProvider.name }),
+      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+    });
     await finishCollection(db, job.id, code, job.leaseToken);
   }
   return true;

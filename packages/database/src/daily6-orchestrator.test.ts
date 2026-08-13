@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createAuthorizationContext } from '@lead-finder/shared';
 import {
   DAILY6_PROGRESSIVE_LIMITS,
+  runDaily6Slot,
   selectProgressiveDaily6Candidates,
   shouldStopDaily6SlotAfterDelivery,
   type Daily6CandidateForSelection,
@@ -125,5 +127,62 @@ describe('progressive Daily-6 candidate selection', () => {
     expect(one.approved).toBe(1);
     expect(zero.approved).toBe(0);
     expect(zero.stopReason).toBe('NO_ELIGIBLE_CANDIDATES');
+  });
+});
+
+describe('Daily-6 city contract', () => {
+  const authorization = createAuthorizationContext({
+    principalId: 'synthetic-scheduler',
+    permissions: new Set(['daily6:execute']),
+    authenticationMethod: 'HML_DAILY6_BEARER_TOKEN',
+  });
+  const runtime = {
+    enabled: true,
+    realSendEnabled: true,
+    manualEmailSendEnabled: true,
+    killSwitchEnabled: false,
+    sender: 'leadfinderbrasil@gmail.com',
+    fingerprintKey: 'synthetic-fingerprint-key',
+    operationalSha: 'a'.repeat(40),
+    deliver: vi.fn(),
+  };
+
+  it('accepts the scheduler alias Campinas and canonicalizes its batch identity', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const report = await runDaily6Slot(
+      { execute } as never,
+      {
+        date: '2026-08-13',
+        slot: '09',
+        city: 'Campinas',
+        policyVersion: 'daily6-v1',
+        expectedOperationalSha: 'a'.repeat(40),
+      },
+      authorization,
+      runtime,
+    );
+
+    expect(report.batchId).toBe('2026-08-13|09|campinas-sp|daily6-v1');
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a non-Campinas city before touching persistence', async () => {
+    const execute = vi.fn();
+    await expect(runDaily6Slot(
+      { execute } as never,
+      {
+        date: '2026-08-13',
+        slot: '09',
+        city: 'Sao Paulo',
+        policyVersion: 'daily6-v1',
+        expectedOperationalSha: 'a'.repeat(40),
+      },
+      authorization,
+      runtime,
+    )).rejects.toThrow('DAILY6_CITY_NOT_ALLOWED');
+    expect(execute).not.toHaveBeenCalled();
   });
 });

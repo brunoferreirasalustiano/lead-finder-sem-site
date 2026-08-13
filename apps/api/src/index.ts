@@ -11,8 +11,48 @@ import { createGmailApiManualEmailConsumer, createGmailApiOperatorEmailConsumer 
 import { createWhatsAppCloudApiClient } from '@lead-finder/whatsapp';
 import { hostname } from 'node:os';
 
-const abortStartup = (reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED'): never => {
-  console.error('api_startup_blocked', { reason, decision: 'SHUTDOWN_REQUESTED' });
+type StartupStage =
+  | 'API_CONFIG'
+  | 'HML_METRICS_AUTH'
+  | 'HML_EMAIL_AUTH'
+  | 'MANUAL_EMAIL_CONSUMER'
+  | 'WHATSAPP_CLOUD_CLIENT'
+  | 'OPERATOR_EMAIL_CONSUMER';
+
+const safeConfigurationFields = (error: unknown): string[] => {
+  const fields = new Set<string>();
+  if (error && typeof error === 'object' && 'issues' in error) {
+    const issues = (error as { issues?: unknown }).issues;
+    if (Array.isArray(issues)) {
+      for (const issue of issues) {
+        if (!issue || typeof issue !== 'object' || !('path' in issue)) continue;
+        const path = (issue as { path?: unknown }).path;
+        if (Array.isArray(path) && typeof path[0] === 'string' && /^[A-Z][A-Z0-9_]+$/u.test(path[0])) {
+          fields.add(path[0]);
+        }
+      }
+    }
+  }
+  if (error instanceof Error) {
+    for (const field of error.message.match(/\b(?:HML|API|DATABASE|DEPLOYMENT|PILOT|MANUAL|OPERATOR|WHATSAPP|COLLECTION|ENRICHMENT)_[A-Z0-9_]+\b/gu) ?? []) {
+      fields.add(field);
+    }
+  }
+  return [...fields].sort();
+};
+
+const abortStartup = (
+  reason: 'INVALID_CONFIGURATION' | 'PILOT_KILL_SWITCH_ENGAGED',
+  stage: StartupStage,
+  error?: unknown,
+): never => {
+  const invalidConfigurationFields = reason === 'INVALID_CONFIGURATION' ? safeConfigurationFields(error) : [];
+  console.error('api_startup_blocked', {
+    reason,
+    stage,
+    decision: 'SHUTDOWN_REQUESTED',
+    ...(invalidConfigurationFields.length > 0 ? { invalidConfigurationFields } : {}),
+  });
   process.exit(1);
 };
 
@@ -22,9 +62,13 @@ const config = (() => {
     assertApiKillSwitchReleased(parsed.PILOT_KILL_SWITCH_ENABLED);
     return parsed;
   } catch (error) {
-    return abortStartup(error instanceof Error && error.message === 'PILOT_KILL_SWITCH_ENGAGED'
-      ? 'PILOT_KILL_SWITCH_ENGAGED'
-      : 'INVALID_CONFIGURATION');
+    return abortStartup(
+      error instanceof Error && error.message === 'PILOT_KILL_SWITCH_ENGAGED'
+        ? 'PILOT_KILL_SWITCH_ENGAGED'
+        : 'INVALID_CONFIGURATION',
+      'API_CONFIG',
+      error,
+    );
   }
 })();
 const metricsTemporary = (() => {
@@ -37,8 +81,8 @@ const metricsTemporary = (() => {
       smokePrincipalId: config.HML_SMOKE_AUTH_PRINCIPAL_ID,
       operatorPrincipalId: config.HML_OPERATOR_AUTH_PRINCIPAL_ID,
     });
-  } catch {
-    return abortStartup('INVALID_CONFIGURATION');
+  } catch (error) {
+    return abortStartup('INVALID_CONFIGURATION', 'HML_METRICS_AUTH', error);
   }
 })();
 const emailTemporary = (() => {
@@ -53,8 +97,8 @@ const emailTemporary = (() => {
       operatorPrincipalId: config.HML_OPERATOR_AUTH_PRINCIPAL_ID,
       metricsPrincipalId: process.env.HML_METRICS_AUTH_PRINCIPAL_ID,
     });
-  } catch {
-    return abortStartup('INVALID_CONFIGURATION');
+  } catch (error) {
+    return abortStartup('INVALID_CONFIGURATION', 'HML_EMAIL_AUTH', error);
   }
 })();
 const discoveryTemporary = config.HML_DISCOVERY_AUTH_ENABLED ? {
@@ -87,8 +131,8 @@ const manualEmailConsumer = config.MANUAL_EMAIL_SEND_ENABLED
           googleClientSecret: config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET!,
           googleRefreshToken: config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN!,
         });
-      } catch {
-        return abortStartup('INVALID_CONFIGURATION');
+      } catch (error) {
+        return abortStartup('INVALID_CONFIGURATION', 'MANUAL_EMAIL_CONSUMER', error);
       }
     })()
   : undefined;
@@ -189,8 +233,8 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
         apiVersion: config.WHATSAPP_CLOUD_API_VERSION,
       });
       return { deliverWhatsAppCloud: (message: { phoneNumberId: string; recipient: string; body: string }) => consumer.sendText({ recipient: message.recipient, body: message.body }) };
-    } catch {
-      return abortStartup('INVALID_CONFIGURATION');
+    } catch (error) {
+      return abortStartup('INVALID_CONFIGURATION', 'WHATSAPP_CLOUD_CLIENT', error);
     }
   })() : {}),
 });
@@ -211,8 +255,8 @@ const operatorEmailConsumer = config.OPERATOR_EMAIL_TEST_ENABLED
           googleClientSecret: config.OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET!,
           googleRefreshToken: config.OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN!,
         });
-      } catch {
-        return abortStartup('INVALID_CONFIGURATION');
+      } catch (error) {
+        return abortStartup('INVALID_CONFIGURATION', 'OPERATOR_EMAIL_CONSUMER', error);
       }
     })()
   : undefined;

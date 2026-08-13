@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { NormalizedLead } from '@lead-finder/shared';
 import {
   EnrichmentError,
@@ -88,7 +89,33 @@ const safeText = (value: unknown): string => typeof value === 'string' ? value.t
 const normalizeText = (value: string | null | undefined): string => (value ?? '')
   .normalize('NFD').replace(/[\u0300-\u036f]/gu, '').toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
 const normalizeDigits = (value: string | null | undefined): string => (value ?? '').replace(/\D/gu, '');
-const normalizeCnpj = (value: string): string => normalizeDigits(value).slice(0, 14);
+const CNPJ_BODY_LENGTH = 12;
+const CNPJ_BODY_PATTERN = /^[A-Z0-9]{12}$/u;
+const CNPJ_PATTERN = /^[A-Z0-9]{12}\d{2}$/u;
+const CNPJ_SEPARATOR_PATTERN = /[.\s/-]/gu;
+const CNPJ_DV_WEIGHTS = [
+  [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+  [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+] as const;
+
+export const normalizeCnpj = (value: string): string => value.trim().toUpperCase().replace(CNPJ_SEPARATOR_PATTERN, '');
+
+const cnpjCharacterValue = (character: string): number => character.charCodeAt(0) - 48;
+const calculateCnpjDigit = (value: string, weights: readonly number[]): number => {
+  const sum = [...value].reduce((total, character, index) => total + cnpjCharacterValue(character) * weights[index]!, 0);
+  const digit = 11 - (sum % 11);
+  return digit >= 10 ? 0 : digit;
+};
+
+/** Validates legacy numeric and Receita Federal alphanumeric CNPJ identifiers. */
+export const isValidCnpj = (value: string): boolean => {
+  const cnpj = normalizeCnpj(value);
+  if (!CNPJ_PATTERN.test(cnpj) || !CNPJ_BODY_PATTERN.test(cnpj.slice(0, CNPJ_BODY_LENGTH))) return false;
+  if (/^([A-Z0-9])\1{13}$/u.test(cnpj)) return false;
+  const firstDigit = calculateCnpjDigit(cnpj.slice(0, CNPJ_BODY_LENGTH), CNPJ_DV_WEIGHTS[0]);
+  const secondDigit = calculateCnpjDigit(`${cnpj.slice(0, CNPJ_BODY_LENGTH)}${firstDigit}`, CNPJ_DV_WEIGHTS[1]);
+  return cnpj.endsWith(`${firstDigit}${secondDigit}`);
+};
 const sourceFallback = 'https://tavily.com/';
 
 const thirdPartyHosts = new Set([
@@ -123,7 +150,7 @@ const buildQueries = (lead: NormalizedLead): string[] => {
 };
 
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
-const cnpjPattern = /\b\d{2}[.\s]?\d{3}[.\s]?\d{3}(?:\s|\/)?\d{4}[-\s]?\d{2}\b/gu;
+const cnpjPattern = /(?<![A-Z0-9])(?:[A-Z0-9]{12}\d{2}|[A-Z0-9]{2}[.\s][A-Z0-9]{3}[.\s][A-Z0-9]{3}[/\s][A-Z0-9]{4}[-\s]\d{2})(?![A-Z0-9])/giu;
 
 type TavilyResult = { url?: unknown; title?: unknown; content?: unknown; published_date?: unknown };
 
@@ -187,7 +214,7 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
       officialSiteFound: officialSiteLocators.length > 0,
       officialSiteLocators: [...new Set(officialSiteLocators)],
       ambiguousDomainMatches,
-      cnpjCandidates: [...cnpjCandidates].filter((cnpj) => cnpj.length === 14).slice(0, MAX_CNPJ_CANDIDATES),
+      cnpjCandidates: [...cnpjCandidates].map(normalizeCnpj).filter(isValidCnpj).slice(0, MAX_CNPJ_CANDIDATES),
       emailCandidates: [...emailCandidates.values()].slice(0, 20),
       recentActivitySources: recentActivitySources.slice(0, 20),
     };
@@ -265,10 +292,35 @@ const nestedText = (value: unknown, ...keys: string[]): string | null => {
   return text || null;
 };
 
+const registryBranchSchema = z.object({
+  cnpj: z.string().trim().min(1).optional(),
+  razao_social: z.string().trim().min(1).optional(),
+  situacao_cadastral: z.string().trim().min(1).optional(),
+}).passthrough();
+
+const registryPayloadSchema = z.object({
+  cnpj: z.string().trim().min(1).optional(),
+  razao_social: z.string().trim().min(1).optional(),
+  situacao_cadastral: z.string().trim().min(1).optional(),
+  estabelecimento: registryBranchSchema.optional(),
+}).passthrough().refine((payload) => (
+  payload.cnpj !== undefined
+  || payload.razao_social !== undefined
+  || payload.situacao_cadastral !== undefined
+  || payload.estabelecimento !== undefined
+), 'registry payload has no recognized fields');
+
 const parseRegistryPayload = (payload: unknown, cnpj: string, sourceLocator: string, observedAt: Date): BusinessRegistryRecord => {
-  const root = asRecord(payload);
-  const establishment = asRecord(root.estabelecimento ?? root);
+  const parsed = registryPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+  const root = parsed.data;
+  const establishment = root.estabelecimento ?? root;
+  const responseCnpj = normalizeCnpj(nestedText(establishment, 'cnpj') ?? nestedText(root, 'cnpj') ?? '');
+  const businessName = nestedText(root, 'razao_social') ?? nestedText(establishment, 'razao_social') ?? '';
   const status = normalizeText(nestedText(establishment, 'situacao_cadastral') ?? nestedText(root, 'situacao_cadastral'));
+  if (!isValidCnpj(responseCnpj) || responseCnpj !== cnpj || businessName === '' || status === '') {
+    throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+  }
   const address = [
     nestedText(establishment, 'tipo_logradouro'), nestedText(establishment, 'logradouro'), nestedText(establishment, 'numero'),
     nestedText(establishment, 'complemento'), nestedText(establishment, 'bairro'), nestedText(establishment, 'cep'),
@@ -278,8 +330,8 @@ const parseRegistryPayload = (payload: unknown, cnpj: string, sourceLocator: str
   const statusDateText = nestedText(establishment, 'data_situacao_cadastral') ?? nestedText(root, 'data_situacao_cadastral');
   const statusDate = statusDateText ? new Date(statusDateText) : null;
   return {
-    cnpj: normalizeCnpj(nestedText(establishment, 'cnpj') ?? nestedText(root, 'cnpj') ?? cnpj),
-    businessName: nestedText(root, 'razao_social') ?? nestedText(establishment, 'razao_social') ?? '',
+    cnpj: responseCnpj,
+    businessName,
     tradeName: nestedText(establishment, 'nome_fantasia') ?? nestedText(root, 'nome_fantasia'),
     registrationStatus: status === 'ativa' || status === 'active' ? 'ACTIVE' : status ? 'INACTIVE' : 'UNKNOWN',
     registrationStatusDate: statusDate && !Number.isNaN(statusDate.valueOf()) ? statusDate : null,
@@ -311,7 +363,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
 
   async lookup(value: string): Promise<BusinessRegistryRecord> {
     const cnpj = normalizeCnpj(value);
-    if (cnpj.length !== 14) throw new EnrichmentError('Invalid CNPJ candidate', 'INVALID_SOURCE_RESPONSE');
+    if (!isValidCnpj(cnpj)) throw new EnrichmentError('Invalid CNPJ candidate', 'INVALID_SOURCE_RESPONSE');
     const locator = `${CNPJ_WS_ENDPOINT}/${cnpj}`;
     let lastError: unknown;
     const maxRetries = Math.min(this.options.maxRetries ?? 1, 2);
@@ -350,7 +402,14 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
         }
-        const record = parseRegistryPayload(await response.json(), cnpj, locator, this.now());
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError('CNPJ.ws response is not valid JSON', 'INVALID_SOURCE_RESPONSE');
+        }
+        const record = parseRegistryPayload(payload, cnpj, locator, this.now());
         if (record.cnpj !== cnpj) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError('CNPJ.ws returned a different company identifier', 'INVALID_SOURCE_RESPONSE');

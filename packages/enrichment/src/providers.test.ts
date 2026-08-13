@@ -4,6 +4,7 @@ import {
   CompositeBusinessEnrichmentProvider,
   EnrichmentError,
   ProviderCallAccounting,
+  hasVerifiedBusinessEmail,
   isValidCnpj,
   matchRegistryToLead,
   TavilyBusinessSearchProvider,
@@ -194,6 +195,14 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.officialSiteFound).toBe(false);
     expect(result.website.confidence).toBeGreaterThanOrEqual(0.85);
     expect(result.emails[0]).toMatchObject({ businessAssociation: 'PASS', inferred: false });
+  });
+
+  it('accepts a free-provider registry email only with public commercial evidence', async () => {
+    const searchProvider = { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) };
+    const registryProvider = { name: 'registry', lookup: vi.fn().mockResolvedValue({ ...record, email: 'owner@gmail.com' }) };
+    const result = await new CompositeBusinessEnrichmentProvider({ searchProvider, registryProvider }).enrich({ lead });
+    expect(result.emails[0]).toMatchObject({ value: 'owner@gmail.com', businessAssociation: 'PASS', inferred: false, sourceLocator: record.sourceLocator });
+    expect(hasVerifiedBusinessEmail(result)).toBe(true);
   });
 
   it('does not qualify ambiguous multiple registry matches', async () => {

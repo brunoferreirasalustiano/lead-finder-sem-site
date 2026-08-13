@@ -39,6 +39,7 @@ GRANT EXECUTE ON FUNCTION
   lead_finder_internal.prepare_daily6_pilot_context(text, date, text, text, text, uuid, uuid, text, jsonb, jsonb),
   lead_finder_internal.ensure_daily6_batch(text, date, text, text, text),
   lead_finder_internal.bump_daily6_batch_metrics(text, integer, integer, integer, integer, integer),
+  lead_finder_internal.sync_daily6_batch_from_collection(text),
   lead_finder_internal.enqueue_collection_job(text, jsonb)
 TO lead_finder_api_runtime;
 

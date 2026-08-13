@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { enqueueCollection, uniqueByOsm } from './index.js';
+import { claimCollection, enqueueCollection, uniqueByOsm } from './index.js';
 import type { Database } from './index.js';
 describe('uniqueByOsm', () =>
   it('deduplicates by composite OSM identity', () =>
@@ -29,5 +29,14 @@ describe('collection persistence authorization', () => {
       { enabled: true, configurationVersion: 1 },
       '2026-08-12|09|campinas-sp|daily6-v1',
     )).resolves.toEqual({ id: 'synthetic-job', status: 'PENDING', replayed: false });
+  });
+});
+
+describe('collection terminal reconciliation boundary', () => {
+  it('keeps lease-expiry terminalization in the same transaction as Daily-6 sync', () => {
+    const source = String(claimCollection);
+    expect(source).toContain('expiredTerminalJobs');
+    expect(source).toMatch(/expiredJob\.status === ["']FAILED["']/u);
+    expect(source).toContain('sync_daily6_batch_from_collection');
   });
 });

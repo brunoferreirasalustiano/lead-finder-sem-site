@@ -109,6 +109,7 @@ export const daily6Batches = pgTable('daily6_batches', {
   positiveReplies: integer('positive_replies').notNull().default(0),
   optOuts: integer('opt_outs').notNull().default(0),
   status: text('status').notNull().default('PENDING'),
+  terminalReason: text('terminal_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

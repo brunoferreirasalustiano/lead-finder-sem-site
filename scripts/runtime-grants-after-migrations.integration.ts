@@ -21,6 +21,7 @@ const migrationVersions = [
   '0057_collection_enqueue_security_definer',
   '0058_collection_enqueue_fail_closed_hardening',
   '0059_collection_enqueue_city_normalization_parity',
+  '0060_daily6_collection_terminal_reconciliation',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',
@@ -39,6 +40,7 @@ const daily6Functions = [
   'prepare_daily6_pilot_context',
   'ensure_daily6_batch',
   'bump_daily6_batch_metrics',
+  'sync_daily6_batch_from_collection',
   'enqueue_collection_job',
 ] as const;
 const restrictedTables = [

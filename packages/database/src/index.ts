@@ -238,7 +238,7 @@ const safeCollectionError = (error?: string): string | null => {
 export async function claimCollection(db: Database) {
   return db.transaction(async (tx) => {
     const now = new Date();
-    await tx
+    const expiredTerminalJobs = await tx
       .update(collectionJobs)
       .set({
         status: sql`case when ${collectionJobs.attemptCount} >= ${collectionMaxAttempts} then 'FAILED' else 'PENDING' end`,
@@ -250,7 +250,16 @@ export async function claimCollection(db: Database) {
       .where(and(
         eq(collectionJobs.status, 'PROCESSING'),
         sql`${collectionJobs.leaseExpiresAt} is not null and ${collectionJobs.leaseExpiresAt} < ${now.toISOString()}`,
-      ));
+      ))
+      .returning({ requestIdentity: collectionJobs.requestIdentity, status: collectionJobs.status });
+    for (const expiredJob of expiredTerminalJobs) {
+      if (expiredJob.status === 'FAILED' && expiredJob.requestIdentity) {
+        await tx.execute(sql`
+          SELECT *
+          FROM lead_finder_internal.sync_daily6_batch_from_collection(${expiredJob.requestIdentity})
+        `);
+      }
+    }
     const job = (
       await tx
         .select()
@@ -275,12 +284,20 @@ export async function claimCollection(db: Database) {
   });
 }
 export async function finishCollection(db: Database, id: string, error?: string, leaseToken?: string) {
-  const result = await db
-    .update(collectionJobs)
-    .set({ status: error ? 'FAILED' : 'COMPLETED', error: safeCollectionError(error), leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
-    .where(and(eq(collectionJobs.id, id), eq(collectionJobs.status, 'PROCESSING'), ...(leaseToken ? [eq(collectionJobs.leaseToken, leaseToken)] : [])))
-    .returning({ id: collectionJobs.id });
-  if (leaseToken && result.length !== 1) throw new Error('COLLECTION_LEASE_LOST');
+  await db.transaction(async (tx) => {
+    const result = await tx
+      .update(collectionJobs)
+      .set({ status: error ? 'FAILED' : 'COMPLETED', error: safeCollectionError(error), leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+      .where(and(eq(collectionJobs.id, id), eq(collectionJobs.status, 'PROCESSING'), ...(leaseToken ? [eq(collectionJobs.leaseToken, leaseToken)] : [])))
+      .returning({ id: collectionJobs.id, requestIdentity: collectionJobs.requestIdentity });
+    if (leaseToken && result.length !== 1) throw new Error('COLLECTION_LEASE_LOST');
+    if (error && result[0]?.requestIdentity) {
+      await tx.execute(sql`
+        SELECT *
+        FROM lead_finder_internal.sync_daily6_batch_from_collection(${result[0].requestIdentity})
+      `);
+    }
+  });
 }
 
 /**

@@ -31,6 +31,7 @@ const daily6Functions = [
   'prepare_daily6_pilot_context',
   'ensure_daily6_batch',
   'bump_daily6_batch_metrics',
+  'sync_daily6_batch_from_collection',
   'enqueue_collection_job',
 ] as const;
 

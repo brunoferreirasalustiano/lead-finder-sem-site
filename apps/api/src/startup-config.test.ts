@@ -86,4 +86,17 @@ describe('API startup configuration with expired dedicated HML authentication', 
       HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-startup-test',
     })).toThrow('HML_DISCOVERY_AUTH_EXPIRES_AT');
   });
+
+  it('does not hide another configuration failure that accompanies an expired credential', () => {
+    expect(() => parseApiStartupConfig({
+      DATABASE_URL: 'postgresql://user:password@127.0.0.1:5432/synthetic',
+      API_AUTH_TOKEN: 'synthetic-api-token-for-startup-config-test-0001',
+      API_AUTH_PERMISSIONS: 'pilot:read',
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_DISCOVERY_AUTH_ENABLED: 'true',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_DISCOVERY_AUTH_EXPIRES_AT: '2000-01-01T00:00:00.000Z',
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'invalid-principal',
+    })).toThrow('HML_DISCOVERY_AUTH_PRINCIPAL_ID');
+  });
 });

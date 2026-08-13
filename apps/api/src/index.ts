@@ -1,11 +1,12 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
-import { assertApiKillSwitchReleased, hmlDaily6AuthPermissions, hmlDiscoveryAuthPermissions, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions, parseApiConfig } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, hmlDaily6AuthPermissions, hmlDiscoveryAuthPermissions, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
 import { registerHmlSuppressionProbeRoute } from './hml-suppression-probe-route.js';
 import { parseHmlMetricsAuthentication } from './hml-metrics-auth.js';
 import { parseHmlEmailAuthentication } from './hml-email-auth.js';
+import { parseApiStartupConfig } from './startup-config.js';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
 import { createGmailApiManualEmailConsumer, createGmailApiOperatorEmailConsumer } from '@lead-finder/email';
 import { createWhatsAppCloudApiClient } from '@lead-finder/whatsapp';
@@ -58,7 +59,7 @@ const abortStartup = (
 
 const config = (() => {
   try {
-    const parsed = parseApiConfig(process.env);
+    const parsed = parseApiStartupConfig(process.env);
     assertApiKillSwitchReleased(parsed.PILOT_KILL_SWITCH_ENABLED);
     return parsed;
   } catch (error) {

@@ -282,3 +282,22 @@ export async function finishCollection(db: Database, id: string, error?: string,
     .returning({ id: collectionJobs.id });
   if (leaseToken && result.length !== 1) throw new Error('COLLECTION_LEASE_LOST');
 }
+
+/**
+ * Extends an active collection lease while its bounded worker is still the
+ * owner. A fenced or already-expired lease is never revived.
+ */
+export async function renewCollectionLease(db: Database, id: string, leaseToken: string): Promise<boolean> {
+  const now = new Date();
+  const result = await db
+    .update(collectionJobs)
+    .set({ leaseExpiresAt: new Date(now.valueOf() + collectionLeaseMs), updatedAt: now })
+    .where(and(
+      eq(collectionJobs.id, id),
+      eq(collectionJobs.status, 'PROCESSING'),
+      eq(collectionJobs.leaseToken, leaseToken),
+      sql`${collectionJobs.leaseExpiresAt} > ${now.toISOString()}`,
+    ))
+    .returning({ id: collectionJobs.id });
+  return result.length === 1;
+}

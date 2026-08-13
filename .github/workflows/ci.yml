@@ -2,7 +2,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, hml/render-supabase-plan-b]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 permissions:

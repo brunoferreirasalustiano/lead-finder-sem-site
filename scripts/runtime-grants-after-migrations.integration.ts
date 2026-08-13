@@ -22,6 +22,7 @@ const migrationVersions = [
   '0058_collection_enqueue_fail_closed_hardening',
   '0059_collection_enqueue_city_normalization_parity',
   '0060_daily6_collection_terminal_reconciliation',
+  '0061_daily6_progressive_discovery_pool',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',

@@ -1,6 +1,6 @@
 # Lead Finder Brasil — Current Autonomous State
 
-Last reconciled: 2026-08-13T02:39Z.
+Last reconciled: 2026-08-13T02:57Z.
 
 This file is the resume point after model capacity errors, disconnects, context compaction or agent handoff. Current external state always wins over this file; update this file after every completed gate.
 
@@ -10,7 +10,7 @@ This file is the resume point after model capacity errors, disconnects, context 
 PROJECT=Lead Finder Brasil
 REPO=brunoferreirasalustiano/lead-finder-sem-site
 HML_BRANCH=hml/render-supabase-plan-b
-HML_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
+HML_SHA=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
 MAIN_SHA=8181c3e007ef8dee7117f81fc7f07ca16a05d002
 LAST_MERGED_PR=266
 PR262_HEAD=f8203dac4b25ca67755e1f76f5feec6620aac0dc
@@ -23,16 +23,20 @@ PR265_HEAD=b9fca0b30383e863ac945feffe60f1e1d3e62b38
 PR265_MERGE=894c136dba8e869d8a27433efd256f40d5062331
 PR266_HEAD=9de93fc17b8a4d0b8c3e129d0f583d9d1bf93815
 PR266_MERGE=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
-EXACT_SHA_CI_RUN=31661064775
+PR267_HEAD=20d0da8a6a211616387151047fd2c53424233942
+PR267_MERGE=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
+EXACT_SHA_CI_RUN=31662046244
 EXACT_SHA_CI=PASS
 PR266_EXACT_HEAD_CI_RUN=31660764607
 PR266_EXACT_HEAD_CI=PASS
+PR267_EXACT_HEAD_CI_RUN=31661750246
+PR267_EXACT_HEAD_CI=PASS
 PR262_CI_RUN=31649854222
 DEPLOYMENT_SMOKE_RUN=31649840784
 POSTMERGE_DEPLOYMENT_SMOKE_RUN=31652985173
 ```
 
-PR #260's normalization P1 was fixed by PR #262. PR #262 was merged only after its exact-head checks passed and exact merged-SHA CI run 31650521308 completed successfully. PR #264 is documentation-only; its merge SHA f23bb696 was revalidated by exact-SHA CI run 31652985214 and deployment smoke run 31652985173, both successful. PR #265 reconciled this file to HML merge SHA 894c136 and exact merged-SHA CI run 31659193151, which passed.
+PR #260's normalization P1 was fixed by PR #262. PR #262 was merged only after its exact-head checks passed and exact merged-SHA CI run 31650521308 completed successfully. PR #264 is documentation-only; its merge SHA f23bb696 was revalidated by exact-SHA CI run 31652985214 and deployment smoke run 31652985173, both successful. PR #265 reconciled this file to HML merge SHA 894c136 and exact merged-SHA CI run 31659193151, which passed. PR #266 merged the recovery gate at 6fa783a; merged-SHA CI run 31661064775 passed. PR #267 reconciled this stop condition at merge SHA f65cc94; merged-SHA CI run 31662046244 passed.
 
 ## Supabase HML
 
@@ -71,7 +75,8 @@ SERVICE=lead-finder-api-hml
 SERVICE_ID=srv-d9fbpp6rnols73bko9f0
 WORKSPACE=Bruno's workspace
 WORKSPACE_ID=tea-d72o44oule4c73cut1l0
-RENDER_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
+RENDER_LAST_LIVE_SHA=d7c4181fa1a661cf9323e455642598fddcf96a27
+RENDER_ATTEMPTED_SHA=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
 RENDER_DEPLOY_ID=dep-d9uir57qj5pc73fn1m20
 RENDER_STATUS=UPDATE_FAILED_STARTUP_INVALID_CONFIGURATION
 RENDER_HEALTH=NOT RUN (deploy dep-d9uir57qj5pc73fn1m20 exited status 1 at 2026-08-13T02:36:54Z)
@@ -130,7 +135,7 @@ Pacing evidence used by the bounded policy: Tavily search is paced at least 1 se
 ```text
 NEXT_PHASE=B
 NEXT_TASK=RECOVER_HML_INVALID_CONFIGURATION_THEN_HEALTH_PROBE_AND_ONE_FRESH_DISCOVERY
-BASE_SHA=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
+BASE_SHA=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
 DISCOVERY_E2E=FAIL_PROVIDER_RATE_LIMITED
 ACCURACY=NOT_RUN_PROVIDER_UNKNOWN
 AUTOMATED_COMPLIANCE=NOT_RUN

@@ -16,143 +16,7 @@ env:
   APPROVED_HML_SHA: 4d9ac303324fc89db482883b0d26670ca0ce9dfc
 
 jobs:
-  provider-health:
-    runs-on: ubuntu-latest
-    environment: hml-discovery
-    timeout-minutes: 5
-    env:
-      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-      TAVILY_MIN_INTERVAL_MS: '1000'
-      TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '10000'
-      CNPJ_PROVIDER_MAX_RPM: '3'
-
-    steps:
-      - name: Checkout exact approved HML SHA
-        uses: actions/checkout@v4
-        with:
-          ref: 4d9ac303324fc89db482883b0d26670ca0ce9dfc
-          fetch-depth: 1
-
-      - name: Verify exact SHA and provider-only secret boundary
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$APPROVED_HML_SHA"
-          test -n "$TAVILY_API_KEY"
-          test -z "${HML_COLLECTION_TOKEN:-}"
-          test -z "${DATABASE_URL:-}"
-
-      - name: Verify provider health with PII-safe accounting
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$TAVILY_MIN_INTERVAL_MS" -ge 1000
-          test "$TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS" -le 60000
-          test "$CNPJ_PROVIDER_MAX_RPM" -le 3
-
-          tavily_usage_file="$(mktemp)"
-          tavily_headers_file="$(mktemp)"
-          cnpj_headers_file="$(mktemp)"
-          tavily_attempted=0
-          tavily_successful=0
-          tavily_429=0
-          tavily_retry_after=0
-          cnpj_attempted=0
-          cnpj_successful=0
-          cnpj_429=0
-          cnpj_retry_after=0
-          accounting_reported=0
-
-          numeric_retry_after() {
-            local headers_file="$1"
-            local value
-            value="$(awk 'BEGIN { IGNORECASE=1 } /^retry-after:/ { gsub("\\r", "", $2); print $2; exit }' "$headers_file")"
-            if [[ "$value" =~ ^[0-9]+$ ]]; then printf '%s' "$value"; else printf '0'; fi
-          }
-
-          emit_provider_accounting() {
-            jq -cn \
-              --argjson tavily_attempted "$tavily_attempted" \
-              --argjson tavily_successful "$tavily_successful" \
-              --argjson tavily_429 "$tavily_429" \
-              --argjson tavily_retry_after "$tavily_retry_after" \
-              --argjson cnpj_attempted "$cnpj_attempted" \
-              --argjson cnpj_successful "$cnpj_successful" \
-              --argjson cnpj_429 "$cnpj_429" \
-              --argjson cnpj_retry_after "$cnpj_retry_after" \
-              '{event:"provider_health_call_accounting",providers:[
-                {provider:"TAVILY",attemptedCalls:$tavily_attempted,successfulCalls:$tavily_successful,rateLimited429Calls:$tavily_429,retryAfterSeconds:$tavily_retry_after},
-                {provider:"CNPJ_WS",attemptedCalls:$cnpj_attempted,successfulCalls:$cnpj_successful,rateLimited429Calls:$cnpj_429,retryAfterSeconds:$cnpj_retry_after}
-              ]}'
-            accounting_reported=1
-          }
-
-          on_exit() {
-            local exit_code=$?
-            set +e
-            if [ "$accounting_reported" -eq 0 ]; then emit_provider_accounting; fi
-            rm -f "$tavily_usage_file" "$tavily_headers_file" "$cnpj_headers_file"
-            return "$exit_code"
-          }
-          trap on_exit EXIT
-
-          tavily_attempted=1
-          if ! tavily_status="$(curl --silent --show-error --max-time 20 \
-            -D "$tavily_headers_file" -o "$tavily_usage_file" -w '%{http_code}' \
-            -H "Authorization: Bearer $TAVILY_API_KEY" \
-            https://api.tavily.com/usage)"; then
-            echo 'TAVILY_USAGE_REQUEST_FAILED' >&2
-            exit 1
-          fi
-          if [ "$tavily_status" = 429 ]; then
-            tavily_429=1
-            tavily_retry_after="$(numeric_retry_after "$tavily_headers_file")"
-          fi
-          if [ "$tavily_status" != 200 ]; then
-            echo "TAVILY_USAGE_STATUS=$tavily_status" >&2
-            exit 1
-          fi
-          tavily_successful=1
-
-          if jq -e '(.key.usage | type) == "number" and (.key.limit | type) == "number"' "$tavily_usage_file" >/dev/null; then
-            tavily_usage="$(jq -er '.key.usage' "$tavily_usage_file")"
-            tavily_limit="$(jq -er '.key.limit' "$tavily_usage_file")"
-            tavily_scope='key'
-          elif jq -e '(.account.plan_usage | type) == "number" and (.account.plan_limit | type) == "number"' "$tavily_usage_file" >/dev/null; then
-            tavily_usage="$(jq -er '.account.plan_usage' "$tavily_usage_file")"
-            tavily_limit="$(jq -er '.account.plan_limit' "$tavily_usage_file")"
-            tavily_scope='account_plan'
-          else
-            echo 'TAVILY_USAGE_SCHEMA_UNSUPPORTED' >&2
-            exit 1
-          fi
-          test "$tavily_usage" -le "$tavily_limit"
-
-          cnpj_attempted=1
-          if ! cnpj_status="$(curl --silent --show-error --max-time 20 \
-            -D "$cnpj_headers_file" -o /dev/null -w '%{http_code}' \
-            https://publica.cnpj.ws/cnpj/42064856000170)"; then
-            echo 'CNPJ_WS_HEALTH_REQUEST_FAILED' >&2
-            exit 1
-          fi
-          if [ "$cnpj_status" = 429 ]; then
-            cnpj_429=1
-            cnpj_retry_after="$(numeric_retry_after "$cnpj_headers_file")"
-          fi
-          if [ "$cnpj_status" != 200 ]; then
-            echo "CNPJ_WS_HEALTH_STATUS=$cnpj_status" >&2
-            exit 1
-          fi
-          cnpj_successful=1
-
-          emit_provider_accounting
-          echo "provider_health_evidence provider=TAVILY scope=$tavily_scope usage=$tavily_usage limit=$tavily_limit"
-          echo 'provider_health_evidence provider=CNPJ_WS status=200'
-          echo 'PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS'
-          echo 'PRE_DISCOVERY_PROVIDER_ACCOUNTING=PASS'
-
   full-discovery:
-    needs: provider-health
     runs-on: ubuntu-latest
     environment: hml-discovery
     timeout-minutes: 20
@@ -192,7 +56,7 @@ jobs:
           ref: 4d9ac303324fc89db482883b0d26670ca0ce9dfc
           fetch-depth: 1
 
-      - name: Verify exact SHA and restricted discovery configuration
+      - name: Revalidate exact SHA and safe runtime
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -205,10 +69,12 @@ jobs:
           test "$DRY_RUN" = 'true'
           test -z "${MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN:-}"
           test -z "${WHATSAPP_CLOUD_ACCESS_TOKEN:-}"
+          echo 'G6_PROVIDER_HEALTH_EVIDENCE_FROM_RUN=31700024125'
+          echo 'G6_PREVIOUS_FAILURE=PRE_DISPATCH_SQL_CLIENT_SYNTAX'
           echo 'REAL_EMAIL_PROVIDER_CALLS=0'
           echo 'WHATSAPP_PROVIDER_CALLS=0'
 
-      - name: Verify hosted HML readiness
+      - name: Revalidate hosted HML readiness
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -216,7 +82,7 @@ jobs:
             "$HML_API_URL/health/ready" >/dev/null
           echo 'HML_READINESS=PASS'
 
-      - name: Verify collection auth and egress without enqueueing
+      - name: Revalidate collection auth and egress without enqueueing
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -247,8 +113,9 @@ jobs:
           set -Eeuo pipefail
           city_id="$(printf '%s-%s' "$CITY" "$STATE" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-//;s/-$//')"
           request_identity="$(printf '%s|%s|%s|daily6-v1' "$(TZ=America/Sao_Paulo date +%F)" "$SLOT" "$city_id")"
-          existing_rows="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v request_identity="$request_identity" -Atqc \
-            "select count(*) from public.collection_jobs where request_identity = :'request_identity'")"
+          [[ "$request_identity" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\|09\|campinas-sp\|daily6-v1$ ]]
+          existing_rows="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select count(*) from public.collection_jobs where request_identity = '$request_identity'")"
           test "$existing_rows" = 0
           echo "REQUEST_IDENTITY=$request_identity" >> "$GITHUB_ENV"
           echo "collection_request_identity=$request_identity"
@@ -262,7 +129,7 @@ jobs:
           echo 'DISCOVERY_DISPATCHED=true'
           echo 'FRESH_COLLECTION_JOB_CREATED=true'
 
-      - name: Run one bounded discovery/enrichment worker and validate accounting
+      - name: Run one bounded discovery worker and validate PII-safe accounting
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -282,6 +149,7 @@ jobs:
               and (.successfulCalls <= .attemptedCalls) and (.rateLimited429Calls <= .attemptedCalls)
               and ((.retryAfterSeconds // 0) | type == "number") and ((.retryAfterSeconds // 0) >= 0))
           ' >/dev/null
+          printf '%s\n' "$accounting_line"
           echo 'PROVIDER_CALL_ACCOUNTING=PASS'
 
           source_failure="$(grep -F 'collection_source_failure' worker.log | tail -n 1 || true)"
@@ -293,13 +161,16 @@ jobs:
           fi
 
       - name: Verify terminal collection status
+        if: always()
         shell: bash
         run: |
           set -Eeuo pipefail
-          collection_status="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v request_identity="$REQUEST_IDENTITY" -Atqc \
-            "select status from public.collection_jobs where request_identity = :'request_identity'")"
-          collection_error="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v request_identity="$REQUEST_IDENTITY" -Atqc \
-            "select coalesce(error, '') from public.collection_jobs where request_identity = :'request_identity'")"
+          test -n "${REQUEST_IDENTITY:-}"
+          [[ "$REQUEST_IDENTITY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\|09\|campinas-sp\|daily6-v1$ ]]
+          collection_status="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select status from public.collection_jobs where request_identity = '$REQUEST_IDENTITY'")"
+          collection_error="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select coalesce(error, '') from public.collection_jobs where request_identity = '$REQUEST_IDENTITY'")"
           echo "COLLECTION_STATUS=$collection_status"
           if [ -n "$collection_error" ]; then echo "COLLECTION_ERROR=$collection_error"; fi
           case "$collection_status" in

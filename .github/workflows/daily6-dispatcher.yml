@@ -96,6 +96,24 @@ jobs:
           remote_sha="$(git ls-remote origin "refs/heads/$HML_BRANCH" | awk '{print $1}')"
           test "$remote_sha" = "$EXPECTED_SHA"
 
+      - name: Verify Daily-6 operational authorization gate
+        shell: bash
+        env:
+          OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}
+          OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}
+        run: |
+          set -Eeuo pipefail
+          test "$OPERATIONAL_AUTHORIZATION" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'
+          [[ "$OPERATIONAL_AUTH_EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          if ! expires_epoch="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%s 2>/dev/null)"; then
+            echo 'DAILY6_OPERATIONAL_AUTH_EXPIRES_AT_INVALID' >&2
+            exit 1
+          fi
+          canonical_expiry="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%Y-%m-%dT%H:%M:%SZ)"
+          test "$canonical_expiry" = "$OPERATIONAL_AUTH_EXPIRES_AT"
+          now_epoch="$(date -u +%s)"
+          test "$expires_epoch" -gt "$now_epoch"
+
       - name: Run one authenticated native Daily-6 slot
         shell: bash
         env:

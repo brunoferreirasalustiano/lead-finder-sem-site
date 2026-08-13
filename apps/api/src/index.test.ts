@@ -39,6 +39,74 @@ describe('API startup kill switch', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('api_startup_blocked');
     expect(result.stderr).toContain(reason);
+    expect(result.stderr).toContain("stage: 'API_CONFIG'");
+    if (reason === 'INVALID_CONFIGURATION') {
+      expect(result.stderr).toContain('PILOT_KILL_SWITCH_ENABLED');
+    }
+    expect(result.stderr).not.toContain(process.cwd());
+    expect(result.stderr).not.toMatch(/\n\s+at\s/u);
+  }, 15_000);
+});
+
+describe('API startup configuration diagnostics', () => {
+  it('identifies an expired HML email credential without logging credential values', () => {
+    const tokenHash = 'a'.repeat(64);
+    const principalId = 'hml-email-startup-diagnostic';
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...baseEnvironment,
+      PILOT_KILL_SWITCH_ENABLED: 'false',
+      HML_EMAIL_AUTH_ENABLED: 'true',
+      HML_EMAIL_AUTH_TOKEN_HASH: tokenHash,
+      HML_EMAIL_AUTH_EXPIRES_AT: '2000-01-01T00:00:00Z',
+      HML_EMAIL_AUTH_PRINCIPAL_ID: principalId,
+    };
+
+    const result = spawnSync(process.execPath, [entrypoint, apiEntrypoint], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: environment,
+      timeout: 10_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('api_startup_blocked');
+    expect(result.stderr).toContain("stage: 'HML_EMAIL_AUTH'");
+    expect(result.stderr).toContain('HML_EMAIL_AUTH_EXPIRES_AT');
+    expect(result.stderr).not.toContain(tokenHash);
+    expect(result.stderr).not.toContain(principalId);
+    expect(result.stderr).not.toContain(process.cwd());
+    expect(result.stderr).not.toMatch(/\n\s+at\s/u);
+  }, 15_000);
+
+  it('identifies an expired HML metrics credential without logging credential values', () => {
+    const tokenHash = 'b'.repeat(64);
+    const principalId = 'hml-metrics-startup-diagnostic';
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...baseEnvironment,
+      PILOT_KILL_SWITCH_ENABLED: 'false',
+      HML_METRICS_AUTH_ENABLED: 'true',
+      HML_METRICS_AUTH_TOKEN_HASH: tokenHash,
+      HML_METRICS_AUTH_EXPIRES_AT: '2000-01-01T00:00:00Z',
+      HML_METRICS_AUTH_PRINCIPAL_ID: principalId,
+    };
+
+    const result = spawnSync(process.execPath, [entrypoint, apiEntrypoint], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: environment,
+      timeout: 10_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('api_startup_blocked');
+    expect(result.stderr).toContain("stage: 'HML_METRICS_AUTH'");
+    expect(result.stderr).toContain('HML_METRICS_AUTH_EXPIRES_AT');
+    expect(result.stderr).not.toContain(tokenHash);
+    expect(result.stderr).not.toContain(principalId);
     expect(result.stderr).not.toContain(process.cwd());
     expect(result.stderr).not.toMatch(/\n\s+at\s/u);
   }, 15_000);

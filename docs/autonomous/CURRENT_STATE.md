@@ -1,6 +1,6 @@
 # Lead Finder Brasil — Current Autonomous State
 
-Last reconciled: 2026-08-12T23:36Z.
+Last reconciled: 2026-08-13T01:41Z.
 
 This file is the resume point after model capacity errors, disconnects, context compaction or agent handoff. Current external state always wins over this file; update this file after every completed gate.
 
@@ -10,21 +10,23 @@ This file is the resume point after model capacity errors, disconnects, context 
 PROJECT=Lead Finder Brasil
 REPO=brunoferreirasalustiano/lead-finder-sem-site
 HML_BRANCH=hml/render-supabase-plan-b
-HML_SHA=56d9a468f67b6187988bf555d4606f79af94ade8
+HML_SHA=f23bb6962c0435cd97c0f13ffdca5c6e40cf038e
 MAIN_SHA=8181c3e007ef8dee7117f81fc7f07ca16a05d002
-LAST_MERGED_PR=263
+LAST_MERGED_PR=264
 PR262_HEAD=f8203dac4b25ca67755e1f76f5feec6620aac0dc
 PR262_MERGE=d7c4181fa1a661cf9323e455642598fddcf96a27
 PR263_HEAD=2313198cd465acb7fd47d27e67bc422de2c85f01
 PR263_MERGE=56d9a468f67b6187988bf555d4606f79af94ade8
-EXACT_SHA_CI_RUN=31652065388
+PR264_HEAD=b997bc5d9227549f5c9aecd0ecf2db3f71c3aee5
+PR264_MERGE=f23bb6962c0435cd97c0f13ffdca5c6e40cf038e
+EXACT_SHA_CI_RUN=31652985214
 EXACT_SHA_CI=PASS
 PR262_CI_RUN=31649854222
 DEPLOYMENT_SMOKE_RUN=31649840784
-POSTMERGE_DEPLOYMENT_SMOKE_RUN=31652429249
+POSTMERGE_DEPLOYMENT_SMOKE_RUN=31652985173
 ```
 
-PR #260's normalization P1 was fixed by PR #262. PR #262 was merged only after its exact-head checks passed and exact merged-SHA CI run 31650521308 completed successfully.
+PR #260's normalization P1 was fixed by PR #262. PR #262 was merged only after its exact-head checks passed and exact merged-SHA CI run 31650521308 completed successfully. PR #264 is documentation-only; its merge SHA f23bb696 was revalidated by exact-SHA CI run 31652985214 and deployment smoke run 31652985173, both successful.
 
 ## Supabase HML
 
@@ -110,7 +112,7 @@ The single controlled discovery dispatch passed all preflight and enqueue checks
 ```text
 NEXT_PHASE=B
 NEXT_TASK=WAIT_FOR_PROVIDER_RECOVERY_THEN_REVALIDATE_DISCOVERY_GATE
-BASE_SHA=56d9a468f67b6187988bf555d4606f79af94ade8
+BASE_SHA=f23bb6962c0435cd97c0f13ffdca5c6e40cf038e
 DISCOVERY_E2E=FAIL_PROVIDER_RATE_LIMITED
 ACCURACY=NOT_RUN_PROVIDER_UNKNOWN
 AUTOMATED_COMPLIANCE=NOT_RUN

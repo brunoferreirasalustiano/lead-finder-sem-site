@@ -70,10 +70,14 @@ export const businessEnrichmentResultSchema = z.object({
 
 export type BusinessEnrichmentResult = z.infer<typeof businessEnrichmentResultSchema>;
 export const MIN_VERIFIED_EVIDENCE_CONFIDENCE = 0.85;
-const consumerEmailHosts = new Set(['gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'yahoo.com', 'icloud.com', 'proton.me', 'protonmail.com']);
+
+/**
+ * Checks address syntax only. Commercial association is an evidence decision
+ * carried separately by `businessAssociation` and must never be inferred from
+ * the mailbox provider domain.
+ */
 export const isBusinessEmailAddress = (value: string): boolean => {
-  const host = value.trim().toLowerCase().split('@')[1] ?? '';
-  return host !== '' && !consumerEmailHosts.has(host);
+  return z.string().trim().email().max(320).safeParse(value).success;
 };
 
 export type BusinessEnrichmentRequest = {

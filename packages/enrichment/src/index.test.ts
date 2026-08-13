@@ -33,16 +33,31 @@ describe('enrichment contracts', () => {
     expect(classifyWebsite({ website: { ...base.website, officialSiteFound: true } })).toBe('OFFICIAL_SITE_FOUND');
   });
 
-  it('requires public evidence and rejects inferred or personal-only contacts', () => {
+  it('requires public association evidence and protects inferred or private contacts', () => {
     expect(isPublicSourceLocator('https://source.test/contact')).toBe(true);
     expect(isPublicSourceLocator('file:///tmp/private')).toBe(false);
     expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, sourceLocator: 'file:///tmp/private' }] })).toBe(false);
     expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, businessAssociation: 'UNKNOWN' }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, inferred: true }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, businessAssociation: 'UNKNOWN', sourceLocator: 'https://ambiguous.example/contact' }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value: 'owner@gmail.com', businessAssociation: 'UNKNOWN' }] })).toBe(false);
     expect(isPublicSourceLocator('http://127.0.0.1/internal')).toBe(false);
     expect(isPublicSourceLocator('http://169.254.169.254/latest/meta-data')).toBe(false);
     expect(isPublicSourceLocator('http://localhost:8080/internal')).toBe(false);
     expect(isBusinessEmailAddress('contato@business.example')).toBe(true);
-    expect(isBusinessEmailAddress('owner@gmail.com')).toBe(false);
+    expect(isBusinessEmailAddress('owner@gmail.com')).toBe(true);
+    expect(isBusinessEmailAddress('owner@hotmail.com')).toBe(true);
+    expect(isBusinessEmailAddress('owner@yahoo.com')).toBe(true);
+  });
+
+  it('qualifies free-provider addresses only when public commercial association is explicit', () => {
+    for (const value of ['owner@gmail.com', 'owner@hotmail.com', 'owner@yahoo.com']) {
+      expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value, businessAssociation: 'PASS' }] })).toBe(true);
+    }
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value: 'owner@gmail.com', businessAssociation: 'UNKNOWN' }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value: 'owner@gmail.com', inferred: true }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value: 'owner@gmail.com', businessAssociation: 'PASS', sourceLocator: 'file:///tmp/private' }] })).toBe(false);
+    expect(hasVerifiedBusinessEmail({ emails: [{ ...base.emails[0]!, value: 'owner@company.example', businessAssociation: 'UNKNOWN' }] })).toBe(false);
   });
 
   it('requires high-confidence evidence before human review', () => {

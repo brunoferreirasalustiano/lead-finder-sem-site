@@ -70,7 +70,11 @@ describe('API startup configuration with expired dedicated HML authentication', 
     await app.close();
   });
 
-  it('still rejects malformed dedicated expiry configuration', () => {
+  it.each([
+    'not-a-date',
+    '2000-01-01',
+    'Sat, 01 Jan 2000 00:00:00 GMT',
+  ])('still rejects malformed dedicated expiry configuration: %s', (expiry) => {
     expect(() => parseApiStartupConfig({
       DATABASE_URL: 'postgresql://user:password@127.0.0.1:5432/synthetic',
       API_AUTH_TOKEN: 'synthetic-api-token-for-startup-config-test-0001',
@@ -78,7 +82,7 @@ describe('API startup configuration with expired dedicated HML authentication', 
       DEPLOYMENT_ENVIRONMENT: 'homologation',
       HML_DISCOVERY_AUTH_ENABLED: 'true',
       HML_DISCOVERY_AUTH_TOKEN_HASH: 'a'.repeat(64),
-      HML_DISCOVERY_AUTH_EXPIRES_AT: 'not-a-date',
+      HML_DISCOVERY_AUTH_EXPIRES_AT: expiry,
       HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-startup-test',
     })).toThrow('HML_DISCOVERY_AUTH_EXPIRES_AT');
   });

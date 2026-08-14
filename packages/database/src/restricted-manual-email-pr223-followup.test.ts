@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { approvedTemplates, DeterministicFakeMessagingProvider } from '@lead-finder/messaging';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import { recordManualOpen, type Database } from './index.js';
 import { sendPreparedManualEmail } from './restricted-manual-email.js';
@@ -24,6 +26,75 @@ const auth = createAuthorizationContext({
     'manual-messaging:send',
   ]),
   authenticationMethod: 'unit-test',
+});
+const daily6Auth = createAuthorizationContext({
+  principalId: 'daily6-reconciliation-test',
+  permissions: new Set(['daily6:send']),
+  authenticationMethod: 'unit-test',
+});
+
+const canonical = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonical(item)]));
+  }
+  return value;
+};
+const digest = (value: unknown) => createHash('sha256')
+  .update(JSON.stringify(canonical(value))).digest('hex');
+
+const newDaily6Fixture = () => {
+  const variables = { EMPRESA: 'Synthetic Lead', FONTE: 'synthetic-source' };
+  const prepared = new DeterministicFakeMessagingProvider().prepare(approvedTemplates.emailV2, variables);
+  const snapshot = {
+    schemaVersion: 2,
+    channel: 'EMAIL',
+    templateId: approvedTemplates.emailV2.id,
+    templateVersion: approvedTemplates.emailV2.version,
+    variables: {},
+    renderedInputsFingerprint: digest(variables),
+    contactFingerprint: 'c'.repeat(64),
+    messageFingerprint: prepared.fingerprint,
+  };
+  const context = {
+    pilot_run_id: '00000000-0000-4000-8000-000000000301',
+    lead_id: '00000000-0000-4000-8000-000000000302',
+    contact_id: '00000000-0000-4000-8000-000000000303',
+    template_id: approvedTemplates.emailV2.id,
+    template_version: approvedTemplates.emailV2.version,
+    result_fingerprint: digest(snapshot),
+    result_snapshot: snapshot,
+    contact_value: 'lead@example.test',
+    contact_fingerprint: 'c'.repeat(64),
+    contact_source: 'synthetic-source',
+    lead_name: 'Synthetic Lead',
+    expires_at: new Date('2026-08-13T12:00:00.000Z'),
+  };
+  const attempt = {
+    id: '00000000-0000-4000-8000-000000000304',
+    reserved_at: new Date('2026-08-13T12:00:00.000Z'),
+    replayed: false,
+    event_type: null,
+    provider_message_fingerprint: null,
+    error_code: null,
+    event_created_at: null,
+  };
+  return { context, attempt };
+};
+
+const daily6Runtime = (searchSent: (input: { deliveryKey: string }) => Promise<{ state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN'; messageId?: string }>) => ({
+  sendEnabled: true,
+  killSwitchEnabled: false,
+  sender: 'leadfinderbrasil@gmail.com',
+  fingerprintKey: 'f'.repeat(32),
+  deliver: vi.fn().mockResolvedValue({ provider: 'GMAIL_API', messageId: 'provider-message' }),
+  daily6: {
+    batchId: '2026-08-13|09|campinas-sp|daily6-v1',
+    sendIdentity: '2026-08-13|09|campinas-sp|daily6-v1|lead-1',
+    searchSent,
+  },
 });
 
 // Revalidate P2-A/P2-B against the current HML email principal and runtime baseline.
@@ -106,7 +177,11 @@ describe('PR 223 restricted manual email follow-ups', () => {
         sender: 'sender@example.test',
         fingerprintKey: 'f'.repeat(32),
         deliver: vi.fn(),
-        daily6: { batchId: '2026-08-12|09|campinas-sp|daily6-v1', sendIdentity: '2026-08-12|09|campinas-sp|daily6-v1|lead-1' },
+        daily6: {
+          batchId: '2026-08-12|09|campinas-sp|daily6-v1',
+          sendIdentity: '2026-08-12|09|campinas-sp|daily6-v1|lead-1',
+          searchSent: vi.fn(),
+        },
       },
     )).rejects.toMatchObject({ code: 'INELIGIBLE' });
     expect(execute).not.toHaveBeenCalled();
@@ -225,5 +300,116 @@ describe('PR 223 restricted manual email follow-ups', () => {
     expect(section).toContain('sendPreparedManualEmail');
     expect(section).toContain('manualMessagingRoute');
     expect(section).not.toContain("code:'MANUAL_EMAIL_DISABLED'");
+  });
+
+  it('reconciles a Gmail SENT hit as DELIVERED without calling the provider send', async () => {
+    const fixture = newDaily6Fixture();
+    const searchSent = vi.fn().mockResolvedValue({ state: 'FOUND', messageId: 'gmail-message-id' });
+    const runtime = daily6Runtime(searchSent);
+    const txExecute = vi.fn()
+      .mockResolvedValueOnce([fixture.context])
+      .mockResolvedValueOnce([fixture.attempt])
+      .mockResolvedValueOnce([{ reserved: true, replayed: false, reason: 'RESERVED' }]);
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: fixture.attempt.id,
+        event_type: 'DELIVERED',
+        provider_message_fingerprint: 'd'.repeat(64),
+        error_code: null,
+        created_at: new Date('2026-08-13T12:00:01.000Z'),
+        replayed: false,
+      }])
+      .mockResolvedValueOnce([]);
+    const db = {
+      execute,
+      transaction: vi.fn((callback: (tx: { execute: typeof txExecute }) => unknown) => callback({ execute: txExecute })),
+    } as unknown as Database;
+
+    const result = await sendPreparedManualEmail(
+      db,
+      '00000000-0000-4000-8000-000000000305',
+      daily6Auth,
+      runtime,
+    );
+
+    expect(result.state).toBe('DELIVERED');
+    expect(runtime.deliver).not.toHaveBeenCalled();
+    expect(searchSent).toHaveBeenCalledTimes(1);
+    const searchRequest = searchSent.mock.calls[0]?.[0] as { deliveryKey?: unknown } | undefined;
+    expect(searchRequest?.deliveryKey).toMatch(/^[0-9a-f]{64}$/u);
+    expect(searchRequest).not.toHaveProperty('recipient');
+  });
+
+  it('marks Gmail SENT search UNKNOWN as terminal AMBIGUOUS with SEND_RETRY=0', async () => {
+    const fixture = newDaily6Fixture();
+    const searchSent = vi.fn().mockResolvedValue({ state: 'UNKNOWN' });
+    const runtime = daily6Runtime(searchSent);
+    const txExecute = vi.fn()
+      .mockResolvedValueOnce([fixture.context])
+      .mockResolvedValueOnce([fixture.attempt])
+      .mockResolvedValueOnce([{ reserved: true, replayed: false, reason: 'RESERVED' }]);
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: fixture.attempt.id,
+        event_type: 'AMBIGUOUS',
+        provider_message_fingerprint: null,
+        error_code: 'GMAIL_SENT_SEARCH_UNKNOWN',
+        created_at: new Date('2026-08-13T12:00:01.000Z'),
+        replayed: false,
+      }])
+      .mockResolvedValueOnce([]);
+    const db = {
+      execute,
+      transaction: vi.fn((callback: (tx: { execute: typeof txExecute }) => unknown) => callback({ execute: txExecute })),
+    } as unknown as Database;
+
+    const result = await sendPreparedManualEmail(
+      db,
+      '00000000-0000-4000-8000-000000000306',
+      daily6Auth,
+      runtime,
+    );
+
+    expect(result).toMatchObject({ state: 'AMBIGUOUS', errorCode: 'GMAIL_SENT_SEARCH_UNKNOWN' });
+    expect(runtime.deliver).not.toHaveBeenCalled();
+    expect(searchSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles an existing IN_PROGRESS attempt before returning it', async () => {
+    const searchSent = vi.fn().mockResolvedValue({ state: 'FOUND', messageId: 'gmail-replayed-id' });
+    const runtime = daily6Runtime(searchSent);
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{
+        id: '00000000-0000-4000-8000-000000000307',
+        reserved_at: new Date('2026-08-13T12:00:00.000Z'),
+        replayed: true,
+        event_type: null,
+        provider_message_fingerprint: null,
+        error_code: null,
+        event_created_at: null,
+      }])
+      .mockResolvedValueOnce([{
+        id: '00000000-0000-4000-8000-000000000307',
+        event_type: 'DELIVERED',
+        provider_message_fingerprint: 'd'.repeat(64),
+        error_code: null,
+        created_at: new Date('2026-08-13T12:00:01.000Z'),
+        replayed: false,
+      }])
+      .mockResolvedValueOnce([]);
+    const db = { execute } as unknown as Database;
+
+    const result = await sendPreparedManualEmail(
+      db,
+      '00000000-0000-4000-8000-000000000308',
+      daily6Auth,
+      runtime,
+    );
+
+    expect(result).toMatchObject({ state: 'DELIVERED', replayed: true });
+    expect(searchSent).toHaveBeenCalledTimes(1);
+    expect(runtime.deliver).not.toHaveBeenCalled();
   });
 });

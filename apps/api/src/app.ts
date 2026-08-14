@@ -233,7 +233,7 @@ export function buildApp(db: Database, options: {
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
   hmlSuppressionProbeEnabled?: boolean;
-  deliverManualEmail?: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+  deliverManualEmail?: (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
   deliverWhatsAppCloud?: WhatsAppCloudDeliver;
   sendPreparedWhatsAppCloud?: typeof sendPreparedWhatsAppCloudMessage;
@@ -829,7 +829,11 @@ export function buildApp(db: Database, options: {
     const sendIdentity=typeof request.headers['x-daily6-send-identity']==='string'?request.headers['x-daily6-send-identity']:'';
     if(!options.daily6PilotEnabled)return reply.status(404).send({error:'Daily-6 pilot is disabled',code:'DAILY6_DISABLED'});
     if(!id.success||Object.keys(request.body??{}).length>0||!/^[-a-z0-9|]{1,160}$/.test(batchId)||!/^[-a-z0-9|]{1,160}$/.test(sendIdentity))return reply.status(400).send({error:'Invalid Daily-6 send request',code:'INVALID_REQUEST'});
-    const daily6: Daily6EmailRuntime={batchId,sendIdentity};
+    const daily6: Daily6EmailRuntime={
+      batchId,
+      sendIdentity,
+      searchSent: options.daily6SlotRuntime?.searchSent ?? (() => Promise.resolve({ state: 'UNKNOWN' as const })),
+    };
     return manualMessagingRoute(reply,async()=>{const result=await sendPreparedManualEmail(db,id.data,authorizationContextFor(request),{sendEnabled:manualEmailSendEnabled&&Boolean(options.deliverManualEmail&&options.manualEmailSender&&options.manualEmailFingerprintKey),killSwitchEnabled:options.manualEmailKillSwitchEnabled ?? true,sender:options.manualEmailSender??'',fingerprintKey:options.manualEmailFingerprintKey??'',deliver:options.deliverManualEmail??(()=>Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),daily6});request.log.info({event:'daily6_email_delivery_recorded',preparationId:id.data,state:result.state,provider:result.provider,principalId:request.principal!.id,replayed:result.replayed,attemptId:result.attemptId},'daily6_email_delivery_recorded');return reply.status(creationStatus(result.replayed)).send(safeManualEmailDeliveryDto(result));});
   });
   app.post('/internal/daily6/run-slot', async (request, reply) => {

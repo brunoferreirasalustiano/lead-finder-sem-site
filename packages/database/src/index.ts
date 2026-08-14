@@ -35,6 +35,8 @@ export {
   sendPreparedManualEmail,
   type RestrictedManualEmailDeliveryResult,
   type Daily6EmailRuntime,
+  type Daily6GmailSentSearch,
+  type Daily6GmailSentSearchResult,
 } from './restricted-manual-email.js';
 export * from './operator-channel-test.js';
 export * from './operator-email-test.js';

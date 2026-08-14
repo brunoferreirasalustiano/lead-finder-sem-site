@@ -145,6 +145,84 @@ describe('Gmail API operator email consumer', () => {
 });
 
 describe('Gmail API manual email consumer', () => {
+  it('searches only Gmail SENT with an opaque deterministic message id', async () => {
+    const deliveryKey = 'a'.repeat(64);
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'synthetic-gmail-message-id' }] }));
+    const result = await manualConsumer(fetchMock).searchSent({ deliveryKey });
+
+    expect(result).toEqual({ state: 'FOUND', messageId: 'synthetic-gmail-message-id' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const searchCall = fetchMock.mock.calls[1];
+    const searchInput = searchCall?.[0];
+    const searchUrl = searchInput instanceof URL
+      ? searchInput
+      : new URL(typeof searchInput === 'string' ? searchInput : searchInput?.url ?? '');
+    expect(searchUrl.pathname).toBe('/gmail/v1/users/me/messages');
+    expect(searchUrl.searchParams.get('labelIds')).toBe('SENT');
+    expect(searchUrl.searchParams.get('maxResults')).toBe('2');
+    expect(searchUrl.searchParams.get('q')).toBe(
+      `rfc822msgid:daily6-${deliveryKey}@lead-finder.invalid`,
+    );
+  });
+
+  it('returns NOT_FOUND without exposing Gmail response data', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [] }));
+    await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: 'b'.repeat(64) }))
+      .resolves.toEqual({ state: 'NOT_FOUND' });
+  });
+
+  it('accepts Gmail’s empty result form only with resultSizeEstimate zero', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ resultSizeEstimate: 0 }));
+    await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: '7'.repeat(64) }))
+      .resolves.toEqual({ state: 'NOT_FOUND' });
+    const inconsistentFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [], resultSizeEstimate: 1 }));
+    await expect(manualConsumer(inconsistentFetch).searchSent({ deliveryKey: '8'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    const inconsistentFoundFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'one' }], resultSizeEstimate: 2 }));
+    await expect(manualConsumer(inconsistentFoundFetch).searchSent({ deliveryKey: '9'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    const pagedFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'one' }], nextPageToken: 'next-page' }));
+    await expect(manualConsumer(pagedFetch).searchSent({ deliveryKey: 'a'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+  });
+
+  it('fails closed as UNKNOWN when Gmail SENT contains duplicate markers', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'one' }, { id: 'two' }] }));
+    await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: 'e'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+  });
+
+  it('fails closed as UNKNOWN for an unavailable or malformed search', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ unexpected: true }));
+    await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: 'c'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    const missingMessagesFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    await expect(manualConsumer(missingMessagesFetch).searchSent({ deliveryKey: 'f'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    const invalidKeyFetch = vi.fn<OperatorEmailFetch>();
+    await expect(manualConsumer(invalidKeyFetch).searchSent({ deliveryKey: 'not-a-key' }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    expect(invalidKeyFetch).not.toHaveBeenCalled();
+  });
+
   it('binds exactly one recipient and emits no CC, BCC or attachment headers', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
@@ -157,10 +235,23 @@ describe('Gmail API manual email consumer', () => {
     expect(mimeMessage).toContain('From: operator@example.test');
     expect(mimeMessage).toContain('To: lead@example.test');
     expect(mimeMessage).toContain('X-Lead-Finder-Purpose: MANUAL_PILOT');
+    expect(mimeMessage).not.toContain('Message-ID: <daily6-');
     expect(mimeMessage).not.toMatch(/\r\nCc:/i);
     expect(mimeMessage).not.toMatch(/\r\nBcc:/i);
     expect(mimeMessage).not.toMatch(/Content-Disposition:\s*attachment/i);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds the opaque delivery key to the MIME Message-ID without PII', async () => {
+    const deliveryKey = 'd'.repeat(64);
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'synthetic-manual-message-id' }));
+    await manualConsumer(fetchMock).sendManual({ ...manualMessage, deliveryKey });
+    const body = fetchMock.mock.calls[1]?.[1]?.body;
+    const request = JSON.parse(typeof body === 'string' ? body : '{}') as { raw: string };
+    const mimeMessage = Buffer.from(request.raw, 'base64url').toString('utf8');
+    expect(mimeMessage).toContain(`Message-ID: <daily6-${deliveryKey}@lead-finder.invalid>`);
   });
 
   it('rejects invalid recipients before network access', async () => {

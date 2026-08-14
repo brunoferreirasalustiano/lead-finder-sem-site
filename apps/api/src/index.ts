@@ -138,8 +138,11 @@ const manualEmailConsumer = config.MANUAL_EMAIL_SEND_ENABLED
     })()
   : undefined;
 const deliverManualEmail = manualEmailConsumer
-  ? (message: { subject: string; body: string; recipient: string }) => manualEmailConsumer.sendManual(message)
+  ? (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => manualEmailConsumer.sendManual(message)
   : undefined;
+const searchManualEmailSent = manualEmailConsumer
+  ? (input: { deliveryKey: string }) => manualEmailConsumer.searchSent(input)
+  : () => Promise.resolve({ state: 'UNKNOWN' as const });
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
@@ -160,6 +163,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
           fingerprintKey: config.MANUAL_EMAIL_FINGERPRINT_KEY,
           operationalSha: config.EXPECTED_OPERATIONAL_SHA,
           deliver: deliverManualEmail ?? (() => Promise.reject(new Error('MANUAL_EMAIL_DISABLED'))),
+          searchSent: searchManualEmailSent,
         },
       }
     : {}),

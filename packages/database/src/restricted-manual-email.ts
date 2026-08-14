@@ -97,11 +97,22 @@ export type RestrictedManualEmailDeliveryResult = Readonly<{
   errorCode?: string;
   replayed: boolean;
   attemptId: string;
+  providerCalled?: boolean;
 }>;
+
+export type Daily6GmailSentSearchResult = Readonly<{
+  state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN';
+  messageId?: string;
+}>;
+
+export type Daily6GmailSentSearch = (
+  input: Readonly<{ deliveryKey: string }>,
+) => Promise<Daily6GmailSentSearchResult>;
 
 export type Daily6EmailRuntime = Readonly<{
   batchId: string;
   sendIdentity: string;
+  searchSent: Daily6GmailSentSearch;
 }>;
 
 const canonical = (value: unknown): unknown => {
@@ -507,6 +518,84 @@ const classifyDeliveryFailure = (error: unknown): Readonly<{
   }
 };
 
+const daily6DeliveryKey = (
+  fingerprintKey: string,
+  batchId: string,
+  sendIdentity: string,
+  preparationId: string,
+) => keyedFingerprint(
+  fingerprintKey,
+  'daily6-gmail-delivery-key',
+  `${batchId}\u0000${sendIdentity}\u0000${preparationId}`,
+);
+
+const normalizeSentSearchResult = (value: unknown): Daily6GmailSentSearchResult => {
+  if (value !== null && typeof value === 'object' && 'state' in value) {
+    const item = value as { state?: unknown; messageId?: unknown };
+    if (item.state === 'FOUND' && typeof item.messageId === 'string' && item.messageId.length > 0) {
+      return { state: 'FOUND', messageId: item.messageId };
+    }
+    if (item.state === 'NOT_FOUND') return { state: 'NOT_FOUND' };
+  }
+  return { state: 'UNKNOWN' };
+};
+
+const searchDaily6Sent = async (
+  runtime: Daily6EmailRuntime,
+  deliveryKey: string,
+): Promise<Daily6GmailSentSearchResult> => {
+  try {
+    return normalizeSentSearchResult(await runtime.searchSent({ deliveryKey }));
+  } catch {
+    return { state: 'UNKNOWN' };
+  }
+};
+
+const reconcileDaily6Sent = async (
+  db: Database,
+  attemptId: string,
+  auth: AuthorizationContext,
+  runtime: Daily6EmailRuntime,
+  fingerprintKey: string,
+  deliveryKey: string,
+  replayed: boolean,
+): Promise<RestrictedManualEmailDeliveryResult | undefined> => {
+  const search = await searchDaily6Sent(runtime, deliveryKey);
+  if (search.state === 'NOT_FOUND') return undefined;
+  const found = search.state === 'FOUND';
+  const errorCode = found ? undefined : 'GMAIL_SENT_SEARCH_UNKNOWN';
+  const messageIdFingerprint = found && search.messageId
+    ? keyedFingerprint(fingerprintKey, 'manual-email-provider-message-id', search.messageId)
+    : undefined;
+  const terminal = await appendTerminal(
+    db,
+    attemptId,
+    auth,
+    found ? 'DELIVERED' : 'AMBIGUOUS',
+    messageIdFingerprint,
+    errorCode,
+  );
+  await db.execute(sql`
+    select * from lead_finder_internal.finalize_daily6_send(
+      ${runtime.batchId},
+      ${runtime.sendIdentity},
+      ${found ? 'SENT' : 'AMBIGUOUS'},
+      ${messageIdFingerprint ?? null}::char(64),
+      ${errorCode}
+    )
+  `);
+  const resolvedErrorCode = terminal.error_code ?? errorCode;
+  return {
+    state: terminal.event_type,
+    provider: 'GMAIL_API',
+    ...(messageIdFingerprint ? { messageIdFingerprint } : {}),
+    ...(resolvedErrorCode ? { errorCode: resolvedErrorCode } : {}),
+    replayed,
+    attemptId,
+    providerCalled: false,
+  };
+};
+
 export async function sendPreparedManualEmail(
   db: Database,
   preparationId: string,
@@ -520,16 +609,41 @@ export async function sendPreparedManualEmail(
       subject: string;
       body: string;
       recipient: string;
+      deliveryKey?: string;
     }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
     daily6?: Daily6EmailRuntime;
   },
 ): Promise<RestrictedManualEmailDeliveryResult> {
   requirePermission(auth, runtime.daily6 ? 'daily6:send' : 'manual-messaging:send');
 
+  const deliveryKey = runtime.daily6
+    ? daily6DeliveryKey(runtime.fingerprintKey, runtime.daily6.batchId, runtime.daily6.sendIdentity, preparationId)
+    : undefined;
+
   const existingAttempt = await readExistingAttempt(db, preparationId, auth);
   if (existingAttempt) {
     const persistedTerminal = terminalResult(existingAttempt, true);
     if (persistedTerminal) return persistedTerminal;
+    if (runtime.daily6 && deliveryKey) {
+      try {
+        const reconciled = await reconcileDaily6Sent(
+          db,
+          existingAttempt.id,
+          auth,
+          runtime.daily6,
+          runtime.fingerprintKey,
+          deliveryKey,
+          true,
+        );
+        if (reconciled) return reconciled;
+      } catch {
+        // A concurrent terminal event wins; never turn an IN_PROGRESS replay
+        // into a second provider attempt when reconciliation cannot complete.
+        const latest = await readExistingAttempt(db, preparationId, auth);
+        const latestTerminal = latest ? terminalResult(latest, true) : undefined;
+        if (latestTerminal) return latestTerminal;
+      }
+    }
     return {
       state: 'IN_PROGRESS',
       provider: 'GMAIL_API',
@@ -593,6 +707,22 @@ export async function sendPreparedManualEmail(
   if (priorTerminal) return priorTerminal;
 
   if (reserved.attempt.replayed || reserved.daily6Replayed) {
+    if (runtime.daily6 && deliveryKey) {
+      try {
+        const reconciled = await reconcileDaily6Sent(
+          db,
+          reserved.attempt.id,
+          auth,
+          runtime.daily6,
+          runtime.fingerprintKey,
+          deliveryKey,
+          true,
+        );
+        if (reconciled) return reconciled;
+      } catch {
+        // Preserve the existing replay fence on a concurrent terminal race.
+      }
+    }
     return {
       state: 'IN_PROGRESS',
       provider: 'GMAIL_API',
@@ -602,10 +732,23 @@ export async function sendPreparedManualEmail(
   }
 
   try {
+    if (runtime.daily6 && deliveryKey) {
+      const reconciled = await reconcileDaily6Sent(
+        db,
+        reserved.attempt.id,
+        auth,
+        runtime.daily6,
+        runtime.fingerprintKey,
+        deliveryKey,
+        false,
+      );
+      if (reconciled) return reconciled;
+    }
     const receipt = await runtime.deliver({
       subject: reserved.prepared.subject,
       body: reserved.prepared.body,
       recipient: reserved.recipient,
+      ...(deliveryKey ? { deliveryKey } : {}),
     });
     if (receipt.provider !== 'GMAIL_API' || !receipt.messageId) {
       throw Object.assign(new Error('Gmail delivery result is ambiguous'), {
@@ -642,6 +785,7 @@ export async function sendPreparedManualEmail(
       messageIdFingerprint,
       replayed: false,
       attemptId: reserved.attempt.id,
+      providerCalled: true,
     };
   } catch (error) {
     const failure = classifyDeliveryFailure(error);
@@ -671,6 +815,7 @@ export async function sendPreparedManualEmail(
         errorCode: terminal.error_code ?? failure.errorCode,
         replayed: false,
         attemptId: reserved.attempt.id,
+        providerCalled: true,
       };
     } catch (terminalError) {
       const isTerminalConflict = postgresCode(terminalError) === '23505'

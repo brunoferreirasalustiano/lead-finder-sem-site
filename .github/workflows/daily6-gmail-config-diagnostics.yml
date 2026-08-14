@@ -1,0 +1,55 @@
+name: Daily-6 Gmail config diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gmail-config-diagnostics:
+    name: Gmail config diagnostics
+    runs-on: ubuntu-latest
+    environment: hml-discovery
+    timeout-minutes: 1
+    steps:
+      - name: Execute exactly one authenticated config diagnostic request
+        shell: bash
+        env:
+          HML_DAILY6_TOKEN: ${{ secrets.HML_DAILY6_TOKEN }}
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          set +e
+          http_status="$(curl --silent --output "$response_file" --write-out '%{http_code}' --max-time 30 \
+            -H "Authorization: Bearer ${HML_DAILY6_TOKEN}" \
+            "https://lead-finder-api-hml.onrender.com/internal/daily6/gmail-config-diagnostics" 2>/dev/null)"
+          curl_exit=$?
+          set -e
+          if [[ "$curl_exit" -ne 0 ]]; then
+            http_status=000
+          fi
+
+          manual_email_send_enabled="$(jq -r 'if .manualEmailSendEnabled == true then "true" elif .manualEmailSendEnabled == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          sender_match="$(jq -r 'if .senderMatch == true then "true" elif .senderMatch == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          client_id_configured="$(jq -r 'if .clientIdConfigured == true then "true" elif .clientIdConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          client_secret_configured="$(jq -r 'if .clientSecretConfigured == true then "true" elif .clientSecretConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          refresh_token_configured="$(jq -r 'if .refreshTokenConfigured == true then "true" elif .refreshTokenConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          fingerprint_key_configured="$(jq -r 'if .fingerprintKeyConfigured == true then "true" elif .fingerprintKeyConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+
+          printf 'HTTP_STATUS=%s\n' "$http_status"
+          printf 'MANUAL_EMAIL_SEND_ENABLED=%s\n' "$manual_email_send_enabled"
+          printf 'MANUAL_EMAIL_SENDER_MATCH=%s\n' "$sender_match"
+          printf 'GOOGLE_CLIENT_ID_CONFIGURED=%s\n' "$client_id_configured"
+          printf 'GOOGLE_CLIENT_SECRET_CONFIGURED=%s\n' "$client_secret_configured"
+          printf 'GOOGLE_REFRESH_TOKEN_CONFIGURED=%s\n' "$refresh_token_configured"
+          printf 'FINGERPRINT_KEY_CONFIGURED=%s\n' "$fingerprint_key_configured"
+
+          if [[ "$http_status" != "200" || "$manual_email_send_enabled" == "UNKNOWN" || "$sender_match" == "UNKNOWN" || "$client_id_configured" == "UNKNOWN" || "$client_secret_configured" == "UNKNOWN" || "$refresh_token_configured" == "UNKNOWN" || "$fingerprint_key_configured" == "UNKNOWN" ]]; then
+            printf 'STATUS=GMAIL_CONFIG_DIAGNOSTICS_FAIL\n'
+            exit 1
+          fi
+
+          printf 'STATUS=GMAIL_CONFIG_DIAGNOSTICS_PASS\n'

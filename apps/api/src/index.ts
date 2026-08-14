@@ -151,6 +151,14 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   ...(manualEmailConsumer && config.MANUAL_EMAIL_SENDER === 'leadfinderbrasil@gmail.com'
     ? { daily6GmailPreflight: () => manualEmailConsumer.preflightSent() }
     : {}),
+  daily6GmailConfigDiagnostics: () => ({
+    manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
+    senderMatch: config.MANUAL_EMAIL_SENDER === 'leadfinderbrasil@gmail.com',
+    clientIdConfigured: Boolean(config.MANUAL_EMAIL_GOOGLE_CLIENT_ID),
+    clientSecretConfigured: Boolean(config.MANUAL_EMAIL_GOOGLE_CLIENT_SECRET),
+    refreshTokenConfigured: Boolean(config.MANUAL_EMAIL_GOOGLE_REFRESH_TOKEN),
+    fingerprintKeyConfigured: Boolean(config.MANUAL_EMAIL_FINGERPRINT_KEY),
+  }),
   daily6PilotEnabled: config.DAILY6_PILOT_ENABLED,
   discoveryAuthRequired: config.HML_DISCOVERY_AUTH_ENABLED,
   daily6AuthRequired: config.HML_DAILY6_AUTH_ENABLED,

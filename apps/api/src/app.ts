@@ -79,6 +79,7 @@ import {
   type Daily6SlotInput,
   type Daily6SlotRuntime,
 } from '@lead-finder/database';
+import { GMAIL_PREFLIGHT_ERROR_CLASSES, type GmailPreflightResult } from '@lead-finder/email';
 import {
   collectSchema,
   collectionCityId,
@@ -191,6 +192,13 @@ export const safeManualEmailDeliveryDto = (
     : {}),
   ...(result.errorCode ? { errorCode: safeCode(result.errorCode) } : {}),
 });
+const safeGmailPreflightResult = (result: GmailPreflightResult) => ({
+  gmailAuth: result.gmailAuth === 'PASS' ? 'PASS' as const : 'FAIL' as const,
+  sentSearch: result.sentSearch === 'PASS' ? 'PASS' as const : 'NOT_PROVEN' as const,
+  ...(result.errorClass && GMAIL_PREFLIGHT_ERROR_CLASSES.includes(result.errorClass)
+    ? { errorClass: result.errorClass }
+    : {}),
+});
 export const safeCampaignAuditItem = (value: unknown) => {
   const item = row(value);
   return {
@@ -232,6 +240,7 @@ export function buildApp(db: Database, options: {
   daily6AuthRequired?: boolean;
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
+  daily6GmailPreflight?: () => Promise<GmailPreflightResult>;
   hmlSuppressionProbeEnabled?: boolean;
   deliverManualEmail?: (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
@@ -373,6 +382,30 @@ export function buildApp(db: Database, options: {
   app.get('/internal/operational-snapshot', async (_request, reply) => {
     try { return await getOperationalSnapshot(db); }
     catch { return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' }); }
+  });
+  app.get('/internal/daily6/gmail-preflight', async (request, reply) => {
+    if (options.daily6AuthRequired
+      && request.principal?.authenticationSource !== 'HML_DAILY6_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    if (!options.daily6GmailPreflight) {
+      return reply.status(503).send({
+        gmailAuth: 'FAIL',
+        sentSearch: 'NOT_PROVEN',
+        errorClass: 'MISSING_CONFIG',
+      });
+    }
+    try {
+      const result = safeGmailPreflightResult(await options.daily6GmailPreflight());
+      if (result.gmailAuth === 'PASS' && result.sentSearch === 'PASS') return result;
+      return reply.status(503).send(result);
+    } catch {
+      return reply.status(503).send({
+        gmailAuth: 'FAIL',
+        sentSearch: 'NOT_PROVEN',
+        errorClass: 'UNKNOWN',
+      });
+    }
   });
   app.get('/internal/prospecting/city-metrics', async (_request, reply) => {
     if (options.prospectingMetricsEnabled !== true) {

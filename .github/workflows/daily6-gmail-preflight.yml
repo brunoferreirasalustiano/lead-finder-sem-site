@@ -34,10 +34,12 @@ jobs:
 
           gmail_auth="$(jq -r 'if .gmailAuth == "PASS" then "PASS" else "FAIL" end' "$response_file" 2>/dev/null || printf 'FAIL')"
           sent_search="$(jq -r 'if .sentSearch == "PASS" then "PASS" else "NOT_PROVEN" end' "$response_file" 2>/dev/null || printf 'NOT_PROVEN')"
+          error_class="$(jq -r 'if .errorClass == "AUTH_INVALID" or .errorClass == "TOKEN_REVOKED" or .errorClass == "MISSING_CONFIG" or .errorClass == "NETWORK" or .errorClass == "GOOGLE_API_ERROR" or .errorClass == "UNKNOWN" then .errorClass else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
 
           printf 'HTTP_STATUS=%s\n' "$http_status"
           printf 'GMAIL_RUNTIME_AUTH=%s\n' "$gmail_auth"
           printf 'GMAIL_SENT_SEARCH=%s\n' "$sent_search"
+          printf 'ERROR_CLASS=%s\n' "$error_class"
 
           if [[ "$http_status" != "200" || "$gmail_auth" != "PASS" || "$sent_search" != "PASS" ]]; then
             printf 'STATUS=GMAIL_PREFLIGHT_FAIL\n'

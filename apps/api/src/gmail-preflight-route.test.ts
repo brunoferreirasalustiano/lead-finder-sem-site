@@ -8,6 +8,7 @@ import { permissions } from './auth.js';
 const apiToken = 'synthetic-api-token-for-gmail-preflight-0001';
 const hmlToken = 'synthetic-hml-daily6-token-for-gmail-preflight-0001';
 const preflightPath = '/internal/daily6/gmail-preflight';
+const configDiagnosticsPath = '/internal/daily6/gmail-config-diagnostics';
 const pass = () => Promise.resolve({ gmailAuth: 'PASS' as const, sentSearch: 'PASS' as const });
 
 const authenticated = (app: ReturnType<typeof buildApp>) => app.inject({
@@ -128,6 +129,55 @@ describe('Daily-6 Gmail read-only preflight route', () => {
     });
     expect(hml.statusCode).toBe(200);
     expect(hml.json()).toEqual({ gmailAuth: 'PASS', sentSearch: 'PASS' });
+    await app.close();
+  });
+
+  it('returns only boolean HML Gmail configuration diagnostics and never reads the database', async () => {
+    let databaseAccesses = 0;
+    const db = new Proxy({} as Database, {
+      get() {
+        databaseAccesses += 1;
+        throw new Error('database must not be accessed by Gmail config diagnostics');
+      },
+    });
+    const app = buildApp(db, {
+      daily6AuthRequired: true,
+      authentication: {
+        token: apiToken,
+        principalPermissions: permissions,
+        daily6Temporary: {
+          tokenHash: createHash('sha256').update(hmlToken, 'utf8').digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+          principalId: 'hml-daily6-preflight',
+          principalPermissions: hmlDaily6AuthPermissions,
+          environment: 'homologation',
+        },
+      },
+      daily6GmailConfigDiagnostics: () => ({
+        manualEmailSendEnabled: false,
+        senderMatch: false,
+        clientIdConfigured: true,
+        clientSecretConfigured: true,
+        refreshTokenConfigured: true,
+        fingerprintKeyConfigured: true,
+      }),
+    });
+
+    const unauthorized = await app.inject({ method: 'GET', url: configDiagnosticsPath, headers: { authorization: `Bearer ${apiToken}` } });
+    expect(unauthorized.statusCode).toBe(403);
+    const response = await app.inject({ method: 'GET', url: configDiagnosticsPath, headers: { authorization: `Bearer ${hmlToken}` } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      manualEmailSendEnabled: false,
+      senderMatch: false,
+      clientIdConfigured: true,
+      clientSecretConfigured: true,
+      refreshTokenConfigured: true,
+      fingerprintKeyConfigured: true,
+    });
+    expect(response.body).not.toContain(hmlToken);
+    expect(response.body).not.toContain('leadfinderbrasil@gmail.com');
+    expect(databaseAccesses).toBe(0);
     await app.close();
   });
 });

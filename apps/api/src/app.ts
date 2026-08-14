@@ -148,6 +148,15 @@ import {
   type AuthenticationOptions,
 } from './auth.js';
 
+export type Daily6GmailConfigDiagnostics = Readonly<{
+  manualEmailSendEnabled: boolean;
+  senderMatch: boolean;
+  clientIdConfigured: boolean;
+  clientSecretConfigured: boolean;
+  refreshTokenConfigured: boolean;
+  fingerprintKeyConfigured: boolean;
+}>;
+
 const idSchema = z.string().uuid();
 type HttpContractQueries = Readonly<{
   listLeads: typeof listLeads;
@@ -241,6 +250,7 @@ export function buildApp(db: Database, options: {
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
   daily6GmailPreflight?: () => Promise<GmailPreflightResult>;
+  daily6GmailConfigDiagnostics?: () => Daily6GmailConfigDiagnostics;
   hmlSuppressionProbeEnabled?: boolean;
   deliverManualEmail?: (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
   whatsappCloudRuntime?: WhatsAppCloudRuntime;
@@ -406,6 +416,15 @@ export function buildApp(db: Database, options: {
         errorClass: 'UNKNOWN',
       });
     }
+  });
+  app.get('/internal/daily6/gmail-config-diagnostics', async (request, reply) => {
+    if (!options.daily6AuthRequired || !options.daily6GmailConfigDiagnostics) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_DAILY6_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    return options.daily6GmailConfigDiagnostics();
   });
   app.get('/internal/prospecting/city-metrics', async (_request, reply) => {
     if (options.prospectingMetricsEnabled !== true) {

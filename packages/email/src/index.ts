@@ -69,6 +69,10 @@ const gmailSendResponseSchema = z.object({
   id: z.string().min(1).max(512),
   threadId: z.string().min(1).max(512).optional(),
 });
+const gmailSentSearchResponseSchema = z.object({
+  messages: z.array(z.object({ id: z.string().min(1).max(512) })).optional(),
+}).strict();
+const deliveryKeySchema = z.string().regex(/^[0-9a-f]{64}$/u, 'delivery key is invalid');
 
 export type OperatorEmailMessage = Readonly<{
   subject: string;
@@ -84,6 +88,13 @@ export type ManualEmailMessage = Readonly<{
   subject: string;
   body: string;
   recipient: string;
+  /** Opaque HMAC key used to reconcile a Daily-6 send in Gmail SENT. */
+  deliveryKey?: string;
+}>;
+
+export type GmailSentSearchResult = Readonly<{
+  state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN';
+  messageId?: string;
 }>;
 
 export type OperatorEmailFetch = (
@@ -123,6 +134,9 @@ const createRawMessage = (
     `From: ${configuration.sender}`,
     `To: ${'recipient' in message ? message.recipient : configuration.recipient!}`,
     `Subject: ${encodeHeader(subject)}`,
+    ...('deliveryKey' in message && message.deliveryKey
+      ? [`Message-ID: <daily6-${deliveryKeySchema.parse(message.deliveryKey)}@lead-finder.invalid>`]
+      : []),
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
@@ -187,6 +201,12 @@ const deliveryOutcomeCode = (status: number) =>
     || status === 408 || status === 409 || status === 425 || status === 429
     ? 'DELIVERY_AMBIGUOUS' as const
     : 'DELIVERY_REJECTED' as const;
+
+const sentMessageId = (deliveryKey: string) =>
+  `daily6-${deliveryKeySchema.parse(deliveryKey)}@lead-finder.invalid`;
+
+const searchSentQuery = (deliveryKey: string) =>
+  `rfc822msgid:${sentMessageId(deliveryKey)}`;
 
 export function createGmailApiOperatorEmailConsumer(
   input: {
@@ -275,11 +295,46 @@ export function createGmailApiManualEmailConsumer(
   }
   const configuration = parsed.data;
   return {
+    async searchSent(input: { deliveryKey: string }): Promise<GmailSentSearchResult> {
+      const parsedKey = deliveryKeySchema.safeParse(input.deliveryKey);
+      if (!parsedKey.success) return { state: 'UNKNOWN' };
+      let accessToken: string;
+      try {
+        accessToken = await exchangeRefreshToken(configuration, fetchImpl);
+      } catch {
+        return { state: 'UNKNOWN' };
+      }
+      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+      url.searchParams.set('q', searchSentQuery(parsedKey.data));
+      url.searchParams.set('labelIds', 'SENT');
+      // Two matches are enough to detect a duplicate marker and fail closed.
+      url.searchParams.set('maxResults', '2');
+      let searchResponse: Response;
+      try {
+        searchResponse = await fetchImpl(url, {
+          method: 'GET',
+          headers: { authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch {
+        return { state: 'UNKNOWN' };
+      }
+      if (!searchResponse.ok) return { state: 'UNKNOWN' };
+      const result = gmailSentSearchResponseSchema.safeParse(await parseJson(searchResponse));
+      if (!result.success) return { state: 'UNKNOWN' };
+      if ((result.data.messages?.length ?? 0) > 1) return { state: 'UNKNOWN' };
+      const message = result.data.messages?.[0];
+      return message ? { state: 'FOUND', messageId: message.id } : { state: 'NOT_FOUND' };
+    },
     async sendManual(message: ManualEmailMessage): Promise<OperatorEmailDeliveryReceipt> {
       const recipient = normalizedEmail.parse(message.recipient);
       const raw = createRawMessage(
         configuration,
-        { ...message, recipient },
+        {
+          ...message,
+          recipient,
+          ...(message.deliveryKey ? { deliveryKey: deliveryKeySchema.parse(message.deliveryKey) } : {}),
+        },
         'MANUAL_PILOT',
       );
       const accessToken = await exchangeRefreshToken(configuration, fetchImpl);

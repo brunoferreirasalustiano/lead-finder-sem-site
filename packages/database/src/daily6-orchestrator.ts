@@ -30,7 +30,8 @@ export type Daily6SlotRuntime = Readonly<{
   sender: string;
   fingerprintKey: string;
   operationalSha: string;
-  deliver: (message: { subject: string; body: string; recipient: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+  deliver: (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+  searchSent: (input: { deliveryKey: string }) => Promise<{ state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN'; messageId?: string }>;
 }>;
 
 type CandidateRow = Readonly<{
@@ -100,6 +101,14 @@ export type Daily6DeliveryState = 'DELIVERED' | 'FAILED' | 'AMBIGUOUS' | 'IN_PRO
  */
 export const shouldStopDaily6SlotAfterDelivery = (state: Daily6DeliveryState): boolean =>
   state === 'AMBIGUOUS';
+
+export const shouldCountDaily6ProviderCall = (delivery: Readonly<{
+  state: Daily6DeliveryState;
+  replayed: boolean;
+  providerCalled?: boolean;
+}>): boolean => !delivery.replayed
+  && delivery.state !== 'IN_PROGRESS'
+  && delivery.providerCalled !== false;
 
 export type Daily6SlotReport = Readonly<{
   batchId: string;
@@ -400,9 +409,10 @@ export async function runDaily6Slot(
         daily6: {
           batchId,
           sendIdentity: `${batchId}|${candidate.lead_id}`,
+          searchSent: runtime.searchSent,
         },
       });
-      if (!delivery.replayed && delivery.state !== 'IN_PROGRESS') report.providerCalls += 1;
+      if (shouldCountDaily6ProviderCall(delivery)) report.providerCalls += 1;
       report.replayed ||= delivery.replayed;
       if (delivery.state === 'DELIVERED') {
         report.sent += 1;

@@ -4,6 +4,7 @@ import {
   DAILY6_PROGRESSIVE_LIMITS,
   runDaily6Slot,
   selectProgressiveDaily6Candidates,
+  shouldCountDaily6ProviderCall,
   shouldStopDaily6SlotAfterDelivery,
   type Daily6CandidateForSelection,
 } from './daily6-orchestrator.js';
@@ -37,6 +38,18 @@ const candidate = (id: string, overrides: Partial<Daily6CandidateForSelection> =
 });
 
 describe('progressive Daily-6 candidate selection', () => {
+  it('does not count a Gmail SENT reconciliation as a provider send', () => {
+    expect(shouldCountDaily6ProviderCall({
+      state: 'DELIVERED',
+      replayed: false,
+      providerCalled: false,
+    })).toBe(false);
+    expect(shouldCountDaily6ProviderCall({
+      state: 'DELIVERED',
+      replayed: false,
+      providerCalled: true,
+    })).toBe(true);
+  });
   it('stops the slot after the first ambiguous delivery without processing the next approval', () => {
     const approved = ['approved-1', 'approved-2'];
     const processed: string[] = [];
@@ -145,6 +158,7 @@ describe('Daily-6 city contract', () => {
     fingerprintKey: 'synthetic-fingerprint-key',
     operationalSha: 'a'.repeat(40),
     deliver: vi.fn(),
+    searchSent: vi.fn().mockResolvedValue({ state: 'NOT_FOUND' }),
   };
 
   it('accepts the scheduler alias Campinas and canonicalizes its batch identity', async () => {

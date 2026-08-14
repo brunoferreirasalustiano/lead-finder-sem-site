@@ -158,6 +158,7 @@ export type Daily6GmailConfigDiagnostics = Readonly<{
   operatorEmailTestEnabled: boolean;
   operatorEmailTestRecipientConfigured: boolean;
   operatorEmailTestSenderConfigured: boolean;
+  operatorEmailTestSenderMatch: boolean;
   operatorEmailTestClientIdConfigured: boolean;
   operatorEmailTestClientSecretConfigured: boolean;
   operatorEmailTestRefreshTokenConfigured: boolean;

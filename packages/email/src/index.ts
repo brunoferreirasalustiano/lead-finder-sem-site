@@ -324,6 +324,7 @@ export function createGmailApiManualEmailConsumer(
       if (!searchResponse.ok) return { state: 'UNKNOWN' };
       const result = gmailSentSearchResponseSchema.safeParse(await parseJson(searchResponse));
       if (!result.success) return { state: 'UNKNOWN' };
+      if (result.data.nextPageToken) return { state: 'UNKNOWN' };
       const messages = result.data.messages;
       if (!messages) return result.data.resultSizeEstimate === 0
         ? { state: 'NOT_FOUND' }
@@ -333,6 +334,9 @@ export function createGmailApiManualEmailConsumer(
         return result.data.resultSizeEstimate === undefined || result.data.resultSizeEstimate === 0
           ? { state: 'NOT_FOUND' }
           : { state: 'UNKNOWN' };
+      }
+      if (result.data.resultSizeEstimate !== undefined && result.data.resultSizeEstimate !== 1) {
+        return { state: 'UNKNOWN' };
       }
       const message = messages[0];
       return message ? { state: 'FOUND', messageId: message.id } : { state: 'NOT_FOUND' };

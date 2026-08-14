@@ -186,6 +186,16 @@ describe('Gmail API manual email consumer', () => {
       .mockResolvedValueOnce(jsonResponse({ messages: [], resultSizeEstimate: 1 }));
     await expect(manualConsumer(inconsistentFetch).searchSent({ deliveryKey: '8'.repeat(64) }))
       .resolves.toEqual({ state: 'UNKNOWN' });
+    const inconsistentFoundFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'one' }], resultSizeEstimate: 2 }));
+    await expect(manualConsumer(inconsistentFoundFetch).searchSent({ deliveryKey: '9'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+    const pagedFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'one' }], nextPageToken: 'next-page' }));
+    await expect(manualConsumer(pagedFetch).searchSent({ deliveryKey: 'a'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
   });
 
   it('fails closed as UNKNOWN when Gmail SENT contains duplicate markers', async () => {

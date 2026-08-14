@@ -30,6 +30,7 @@ describe('Daily-6 Gmail config diagnostics workflow', () => {
     expect(workflow).toContain('GOOGLE_REFRESH_TOKEN_CONFIGURED=');
     expect(workflow).toContain('FINGERPRINT_KEY_CONFIGURED=');
     expect(workflow).toContain('OPERATOR_EMAIL_TEST_ENABLED=');
+    expect(workflow).toContain('OPERATOR_EMAIL_TEST_SENDER_MATCH=');
     expect(workflow).toContain('OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN_CONFIGURED=');
     expect(workflow).toContain('DAILY6_PILOT_ENABLED=');
     expect(workflow).toContain('REAL_SEND_ENABLED=');

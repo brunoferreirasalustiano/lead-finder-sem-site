@@ -81,10 +81,33 @@ export type OperatorEmailMessage = Readonly<{
   body: string;
 }>;
 
+/** Provider telemetry is deliberately a closed, PII-free vocabulary. */
+export const PROVIDER_OUTCOMES = [
+  'PROVIDER_SUCCESS',
+  'RATE_LIMITED',
+  'TIMEOUT',
+  'UNAVAILABLE',
+  'AMBIGUOUS',
+  'DELIVERY_REJECTED',
+] as const;
+export type ProviderOutcome = (typeof PROVIDER_OUTCOMES)[number];
+export const PROVIDER_REASONS = [
+  'HTTP_429',
+  'TIMEOUT',
+  'OAUTH_UNAVAILABLE',
+  'HTTP_5XX',
+  'NETWORK_UNAVAILABLE',
+  'HTTP_4XX',
+  'INVALID_CONFIGURATION',
+  'PROVIDER_OUTCOME_UNKNOWN',
+] as const;
+export type ProviderReason = (typeof PROVIDER_REASONS)[number];
+
 export type OperatorEmailDeliveryReceipt = Readonly<{
   provider: 'GMAIL_API';
   messageId: string;
   response: string;
+  outcome: 'PROVIDER_SUCCESS';
 }>;
 export type ManualEmailMessage = Readonly<{
   subject: string;
@@ -114,10 +137,37 @@ export class OperatorEmailDeliveryError extends Error {
       | 'TOKEN_EXCHANGE_FAILED'
       | 'DELIVERY_REJECTED'
       | 'DELIVERY_AMBIGUOUS',
+    readonly outcome: ProviderOutcome = defaultOutcomeForCode(code),
+    readonly reason: ProviderReason = defaultReasonForCode(code),
   ) {
     super(message);
   }
 }
+
+const defaultOutcomeForCode = (code: OperatorEmailDeliveryError['code']): ProviderOutcome => {
+  switch (code) {
+    case 'INVALID_CONFIGURATION':
+    case 'TOKEN_EXCHANGE_FAILED':
+      return 'UNAVAILABLE';
+    case 'DELIVERY_REJECTED':
+      return 'DELIVERY_REJECTED';
+    case 'DELIVERY_AMBIGUOUS':
+      return 'AMBIGUOUS';
+  }
+};
+
+const defaultReasonForCode = (code: OperatorEmailDeliveryError['code']): ProviderReason => {
+  switch (code) {
+    case 'INVALID_CONFIGURATION':
+      return 'INVALID_CONFIGURATION';
+    case 'TOKEN_EXCHANGE_FAILED':
+      return 'OAUTH_UNAVAILABLE';
+    case 'DELIVERY_REJECTED':
+      return 'HTTP_4XX';
+    case 'DELIVERY_AMBIGUOUS':
+      return 'PROVIDER_OUTCOME_UNKNOWN';
+  }
+};
 
 const encodeHeader = (value: string) =>
   `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
@@ -179,10 +229,13 @@ const exchangeRefreshToken = async (
       body: tokenBody,
       signal: AbortSignal.timeout(10_000),
     });
-  } catch {
+  } catch (error) {
+    const timeout = isTimeoutError(error);
     throw new OperatorEmailDeliveryError(
       'Google OAuth token exchange failed',
       'TOKEN_EXCHANGE_FAILED',
+      timeout ? 'TIMEOUT' : 'UNAVAILABLE',
+      timeout ? 'TIMEOUT' : 'OAUTH_UNAVAILABLE',
     );
   }
   const token = tokenResponse.ok
@@ -192,17 +245,82 @@ const exchangeRefreshToken = async (
     throw new OperatorEmailDeliveryError(
       'Google OAuth token exchange failed',
       'TOKEN_EXCHANGE_FAILED',
+      'UNAVAILABLE',
+      'OAUTH_UNAVAILABLE',
     );
   }
   return token.data.access_token;
 };
 
-const deliveryOutcomeCode = (status: number) =>
-  status < 400
-    || status >= 500
-    || status === 408 || status === 409 || status === 425 || status === 429
-    ? 'DELIVERY_AMBIGUOUS' as const
-    : 'DELIVERY_REJECTED' as const;
+const isTimeoutError = (error: unknown) => error instanceof Error
+  && (error.name === 'TimeoutError' || error.name === 'AbortError'
+    || /\b(?:timed?\s*out|timeout)\b/iu.test(error.message));
+
+type DeliveryFailure = Readonly<{
+  code: OperatorEmailDeliveryError['code'];
+  message: string;
+  outcome: ProviderOutcome;
+  reason: ProviderReason;
+}>;
+
+const deliveryFailure = (status: number): DeliveryFailure => {
+  if (status === 429) {
+    return {
+      code: 'DELIVERY_AMBIGUOUS',
+      message: 'Gmail provider outcome is unknown',
+      outcome: 'RATE_LIMITED',
+      reason: 'HTTP_429',
+    };
+  }
+  if (status === 408) {
+    return {
+      code: 'DELIVERY_AMBIGUOUS',
+      message: 'Gmail provider outcome is unknown',
+      outcome: 'TIMEOUT',
+      reason: 'TIMEOUT',
+    };
+  }
+  if (status === 409 || status === 425 || status < 400) {
+    return {
+      code: 'DELIVERY_AMBIGUOUS',
+      message: 'Gmail provider outcome is unknown',
+      outcome: 'AMBIGUOUS',
+      reason: 'PROVIDER_OUTCOME_UNKNOWN',
+    };
+  }
+  if (status >= 500) {
+    return {
+      code: 'DELIVERY_AMBIGUOUS',
+      message: 'Gmail provider outcome is unknown',
+      outcome: 'UNAVAILABLE',
+      reason: 'HTTP_5XX',
+    };
+  }
+  if (status >= 400) {
+    return {
+      code: 'DELIVERY_REJECTED',
+      message: 'Gmail delivery was rejected',
+      outcome: 'DELIVERY_REJECTED',
+      reason: 'HTTP_4XX',
+    };
+  }
+  return {
+    code: 'DELIVERY_AMBIGUOUS',
+    message: 'Gmail provider outcome is unknown',
+    outcome: 'AMBIGUOUS',
+    reason: 'PROVIDER_OUTCOME_UNKNOWN',
+  };
+};
+
+const networkDeliveryFailure = (error: unknown): DeliveryFailure => {
+  const timeout = isTimeoutError(error);
+  return {
+    code: 'DELIVERY_AMBIGUOUS',
+    message: 'Gmail provider outcome is unknown',
+    outcome: timeout ? 'TIMEOUT' : 'UNAVAILABLE',
+    reason: timeout ? 'TIMEOUT' : 'NETWORK_UNAVAILABLE',
+  };
+};
 
 const sentMessageId = (deliveryKey: string) =>
   `daily6-${deliveryKeySchema.parse(deliveryKey)}@lead-finder.invalid`;
@@ -248,19 +366,22 @@ export function createGmailApiOperatorEmailConsumer(
             signal: AbortSignal.timeout(15_000),
           },
         );
-      } catch {
+      } catch (error) {
+        const failure = networkDeliveryFailure(error);
         throw new OperatorEmailDeliveryError(
-          'Operator email provider outcome is unknown',
-          'DELIVERY_AMBIGUOUS',
+          failure.message,
+          failure.code,
+          failure.outcome,
+          failure.reason,
         );
       }
       if (!deliveryResponse.ok) {
-        const code = deliveryOutcomeCode(deliveryResponse.status);
+        const failure = deliveryFailure(deliveryResponse.status);
         throw new OperatorEmailDeliveryError(
-          code === 'DELIVERY_AMBIGUOUS'
-            ? 'Operator email provider outcome is unknown'
-            : 'Operator email delivery was rejected',
-          code,
+          failure.message,
+          failure.code,
+          failure.outcome,
+          failure.reason,
         );
       }
       const delivery = gmailSendResponseSchema.safeParse(await parseJson(deliveryResponse));
@@ -268,12 +389,15 @@ export function createGmailApiOperatorEmailConsumer(
         throw new OperatorEmailDeliveryError(
           'Operator email provider outcome is unknown',
           'DELIVERY_AMBIGUOUS',
+          'AMBIGUOUS',
+          'PROVIDER_OUTCOME_UNKNOWN',
         );
       }
       return {
         provider: 'GMAIL_API',
         messageId: delivery.data.id,
         response: `HTTP ${deliveryResponse.status}`,
+        outcome: 'PROVIDER_SUCCESS',
       };
     },
   } as const;
@@ -368,25 +492,22 @@ export function createGmailApiManualEmailConsumer(
             signal: AbortSignal.timeout(15_000),
           },
         );
-      } catch {
+      } catch (error) {
+        const failure = networkDeliveryFailure(error);
         throw new OperatorEmailDeliveryError(
-          'Manual email provider outcome is unknown',
-          'DELIVERY_AMBIGUOUS',
+          failure.message,
+          failure.code,
+          failure.outcome,
+          failure.reason,
         );
       }
       if (!deliveryResponse.ok) {
-        const code = deliveryOutcomeCode(deliveryResponse.status);
+        const failure = deliveryFailure(deliveryResponse.status);
         throw new OperatorEmailDeliveryError(
-          code === 'DELIVERY_AMBIGUOUS'
-            ? 'Manual email provider outcome is unknown'
-            : 'Manual email delivery was rejected',
-          code,
-        );
-      }
-      if (!deliveryResponse.ok) {
-        throw new OperatorEmailDeliveryError(
-          'Manual email provider outcome is unknown',
-          'DELIVERY_AMBIGUOUS',
+          failure.message,
+          failure.code,
+          failure.outcome,
+          failure.reason,
         );
       }
       const delivery = gmailSendResponseSchema.safeParse(
@@ -396,12 +517,15 @@ export function createGmailApiManualEmailConsumer(
         throw new OperatorEmailDeliveryError(
           'Manual email provider outcome is unknown',
           'DELIVERY_AMBIGUOUS',
+          'AMBIGUOUS',
+          'PROVIDER_OUTCOME_UNKNOWN',
         );
       }
       return {
         provider: 'GMAIL_API',
         messageId: delivery.data.id,
         response: `HTTP ${deliveryResponse.status}`,
+        outcome: 'PROVIDER_SUCCESS',
       };
     },
   } as const;

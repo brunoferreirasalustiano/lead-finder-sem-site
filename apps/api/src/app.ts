@@ -865,6 +865,8 @@ export function buildApp(db: Database, options: {
         autoApproved: result.autoApproved, rejected: result.rejected, unknown: result.unknown,
         blocked: result.blocked, targetReached: result.targetReached, stopReason: result.stopReason,
         sent: result.sent, providerCalls: result.providerCalls, replayed: result.replayed,
+        providerOutcomeCounts: result.providerOutcomeCounts,
+        providerReasonCounts: result.providerReasonCounts,
         principalId: request.principal!.id,
       }, 'daily6_slot_completed');
       return result;

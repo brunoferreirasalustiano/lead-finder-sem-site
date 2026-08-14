@@ -1,0 +1,248 @@
+name: Groq key smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  groq-smoke:
+    name: Groq credentials and Compound smoke
+    runs-on: ubuntu-latest
+    environment: hml-discovery
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate four Groq credentials
+        id: auth
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LEAD_FINDER_BRASIL_HML: ${{ secrets.LEAD_FINDER_BRASIL_HML }}
+          LEAD_FINDER_BRASIL_PROD: ${{ secrets.LEAD_FINDER_BRASIL_PROD }}
+          LEAD_FINDER_BRASIL_SHADOW: ${{ secrets.LEAD_FINDER_BRASIL_SHADOW }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+
+          const endpoint = 'https://api.groq.com/openai/v1/models';
+          const checks = [
+            ['GROQ_API_KEY', process.env.GROQ_API_KEY],
+            ['LEAD_FINDER_BRASIL_HML', process.env.LEAD_FINDER_BRASIL_HML],
+            ['LEAD_FINDER_BRASIL_PROD', process.env.LEAD_FINDER_BRASIL_PROD],
+            ['LEAD_FINDER_BRASIL_SHADOW', process.env.LEAD_FINDER_BRASIL_SHADOW],
+          ];
+          const lines = [];
+          const statuses = new Map();
+          let requests = 0;
+
+          const errorClassForStatus = (status) => {
+            if (status === 429) return 'RATE_LIMITED';
+            if (status === 401) return 'AUTH_REJECTED';
+            if (status === 403) return 'FORBIDDEN';
+            if (status >= 500) return 'UPSTREAM_ERROR';
+            return 'HTTP_ERROR';
+          };
+
+          for (const [alias, secret] of checks) {
+            if (!secret) {
+              statuses.set(alias, 'FAIL');
+              lines.push(`${alias}_AUTH=FAIL`);
+              lines.push(`${alias}_HTTP_STATUS=000`);
+              lines.push(`${alias}_ERROR_CLASS=MISSING_SECRET`);
+              continue;
+            }
+
+            requests += 1;
+            try {
+              const response = await fetch(endpoint, {
+                method: 'GET',
+                headers: { authorization: `Bearer ${secret}` },
+                signal: AbortSignal.timeout(15_000),
+              });
+              response.body?.cancel();
+
+              if (response.status === 200) {
+                statuses.set(alias, 'PASS');
+                lines.push(`${alias}_AUTH=PASS`);
+              } else {
+                statuses.set(alias, 'FAIL');
+                lines.push(`${alias}_AUTH=FAIL`);
+                lines.push(`${alias}_HTTP_STATUS=${response.status}`);
+                lines.push(`${alias}_ERROR_CLASS=${errorClassForStatus(response.status)}`);
+              }
+            } catch (error) {
+              statuses.set(alias, 'FAIL');
+              const errorClass = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+                ? 'TIMEOUT'
+                : 'NETWORK_ERROR';
+              lines.push(`${alias}_AUTH=FAIL`);
+              lines.push(`${alias}_HTTP_STATUS=000`);
+              lines.push(`${alias}_ERROR_CLASS=${errorClass}`);
+            }
+          }
+
+          const allPass = checks.every(([alias]) => statuses.get(alias) === 'PASS');
+          const shadowPass = statuses.get('LEAD_FINDER_BRASIL_SHADOW') === 'PASS';
+          lines.push(`AUTH_REQUESTS=${requests}`);
+          process.stdout.write(`${lines.join('\n')}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Groq authentication\n\n\`\`\`text\n${lines.join('\n')}\n\`\`\`\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `auth_result=${allPass ? 'PASS' : 'FAIL'}\nshadow_auth=${shadowPass ? 'PASS' : 'FAIL'}\nauth_requests=${requests}\n`);
+          NODE
+
+      - name: Run exactly one Shadow Compound request
+        id: compound
+        if: ${{ steps.auth.outputs.shadow_auth == 'PASS' }}
+        continue-on-error: true
+        env:
+          LEAD_FINDER_BRASIL_SHADOW: ${{ secrets.LEAD_FINDER_BRASIL_SHADOW }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+
+          const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+          const requestBody = {
+            model: 'groq/compound',
+            messages: [
+              {
+                role: 'user',
+                content: 'Pesquise na web qual é o domínio oficial da Receita Federal do Brasil. Retorne apenas o domínio e uma evidência curta.',
+              },
+            ],
+            compound_custom: {
+              tools: {
+                enabled_tools: ['web_search'],
+              },
+            },
+          };
+
+          let httpStatus = 0;
+          let responseJson = null;
+          let errorClass = null;
+          try {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${process.env.LEAD_FINDER_BRASIL_SHADOW}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify(requestBody),
+              signal: AbortSignal.timeout(60_000),
+            });
+            httpStatus = response.status;
+            if (response.status === 200) {
+              try {
+                responseJson = JSON.parse(await response.text());
+              } catch {
+                errorClass = 'INVALID_JSON';
+              }
+            } else {
+              response.body?.cancel();
+            }
+          } catch (error) {
+            errorClass = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+              ? 'TIMEOUT'
+              : 'NETWORK_ERROR';
+          }
+
+          const message = responseJson?.choices?.[0]?.message;
+          const executedTools = message?.executed_tools;
+          const toolUsed = Array.isArray(executedTools) && executedTools.some((tool) => {
+            const type = String(tool?.type ?? '').toLowerCase();
+            const name = String(tool?.name ?? tool?.tool ?? '').toLowerCase();
+            return type === 'search' || type === 'web_search' || name === 'web_search';
+          });
+          const responseValid = httpStatus === 200
+            && responseJson?.model === 'groq/compound'
+            && typeof message?.content === 'string'
+            && message.content.trim().length > 0;
+          const result = responseValid && toolUsed ? 'PASS' : 'FAIL';
+          const model = responseJson?.model === 'groq/compound' ? 'groq/compound' : 'UNAVAILABLE';
+          const lines = [
+            `SHADOW_COMPOUND=${result}`,
+            `SHADOW_COMPOUND_HTTP=${httpStatus || 0}`,
+            `SHADOW_COMPOUND_MODEL=${model}`,
+            `SHADOW_COMPOUND_TOOL_USED=${toolUsed ? 'true' : 'false'}`,
+            `SHADOW_COMPOUND_RESPONSE_VALID=${responseValid ? 'true' : 'false'}`,
+            `MAX_COMPOUND_REQUESTS=1`,
+            `COMPOUND_REQUESTS=1`,
+          ];
+          if (httpStatus === 429) lines.push('RESULT=RATE_LIMITED');
+          else if (httpStatus === 0) lines.push('RESULT=AMBIGUOUS');
+          else if (errorClass) lines.push(`ERROR_CLASS=${errorClass}`);
+
+          process.stdout.write(`${lines.join('\n')}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Shadow Compound\n\n\`\`\`text\n${lines.join('\n')}\n\`\`\`\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `compound_result=${result}\ncompound_requests=1\n`);
+          NODE
+
+      - name: Block Compound when Shadow authentication is not proven
+        id: compound_blocked
+        if: ${{ always() && steps.auth.outputs.shadow_auth != 'PASS' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          lines=(
+            'SHADOW_COMPOUND=BLOCKED_SHADOW_AUTH'
+            'SHADOW_COMPOUND_HTTP=NOT_RUN'
+            'SHADOW_COMPOUND_MODEL=NOT_RUN'
+            'SHADOW_COMPOUND_TOOL_USED=NOT_RUN'
+            'SHADOW_COMPOUND_RESPONSE_VALID=NOT_RUN'
+            'MAX_COMPOUND_REQUESTS=1'
+            'COMPOUND_REQUESTS=0'
+            'RESULT=BLOCKED_SHADOW_AUTH'
+          )
+          printf '%s\n' "${lines[@]}"
+          {
+            echo '## Shadow Compound'
+            echo
+            echo '```text'
+            printf '%s\n' "${lines[@]}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'compound_result=BLOCKED_SHADOW_AUTH'
+            echo 'compound_requests=0'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish final sanitized summary
+        if: ${{ always() }}
+        env:
+          AUTH_RESULT: ${{ steps.auth.outputs.auth_result || 'UNKNOWN' }}
+          SHADOW_AUTH: ${{ steps.auth.outputs.shadow_auth || 'UNKNOWN' }}
+          AUTH_REQUESTS: ${{ steps.auth.outputs.auth_requests || '0' }}
+          COMPOUND_RESULT: ${{ steps.compound.outputs.compound_result || steps.compound_blocked.outputs.compound_result || 'UNKNOWN' }}
+          COMPOUND_REQUESTS: ${{ steps.compound.outputs.compound_requests || steps.compound_blocked.outputs.compound_requests || '0' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          total_requests=$((AUTH_REQUESTS + COMPOUND_REQUESTS))
+          {
+            echo '## Groq smoke totals'
+            echo
+            echo '```text'
+            echo "AUTH_RESULT=$AUTH_RESULT"
+            echo "SHADOW_AUTH=$SHADOW_AUTH"
+            echo "AUTH_REQUESTS=$AUTH_REQUESTS"
+            echo "COMPOUND_RESULT=$COMPOUND_RESULT"
+            echo "COMPOUND_REQUESTS=$COMPOUND_REQUESTS"
+            echo "TOTAL_GROQ_REQUESTS=$total_requests"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce fail-closed result
+        if: ${{ always() }}
+        env:
+          AUTH_RESULT: ${{ steps.auth.outputs.auth_result || 'UNKNOWN' }}
+          COMPOUND_RESULT: ${{ steps.compound.outputs.compound_result || steps.compound_blocked.outputs.compound_result || 'UNKNOWN' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$AUTH_RESULT" != 'PASS' || "$COMPOUND_RESULT" != 'PASS' ]]; then
+            echo 'Groq smoke did not satisfy all gates.' >&2
+            exit 1
+          fi

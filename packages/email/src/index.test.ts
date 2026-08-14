@@ -58,6 +58,7 @@ describe('Gmail API operator email consumer', () => {
       provider: 'GMAIL_API',
       messageId: 'synthetic-gmail-message-id',
       response: 'HTTP 200',
+      outcome: 'PROVIDER_SUCCESS',
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -290,6 +291,19 @@ describe('Gmail API manual email consumer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('classifies Gmail rate limiting without changing the fail-closed state', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ error: 'rate limited' }, 429));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({
+        code: 'DELIVERY_AMBIGUOUS',
+        outcome: 'RATE_LIMITED',
+        reason: 'HTTP_429',
+      });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it.each([500, 502, 503, 504])(
     'classifies Gmail HTTP %s after POST as ambiguous',
     async (status) => {
@@ -319,6 +333,38 @@ describe('Gmail API manual email consumer', () => {
     await expect(manualConsumer(fetchMock).sendManual(manualMessage))
       .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a send timeout as TIMEOUT telemetry', async () => {
+    const timeout = Object.assign(new Error('request timed out'), { name: 'TimeoutError' });
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockRejectedValueOnce(timeout);
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({
+        code: 'DELIVERY_AMBIGUOUS',
+        outcome: 'TIMEOUT',
+        reason: 'TIMEOUT',
+      });
+  });
+
+  it('classifies OAuth failure as UNAVAILABLE telemetry', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_grant' }, 400));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .rejects.toMatchObject({
+        code: 'TOKEN_EXCHANGE_FAILED',
+        outcome: 'UNAVAILABLE',
+        reason: 'OAUTH_UNAVAILABLE',
+      });
+  });
+
+  it('returns PROVIDER_SUCCESS telemetry only when Gmail returns an id', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'synthetic-manual-message-id' }));
+    await expect(manualConsumer(fetchMock).sendManual(manualMessage))
+      .resolves.toMatchObject({ outcome: 'PROVIDER_SUCCESS' });
   });
 
   it('classifies a successful status without a provider id as ambiguous', async () => {

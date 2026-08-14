@@ -72,6 +72,33 @@ type AttemptRow = Readonly<{
 
 type TerminalEvent = 'DELIVERED' | 'FAILED' | 'AMBIGUOUS';
 
+/** Closed telemetry values; these are safe to expose in Daily-6 aggregates. */
+export const DAILY6_PROVIDER_OUTCOMES = [
+  'PROVIDER_SUCCESS',
+  'RATE_LIMITED',
+  'TIMEOUT',
+  'UNAVAILABLE',
+  'AMBIGUOUS',
+  'DELIVERY_REJECTED',
+] as const;
+export type Daily6ProviderOutcome = (typeof DAILY6_PROVIDER_OUTCOMES)[number];
+export const DAILY6_PROVIDER_REASONS = [
+  'HTTP_429',
+  'TIMEOUT',
+  'OAUTH_UNAVAILABLE',
+  'HTTP_5XX',
+  'NETWORK_UNAVAILABLE',
+  'HTTP_4XX',
+  'INVALID_CONFIGURATION',
+  'PROVIDER_OUTCOME_UNKNOWN',
+] as const;
+export type Daily6ProviderReason = (typeof DAILY6_PROVIDER_REASONS)[number];
+
+const isDaily6ProviderOutcome = (value: unknown): value is Daily6ProviderOutcome =>
+  typeof value === 'string' && (DAILY6_PROVIDER_OUTCOMES as readonly string[]).includes(value);
+const isDaily6ProviderReason = (value: unknown): value is Daily6ProviderReason =>
+  typeof value === 'string' && (DAILY6_PROVIDER_REASONS as readonly string[]).includes(value);
+
 type TerminalRow = Readonly<{
   id: string;
   event_type: TerminalEvent;
@@ -95,6 +122,8 @@ export type RestrictedManualEmailDeliveryResult = Readonly<{
   provider: 'GMAIL_API';
   messageIdFingerprint?: string;
   errorCode?: string;
+  providerOutcome?: Daily6ProviderOutcome;
+  providerReason?: Daily6ProviderReason;
   replayed: boolean;
   attemptId: string;
   providerCalled?: boolean;
@@ -433,6 +462,23 @@ const terminalResult = (
   replayed: boolean,
 ): RestrictedManualEmailDeliveryResult | undefined => {
   if (!attempt.event_type) return undefined;
+  const providerOutcome: Daily6ProviderOutcome = attempt.event_type === 'DELIVERED'
+    ? 'PROVIDER_SUCCESS'
+    : attempt.error_code === 'DELIVERY_REJECTED'
+      ? 'DELIVERY_REJECTED'
+      : attempt.error_code === 'TOKEN_EXCHANGE_FAILED'
+        || attempt.error_code === 'INVALID_CONFIGURATION'
+        ? 'UNAVAILABLE'
+        : 'AMBIGUOUS';
+  const providerReason: Daily6ProviderReason = attempt.event_type === 'DELIVERED'
+    ? 'PROVIDER_OUTCOME_UNKNOWN'
+    : attempt.error_code === 'DELIVERY_REJECTED'
+      ? 'HTTP_4XX'
+      : attempt.error_code === 'TOKEN_EXCHANGE_FAILED'
+        ? 'OAUTH_UNAVAILABLE'
+        : attempt.error_code === 'INVALID_CONFIGURATION'
+          ? 'INVALID_CONFIGURATION'
+          : 'PROVIDER_OUTCOME_UNKNOWN';
   return {
     state: attempt.event_type,
     provider: 'GMAIL_API',
@@ -440,6 +486,8 @@ const terminalResult = (
       ? { messageIdFingerprint: String(attempt.provider_message_fingerprint).trim() }
       : {}),
     ...(attempt.error_code ? { errorCode: attempt.error_code } : {}),
+    providerOutcome,
+    ...(attempt.event_type === 'DELIVERED' ? {} : { providerReason }),
     replayed,
     attemptId: attempt.id,
   };
@@ -500,21 +548,52 @@ const errorCodeOf = (error: unknown) =>
   typeof error === 'object' && error !== null && 'code' in error
     && typeof error.code === 'string' ? error.code : undefined;
 
+const providerOutcomeOf = (error: unknown): Daily6ProviderOutcome | undefined => {
+  if (typeof error !== 'object' || error === null || !('outcome' in error)) return undefined;
+  const value = (error as { outcome?: unknown }).outcome;
+  return isDaily6ProviderOutcome(value) ? value : undefined;
+};
+
+const providerReasonOf = (error: unknown): Daily6ProviderReason | undefined => {
+  if (typeof error !== 'object' || error === null || !('reason' in error)) return undefined;
+  const value = (error as { reason?: unknown }).reason;
+  return isDaily6ProviderReason(value) ? value : undefined;
+};
+
 const classifyDeliveryFailure = (error: unknown): Readonly<{
   eventType: 'FAILED' | 'AMBIGUOUS';
   errorCode: string;
+  providerOutcome: Daily6ProviderOutcome;
+  providerReason: Daily6ProviderReason;
 }> => {
+  const outcome = providerOutcomeOf(error);
+  const reason = providerReasonOf(error);
   switch (errorCodeOf(error)) {
     case 'INVALID_CONFIGURATION':
-      return { eventType: 'FAILED', errorCode: 'INVALID_CONFIGURATION' };
+      return {
+        eventType: 'FAILED', errorCode: 'INVALID_CONFIGURATION',
+        providerOutcome: outcome ?? 'UNAVAILABLE', providerReason: reason ?? 'INVALID_CONFIGURATION',
+      };
     case 'TOKEN_EXCHANGE_FAILED':
-      return { eventType: 'FAILED', errorCode: 'TOKEN_EXCHANGE_FAILED' };
+      return {
+        eventType: 'FAILED', errorCode: 'TOKEN_EXCHANGE_FAILED',
+        providerOutcome: outcome ?? 'UNAVAILABLE', providerReason: reason ?? 'OAUTH_UNAVAILABLE',
+      };
     case 'DELIVERY_REJECTED':
-      return { eventType: 'FAILED', errorCode: 'DELIVERY_REJECTED' };
+      return {
+        eventType: 'FAILED', errorCode: 'DELIVERY_REJECTED',
+        providerOutcome: outcome ?? 'DELIVERY_REJECTED', providerReason: reason ?? 'HTTP_4XX',
+      };
     case 'DELIVERY_AMBIGUOUS':
-      return { eventType: 'AMBIGUOUS', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' };
+      return {
+        eventType: 'AMBIGUOUS', errorCode: 'PROVIDER_OUTCOME_UNKNOWN',
+        providerOutcome: outcome ?? 'AMBIGUOUS', providerReason: reason ?? 'PROVIDER_OUTCOME_UNKNOWN',
+      };
     default:
-      return { eventType: 'AMBIGUOUS', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' };
+      return {
+        eventType: 'AMBIGUOUS', errorCode: 'PROVIDER_OUTCOME_UNKNOWN',
+        providerOutcome: 'AMBIGUOUS', providerReason: 'PROVIDER_OUTCOME_UNKNOWN',
+      };
   }
 };
 
@@ -610,7 +689,12 @@ export async function sendPreparedManualEmail(
       body: string;
       recipient: string;
       deliveryKey?: string;
-    }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
+    }) => Promise<{
+      provider: 'GMAIL_API';
+      messageId: string;
+      outcome?: Daily6ProviderOutcome;
+      reason?: Daily6ProviderReason;
+    }>;
     daily6?: Daily6EmailRuntime;
   },
 ): Promise<RestrictedManualEmailDeliveryResult> {
@@ -750,9 +834,12 @@ export async function sendPreparedManualEmail(
       recipient: reserved.recipient,
       ...(deliveryKey ? { deliveryKey } : {}),
     });
-    if (receipt.provider !== 'GMAIL_API' || !receipt.messageId) {
+    if (receipt.provider !== 'GMAIL_API' || !receipt.messageId
+      || (receipt.outcome !== undefined && receipt.outcome !== 'PROVIDER_SUCCESS')) {
       throw Object.assign(new Error('Gmail delivery result is ambiguous'), {
         code: 'DELIVERY_AMBIGUOUS',
+        outcome: receipt.outcome ?? 'AMBIGUOUS',
+        reason: receipt.reason ?? 'PROVIDER_OUTCOME_UNKNOWN',
       });
     }
     const messageIdFingerprint = keyedFingerprint(
@@ -783,6 +870,7 @@ export async function sendPreparedManualEmail(
       state: terminal.event_type,
       provider: 'GMAIL_API',
       messageIdFingerprint,
+      ...(runtime.daily6 ? { providerOutcome: 'PROVIDER_SUCCESS' as const } : {}),
       replayed: false,
       attemptId: reserved.attempt.id,
       providerCalled: true,
@@ -813,6 +901,10 @@ export async function sendPreparedManualEmail(
         state: terminal.event_type,
         provider: 'GMAIL_API',
         errorCode: terminal.error_code ?? failure.errorCode,
+        ...(runtime.daily6 ? {
+          providerOutcome: failure.providerOutcome,
+          providerReason: failure.providerReason,
+        } : {}),
         replayed: false,
         attemptId: reserved.attempt.id,
         providerCalled: true,

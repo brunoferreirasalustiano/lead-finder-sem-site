@@ -11,7 +11,14 @@ import {
   type AuthorizationContext,
 } from '@lead-finder/shared';
 import type { Database } from './index.js';
-import { prepareManualMessage, sendPreparedManualEmail } from './restricted-manual-email.js';
+import {
+  DAILY6_PROVIDER_OUTCOMES,
+  DAILY6_PROVIDER_REASONS,
+  prepareManualMessage,
+  sendPreparedManualEmail,
+  type Daily6ProviderOutcome,
+  type Daily6ProviderReason,
+} from './restricted-manual-email.js';
 
 export type Daily6SlotInput = Readonly<{
   date: string;
@@ -30,8 +37,21 @@ export type Daily6SlotRuntime = Readonly<{
   sender: string;
   fingerprintKey: string;
   operationalSha: string;
-  deliver: (message: { subject: string; body: string; recipient: string; deliveryKey?: string }) => Promise<{ provider: 'GMAIL_API'; messageId: string }>;
-  searchSent: (input: { deliveryKey: string }) => Promise<{ state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN'; messageId?: string }>;
+  deliver: (message: {
+    subject: string;
+    body: string;
+    recipient: string;
+    deliveryKey?: string;
+  }) => Promise<{
+    provider: 'GMAIL_API';
+    messageId: string;
+    outcome?: Daily6ProviderOutcome;
+    reason?: Daily6ProviderReason;
+  }>;
+  searchSent: (input: { deliveryKey: string }) => Promise<{
+    state: 'FOUND' | 'NOT_FOUND' | 'UNKNOWN';
+    messageId?: string;
+  }>;
 }>;
 
 type CandidateRow = Readonly<{
@@ -131,7 +151,28 @@ export type Daily6SlotReport = Readonly<{
   ambiguous: number;
   replayed: boolean;
   providerCalls: number;
+  providerOutcomeCounts: Readonly<Record<Daily6ProviderOutcome, number>>;
+  providerReasonCounts: Readonly<Record<Daily6ProviderReason, number>>;
 }>;
+
+export type Daily6ProviderTelemetry = {
+  outcomes: Record<Daily6ProviderOutcome, number>;
+  reasons: Record<Daily6ProviderReason, number>;
+};
+
+export const emptyDaily6ProviderTelemetry = (): Daily6ProviderTelemetry => ({
+  outcomes: Object.fromEntries(DAILY6_PROVIDER_OUTCOMES.map((value) => [value, 0])) as Record<Daily6ProviderOutcome, number>,
+  reasons: Object.fromEntries(DAILY6_PROVIDER_REASONS.map((value) => [value, 0])) as Record<Daily6ProviderReason, number>,
+});
+
+export const recordDaily6ProviderTelemetry = (
+  telemetry: Daily6ProviderTelemetry,
+  outcome: Daily6ProviderOutcome,
+  reason?: Daily6ProviderReason,
+): void => {
+  telemetry.outcomes[outcome] += 1;
+  if (reason) telemetry.reasons[reason] += 1;
+};
 
 const daily6CityAliases = new Set(['campinas', 'campinas-sp', 'campinas/sp', 'campinas, sp']);
 
@@ -352,6 +393,7 @@ export async function runDaily6Slot(
       ? { status: 'APPROVED' as const }
       : { status: 'REJECTED' as const, reason: compliance.reasons.join('+') || 'COMPLIANCE_FAILED' };
   });
+  const telemetry = emptyDaily6ProviderTelemetry();
   const report = {
     batchId,
     discovered: candidates.length,
@@ -414,6 +456,9 @@ export async function runDaily6Slot(
       });
       if (shouldCountDaily6ProviderCall(delivery)) report.providerCalls += 1;
       report.replayed ||= delivery.replayed;
+      if (delivery.providerOutcome) {
+        recordDaily6ProviderTelemetry(telemetry, delivery.providerOutcome, delivery.providerReason);
+      }
       if (delivery.state === 'DELIVERED') {
         report.sent += 1;
         report.delivered += 1;
@@ -438,5 +483,9 @@ export async function runDaily6Slot(
       ${batchId},${report.discovered},${report.enriched},${report.autoApproved},${report.rejected},${report.ready}
     )
   `);
-  return report;
+  return {
+    ...report,
+    providerOutcomeCounts: telemetry.outcomes,
+    providerReasonCounts: telemetry.reasons,
+  };
 }

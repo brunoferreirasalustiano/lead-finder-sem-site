@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizationContext } from '@lead-finder/shared';
 import {
   DAILY6_PROGRESSIVE_LIMITS,
+  emptyDaily6ProviderTelemetry,
+  recordDaily6ProviderTelemetry,
   runDaily6Slot,
   selectProgressiveDaily6Candidates,
   shouldCountDaily6ProviderCall,
@@ -50,6 +52,31 @@ describe('progressive Daily-6 candidate selection', () => {
       providerCalled: true,
     })).toBe(true);
   });
+
+  it('aggregates typed provider outcomes and reasons without message data', () => {
+    const telemetry = emptyDaily6ProviderTelemetry();
+    recordDaily6ProviderTelemetry(telemetry, 'PROVIDER_SUCCESS');
+    recordDaily6ProviderTelemetry(telemetry, 'RATE_LIMITED', 'HTTP_429');
+    recordDaily6ProviderTelemetry(telemetry, 'TIMEOUT', 'TIMEOUT');
+    recordDaily6ProviderTelemetry(telemetry, 'UNAVAILABLE', 'OAUTH_UNAVAILABLE');
+    recordDaily6ProviderTelemetry(telemetry, 'AMBIGUOUS', 'PROVIDER_OUTCOME_UNKNOWN');
+
+    expect(telemetry.outcomes).toMatchObject({
+      PROVIDER_SUCCESS: 1,
+      RATE_LIMITED: 1,
+      TIMEOUT: 1,
+      UNAVAILABLE: 1,
+      AMBIGUOUS: 1,
+    });
+    expect(telemetry.reasons).toMatchObject({
+      HTTP_429: 1,
+      TIMEOUT: 1,
+      OAUTH_UNAVAILABLE: 1,
+      PROVIDER_OUTCOME_UNKNOWN: 1,
+    });
+    expect(JSON.stringify(telemetry)).not.toMatch(/@|messageId|recipient|subject/i);
+  });
+
   it('stops the slot after the first ambiguous delivery without processing the next approval', () => {
     const approved = ['approved-1', 'approved-2'];
     const processed: string[] = [];

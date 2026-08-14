@@ -29,6 +29,17 @@ describe('Daily-6 Gmail config diagnostics workflow', () => {
     expect(workflow).toContain('GOOGLE_CLIENT_SECRET_CONFIGURED=');
     expect(workflow).toContain('GOOGLE_REFRESH_TOKEN_CONFIGURED=');
     expect(workflow).toContain('FINGERPRINT_KEY_CONFIGURED=');
+    expect(workflow).toContain('OPERATOR_EMAIL_TEST_ENABLED=');
+    expect(workflow).toContain('OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN_CONFIGURED=');
+    expect(workflow).toContain('DAILY6_PILOT_ENABLED=');
+    expect(workflow).toContain('REAL_SEND_ENABLED=');
+    expect(workflow).toContain('MANUAL_EMAIL_KILL_SWITCH_ENABLED=');
+    expect(workflow).toContain('REAL_PROVIDER_CONFIGURED=');
+    expect(workflow).toContain('REAL_PROVIDERS_ENABLED=');
+    expect(workflow).toContain('COLLECTION_EGRESS_ENABLED=');
+    expect(workflow).toContain('ENRICHMENT_EGRESS_ENABLED=');
+    expect(workflow).toContain('HML_DAILY6_AUTH_ENABLED=');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA_CONFIGURED=');
     expect(workflow).toContain('STATUS=GMAIL_CONFIG_DIAGNOSTICS_FAIL');
     expect(workflow).toContain('STATUS=GMAIL_CONFIG_DIAGNOSTICS_PASS');
     expect(workflow).not.toContain('cat "$response_file"');

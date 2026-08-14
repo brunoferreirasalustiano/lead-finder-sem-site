@@ -32,12 +32,32 @@ jobs:
             http_status=000
           fi
 
-          manual_email_send_enabled="$(jq -r 'if .manualEmailSendEnabled == true then "true" elif .manualEmailSendEnabled == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
-          sender_match="$(jq -r 'if .senderMatch == true then "true" elif .senderMatch == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
-          client_id_configured="$(jq -r 'if .clientIdConfigured == true then "true" elif .clientIdConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
-          client_secret_configured="$(jq -r 'if .clientSecretConfigured == true then "true" elif .clientSecretConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
-          refresh_token_configured="$(jq -r 'if .refreshTokenConfigured == true then "true" elif .refreshTokenConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
-          fingerprint_key_configured="$(jq -r 'if .fingerprintKeyConfigured == true then "true" elif .fingerprintKeyConfigured == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN')"
+          bool_field() {
+            jq -r --arg key "$1" 'if .[$key] == true then "true" elif .[$key] == false then "false" else "UNKNOWN" end' "$response_file" 2>/dev/null || printf 'UNKNOWN'
+          }
+
+          manual_email_send_enabled="$(bool_field manualEmailSendEnabled)"
+          sender_match="$(bool_field senderMatch)"
+          client_id_configured="$(bool_field clientIdConfigured)"
+          client_secret_configured="$(bool_field clientSecretConfigured)"
+          refresh_token_configured="$(bool_field refreshTokenConfigured)"
+          fingerprint_key_configured="$(bool_field fingerprintKeyConfigured)"
+          operator_email_test_enabled="$(bool_field operatorEmailTestEnabled)"
+          operator_email_test_recipient_configured="$(bool_field operatorEmailTestRecipientConfigured)"
+          operator_email_test_sender_configured="$(bool_field operatorEmailTestSenderConfigured)"
+          operator_email_test_client_id_configured="$(bool_field operatorEmailTestClientIdConfigured)"
+          operator_email_test_client_secret_configured="$(bool_field operatorEmailTestClientSecretConfigured)"
+          operator_email_test_refresh_token_configured="$(bool_field operatorEmailTestRefreshTokenConfigured)"
+          operator_email_test_fingerprint_key_configured="$(bool_field operatorEmailTestFingerprintKeyConfigured)"
+          daily6_pilot_enabled="$(bool_field daily6PilotEnabled)"
+          real_send_enabled="$(bool_field realSendEnabled)"
+          manual_email_kill_switch_enabled="$(bool_field manualEmailKillSwitchEnabled)"
+          real_provider_configured="$(bool_field realProviderConfigured)"
+          real_providers_enabled="$(bool_field realProvidersEnabled)"
+          collection_egress_enabled="$(bool_field collectionEgressEnabled)"
+          enrichment_egress_enabled="$(bool_field enrichmentEgressEnabled)"
+          hml_daily6_auth_enabled="$(bool_field hmlDaily6AuthEnabled)"
+          expected_operational_sha_configured="$(bool_field expectedOperationalShaConfigured)"
 
           printf 'HTTP_STATUS=%s\n' "$http_status"
           printf 'MANUAL_EMAIL_SEND_ENABLED=%s\n' "$manual_email_send_enabled"
@@ -46,8 +66,25 @@ jobs:
           printf 'GOOGLE_CLIENT_SECRET_CONFIGURED=%s\n' "$client_secret_configured"
           printf 'GOOGLE_REFRESH_TOKEN_CONFIGURED=%s\n' "$refresh_token_configured"
           printf 'FINGERPRINT_KEY_CONFIGURED=%s\n' "$fingerprint_key_configured"
+          printf 'OPERATOR_EMAIL_TEST_ENABLED=%s\n' "$operator_email_test_enabled"
+          printf 'OPERATOR_EMAIL_TEST_RECIPIENT_CONFIGURED=%s\n' "$operator_email_test_recipient_configured"
+          printf 'OPERATOR_EMAIL_TEST_SENDER_CONFIGURED=%s\n' "$operator_email_test_sender_configured"
+          printf 'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_ID_CONFIGURED=%s\n' "$operator_email_test_client_id_configured"
+          printf 'OPERATOR_EMAIL_TEST_GOOGLE_CLIENT_SECRET_CONFIGURED=%s\n' "$operator_email_test_client_secret_configured"
+          printf 'OPERATOR_EMAIL_TEST_GOOGLE_REFRESH_TOKEN_CONFIGURED=%s\n' "$operator_email_test_refresh_token_configured"
+          printf 'OPERATOR_EMAIL_TEST_FINGERPRINT_KEY_CONFIGURED=%s\n' "$operator_email_test_fingerprint_key_configured"
+          printf 'DAILY6_PILOT_ENABLED=%s\n' "$daily6_pilot_enabled"
+          printf 'REAL_SEND_ENABLED=%s\n' "$real_send_enabled"
+          printf 'MANUAL_EMAIL_KILL_SWITCH_ENABLED=%s\n' "$manual_email_kill_switch_enabled"
+          printf 'REAL_PROVIDER_CONFIGURED=%s\n' "$real_provider_configured"
+          printf 'REAL_PROVIDERS_ENABLED=%s\n' "$real_providers_enabled"
+          printf 'COLLECTION_EGRESS_ENABLED=%s\n' "$collection_egress_enabled"
+          printf 'ENRICHMENT_EGRESS_ENABLED=%s\n' "$enrichment_egress_enabled"
+          printf 'HML_DAILY6_AUTH_ENABLED=%s\n' "$hml_daily6_auth_enabled"
+          printf 'EXPECTED_OPERATIONAL_SHA_CONFIGURED=%s\n' "$expected_operational_sha_configured"
 
-          if [[ "$http_status" != "200" || "$manual_email_send_enabled" == "UNKNOWN" || "$sender_match" == "UNKNOWN" || "$client_id_configured" == "UNKNOWN" || "$client_secret_configured" == "UNKNOWN" || "$refresh_token_configured" == "UNKNOWN" || "$fingerprint_key_configured" == "UNKNOWN" ]]; then
+          diagnostics="${manual_email_send_enabled}${sender_match}${client_id_configured}${client_secret_configured}${refresh_token_configured}${fingerprint_key_configured}${operator_email_test_enabled}${operator_email_test_recipient_configured}${operator_email_test_sender_configured}${operator_email_test_client_id_configured}${operator_email_test_client_secret_configured}${operator_email_test_refresh_token_configured}${operator_email_test_fingerprint_key_configured}${daily6_pilot_enabled}${real_send_enabled}${manual_email_kill_switch_enabled}${real_provider_configured}${real_providers_enabled}${collection_egress_enabled}${enrichment_egress_enabled}${hml_daily6_auth_enabled}${expected_operational_sha_configured}"
+          if [[ "$http_status" != "200" || "$diagnostics" == *UNKNOWN* ]]; then
             printf 'STATUS=GMAIL_CONFIG_DIAGNOSTICS_FAIL\n'
             exit 1
           fi

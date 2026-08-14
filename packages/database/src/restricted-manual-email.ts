@@ -625,16 +625,24 @@ export async function sendPreparedManualEmail(
     const persistedTerminal = terminalResult(existingAttempt, true);
     if (persistedTerminal) return persistedTerminal;
     if (runtime.daily6 && deliveryKey) {
-      const reconciled = await reconcileDaily6Sent(
-        db,
-        existingAttempt.id,
-        auth,
-        runtime.daily6,
-        runtime.fingerprintKey,
-        deliveryKey,
-        true,
-      );
-      if (reconciled) return reconciled;
+      try {
+        const reconciled = await reconcileDaily6Sent(
+          db,
+          existingAttempt.id,
+          auth,
+          runtime.daily6,
+          runtime.fingerprintKey,
+          deliveryKey,
+          true,
+        );
+        if (reconciled) return reconciled;
+      } catch {
+        // A concurrent terminal event wins; never turn an IN_PROGRESS replay
+        // into a second provider attempt when reconciliation cannot complete.
+        const latest = await readExistingAttempt(db, preparationId, auth);
+        const latestTerminal = latest ? terminalResult(latest, true) : undefined;
+        if (latestTerminal) return latestTerminal;
+      }
     }
     return {
       state: 'IN_PROGRESS',
@@ -700,16 +708,20 @@ export async function sendPreparedManualEmail(
 
   if (reserved.attempt.replayed || reserved.daily6Replayed) {
     if (runtime.daily6 && deliveryKey) {
-      const reconciled = await reconcileDaily6Sent(
-        db,
-        reserved.attempt.id,
-        auth,
-        runtime.daily6,
-        runtime.fingerprintKey,
-        deliveryKey,
-        true,
-      );
-      if (reconciled) return reconciled;
+      try {
+        const reconciled = await reconcileDaily6Sent(
+          db,
+          reserved.attempt.id,
+          auth,
+          runtime.daily6,
+          runtime.fingerprintKey,
+          deliveryKey,
+          true,
+        );
+        if (reconciled) return reconciled;
+      } catch {
+        // Preserve the existing replay fence on a concurrent terminal race.
+      }
     }
     return {
       state: 'IN_PROGRESS',

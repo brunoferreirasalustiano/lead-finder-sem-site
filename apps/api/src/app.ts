@@ -155,6 +155,22 @@ export type Daily6GmailConfigDiagnostics = Readonly<{
   clientSecretConfigured: boolean;
   refreshTokenConfigured: boolean;
   fingerprintKeyConfigured: boolean;
+  operatorEmailTestEnabled: boolean;
+  operatorEmailTestRecipientConfigured: boolean;
+  operatorEmailTestSenderConfigured: boolean;
+  operatorEmailTestClientIdConfigured: boolean;
+  operatorEmailTestClientSecretConfigured: boolean;
+  operatorEmailTestRefreshTokenConfigured: boolean;
+  operatorEmailTestFingerprintKeyConfigured: boolean;
+  daily6PilotEnabled: boolean;
+  realSendEnabled: boolean;
+  manualEmailKillSwitchEnabled: boolean;
+  realProviderConfigured: boolean;
+  realProvidersEnabled: boolean;
+  collectionEgressEnabled: boolean;
+  enrichmentEgressEnabled: boolean;
+  hmlDaily6AuthEnabled: boolean;
+  expectedOperationalShaConfigured: boolean;
 }>;
 
 const idSchema = z.string().uuid();

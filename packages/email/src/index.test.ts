@@ -175,6 +175,19 @@ describe('Gmail API manual email consumer', () => {
       .resolves.toEqual({ state: 'NOT_FOUND' });
   });
 
+  it('accepts Gmail’s empty result form only with resultSizeEstimate zero', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ resultSizeEstimate: 0 }));
+    await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: '7'.repeat(64) }))
+      .resolves.toEqual({ state: 'NOT_FOUND' });
+    const inconsistentFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [], resultSizeEstimate: 1 }));
+    await expect(manualConsumer(inconsistentFetch).searchSent({ deliveryKey: '8'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
+  });
+
   it('fails closed as UNKNOWN when Gmail SENT contains duplicate markers', async () => {
     const fetchMock = vi.fn<OperatorEmailFetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))

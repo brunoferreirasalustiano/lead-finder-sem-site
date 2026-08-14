@@ -70,7 +70,9 @@ const gmailSendResponseSchema = z.object({
   threadId: z.string().min(1).max(512).optional(),
 });
 const gmailSentSearchResponseSchema = z.object({
-  messages: z.array(z.object({ id: z.string().min(1).max(512) })),
+  messages: z.array(z.object({ id: z.string().min(1).max(512) })).optional(),
+  nextPageToken: z.string().min(1).max(1_024).optional(),
+  resultSizeEstimate: z.number().int().nonnegative().optional(),
 }).strict();
 const deliveryKeySchema = z.string().regex(/^[0-9a-f]{64}$/u, 'delivery key is invalid');
 
@@ -322,8 +324,17 @@ export function createGmailApiManualEmailConsumer(
       if (!searchResponse.ok) return { state: 'UNKNOWN' };
       const result = gmailSentSearchResponseSchema.safeParse(await parseJson(searchResponse));
       if (!result.success) return { state: 'UNKNOWN' };
-      if ((result.data.messages?.length ?? 0) > 1) return { state: 'UNKNOWN' };
-      const message = result.data.messages[0];
+      const messages = result.data.messages;
+      if (!messages) return result.data.resultSizeEstimate === 0
+        ? { state: 'NOT_FOUND' }
+        : { state: 'UNKNOWN' };
+      if (messages.length > 1) return { state: 'UNKNOWN' };
+      if (messages.length === 0) {
+        return result.data.resultSizeEstimate === undefined || result.data.resultSizeEstimate === 0
+          ? { state: 'NOT_FOUND' }
+          : { state: 'UNKNOWN' };
+      }
+      const message = messages[0];
       return message ? { state: 'FOUND', messageId: message.id } : { state: 'NOT_FOUND' };
     },
     async sendManual(message: ManualEmailMessage): Promise<OperatorEmailDeliveryReceipt> {

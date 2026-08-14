@@ -375,4 +375,65 @@ describe('Gmail API manual email consumer', () => {
       .rejects.toMatchObject({ code: 'DELIVERY_AMBIGUOUS' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('performs a read-only SENT preflight without a send call or message data', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'sensitive-message-id' }] }));
+
+    await expect(manualConsumer(fetchMock).preflightSent()).resolves.toEqual({
+      gmailAuth: 'PASS',
+      sentSearch: 'PASS',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const searchCall = fetchMock.mock.calls[1];
+    const searchInput = searchCall?.[0];
+    const searchUrl = searchInput instanceof URL
+      ? searchInput
+      : new URL(typeof searchInput === 'string' ? searchInput : searchInput?.url ?? '');
+    expect(searchCall?.[1]).toMatchObject({
+      method: 'GET',
+      headers: { authorization: 'Bearer synthetic-access-token' },
+    });
+    expect(searchUrl.searchParams.get('q')).toBe('in:sent');
+    expect(searchUrl.searchParams.get('labelIds')).toBe('SENT');
+    expect(searchUrl.searchParams.get('maxResults')).toBe('1');
+    expect(searchUrl.searchParams.get('q')).not.toContain('sensitive-message-id');
+    const requestUrls = fetchMock.mock.calls.map(([input]) => input instanceof URL
+      ? input.toString()
+      : typeof input === 'string' ? input : input.url);
+    expect(requestUrls.some((url) => url.includes('/send'))).toBe(false);
+  });
+
+  it('fails closed when Gmail OAuth preflight is rejected', async () => {
+    const fetchMock = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_grant' }, 400));
+
+    await expect(manualConsumer(fetchMock).preflightSent()).resolves.toEqual({
+      gmailAuth: 'FAIL',
+      sentSearch: 'NOT_PROVEN',
+      errorClass: 'AUTH_INVALID',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the read-only SENT search is unavailable or malformed', async () => {
+    const unavailableFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ error: 'forbidden' }, 403));
+    await expect(manualConsumer(unavailableFetch).preflightSent()).resolves.toEqual({
+      gmailAuth: 'PASS',
+      sentSearch: 'NOT_PROVEN',
+      errorClass: 'AUTH_INVALID',
+    });
+
+    const malformedFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({ unexpected: true }));
+    await expect(manualConsumer(malformedFetch).preflightSent()).resolves.toEqual({
+      gmailAuth: 'PASS',
+      sentSearch: 'NOT_PROVEN',
+      errorClass: 'GOOGLE_API_ERROR',
+    });
+  });
 });

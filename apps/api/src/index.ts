@@ -148,6 +148,9 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
   realProviderConfigured: config.REAL_PROVIDER_CONFIGURED,
   manualEmailSendEnabled: config.MANUAL_EMAIL_SEND_ENABLED,
+  ...(manualEmailConsumer && config.MANUAL_EMAIL_SENDER === 'leadfinderbrasil@gmail.com'
+    ? { daily6GmailPreflight: () => manualEmailConsumer.preflightSent() }
+    : {}),
   daily6PilotEnabled: config.DAILY6_PILOT_ENABLED,
   discoveryAuthRequired: config.HML_DISCOVERY_AUTH_ENABLED,
   daily6AuthRequired: config.HML_DAILY6_AUTH_ENABLED,

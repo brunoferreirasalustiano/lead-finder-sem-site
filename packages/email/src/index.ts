@@ -122,6 +122,21 @@ export type GmailSentSearchResult = Readonly<{
   messageId?: string;
 }>;
 
+export const GMAIL_PREFLIGHT_ERROR_CLASSES = [
+  'AUTH_INVALID',
+  'TOKEN_REVOKED',
+  'MISSING_CONFIG',
+  'NETWORK',
+  'GOOGLE_API_ERROR',
+  'UNKNOWN',
+] as const;
+export type GmailPreflightErrorClass = (typeof GMAIL_PREFLIGHT_ERROR_CLASSES)[number];
+export type GmailPreflightResult = Readonly<{
+  gmailAuth: 'PASS' | 'FAIL';
+  sentSearch: 'PASS' | 'NOT_PROVEN';
+  errorClass?: GmailPreflightErrorClass;
+}>;
+
 export type OperatorEmailFetch = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -421,6 +436,49 @@ export function createGmailApiManualEmailConsumer(
   }
   const configuration = parsed.data;
   return {
+    async preflightSent(): Promise<GmailPreflightResult> {
+      let accessToken: string;
+      try {
+        accessToken = await exchangeRefreshToken(configuration, fetchImpl);
+      } catch (error) {
+        return {
+          gmailAuth: 'FAIL',
+          sentSearch: 'NOT_PROVEN',
+          errorClass: error instanceof OperatorEmailDeliveryError && error.reason === 'TIMEOUT'
+            ? 'NETWORK'
+            : 'AUTH_INVALID',
+        };
+      }
+
+      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+      url.searchParams.set('q', 'in:sent');
+      url.searchParams.set('labelIds', 'SENT');
+      url.searchParams.set('maxResults', '1');
+      let searchResponse: Response;
+      try {
+        searchResponse = await fetchImpl(url, {
+          method: 'GET',
+          headers: { authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch {
+        return { gmailAuth: 'PASS', sentSearch: 'NOT_PROVEN', errorClass: 'NETWORK' };
+      }
+      if (!searchResponse.ok) {
+        return {
+          gmailAuth: 'PASS',
+          sentSearch: 'NOT_PROVEN',
+          errorClass: searchResponse.status === 401 || searchResponse.status === 403
+            ? 'AUTH_INVALID'
+            : 'GOOGLE_API_ERROR',
+        };
+      }
+      const result = gmailSentSearchResponseSchema.safeParse(await parseJson(searchResponse));
+      if (!result.success) {
+        return { gmailAuth: 'PASS', sentSearch: 'NOT_PROVEN', errorClass: 'GOOGLE_API_ERROR' };
+      }
+      return { gmailAuth: 'PASS', sentSearch: 'PASS' };
+    },
     async searchSent(input: { deliveryKey: string }): Promise<GmailSentSearchResult> {
       const parsedKey = deliveryKeySchema.safeParse(input.deliveryKey);
       if (!parsedKey.success) return { state: 'UNKNOWN' };

@@ -42,6 +42,7 @@ export const publicRoutes = new Set(['GET /health/live', 'GET /health', 'GET /re
 const internallyAuthenticatedRoutes = new Set(['POST /internal/jobs/process-lead-batch']);
 export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/internal/operational-snapshot', 'operations:read'),
+  policy('GET', '/internal/daily6/gmail-preflight', 'daily6:execute'),
   policy('GET', '/internal/prospecting/city-metrics', 'prospecting:metrics:read'),
   policy('GET', '/leads', 'leads:read'),
   policy('GET', '/leads/:id', 'leads:read'),

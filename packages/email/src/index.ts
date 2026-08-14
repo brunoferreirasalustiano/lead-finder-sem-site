@@ -70,7 +70,7 @@ const gmailSendResponseSchema = z.object({
   threadId: z.string().min(1).max(512).optional(),
 });
 const gmailSentSearchResponseSchema = z.object({
-  messages: z.array(z.object({ id: z.string().min(1).max(512) })).optional(),
+  messages: z.array(z.object({ id: z.string().min(1).max(512) })),
 }).strict();
 const deliveryKeySchema = z.string().regex(/^[0-9a-f]{64}$/u, 'delivery key is invalid');
 
@@ -323,7 +323,7 @@ export function createGmailApiManualEmailConsumer(
       const result = gmailSentSearchResponseSchema.safeParse(await parseJson(searchResponse));
       if (!result.success) return { state: 'UNKNOWN' };
       if ((result.data.messages?.length ?? 0) > 1) return { state: 'UNKNOWN' };
-      const message = result.data.messages?.[0];
+      const message = result.data.messages[0];
       return message ? { state: 'FOUND', messageId: message.id } : { state: 'NOT_FOUND' };
     },
     async sendManual(message: ManualEmailMessage): Promise<OperatorEmailDeliveryReceipt> {

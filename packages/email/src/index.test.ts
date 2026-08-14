@@ -189,6 +189,11 @@ describe('Gmail API manual email consumer', () => {
       .mockResolvedValueOnce(jsonResponse({ unexpected: true }));
     await expect(manualConsumer(fetchMock).searchSent({ deliveryKey: 'c'.repeat(64) }))
       .resolves.toEqual({ state: 'UNKNOWN' });
+    const missingMessagesFetch = vi.fn<OperatorEmailFetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'synthetic-access-token' }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    await expect(manualConsumer(missingMessagesFetch).searchSent({ deliveryKey: 'f'.repeat(64) }))
+      .resolves.toEqual({ state: 'UNKNOWN' });
     const invalidKeyFetch = vi.fn<OperatorEmailFetch>();
     await expect(manualConsumer(invalidKeyFetch).searchSent({ deliveryKey: 'not-a-key' }))
       .resolves.toEqual({ state: 'UNKNOWN' });

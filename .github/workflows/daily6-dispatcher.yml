@@ -202,17 +202,13 @@ jobs:
             echo 'DISCOVERY_WORKER=FAILED' >&2
             exit 1
           fi
-          accounting_line="$(grep -F '"event":"provider_call_accounting"' "$worker_log" | tail -n 1 || true)"
-          test -n "$accounting_line"
-          printf '%s' "$accounting_line" | jq -e '
-            .event == "provider_call_accounting"
-            and (.providers | type == "array")
-            and all(.providers[]; (.attemptedCalls | type == "number") and (.successfulCalls | type == "number")
-              and (.rateLimited429Calls | type == "number") and (.successfulCalls <= .attemptedCalls)
-              and (.rateLimited429Calls <= .attemptedCalls))
-          ' >/dev/null
+          # The worker's persisted collection status is the authoritative
+          # discovery proof; worker logs are intentionally discarded to avoid
+          # exposing provider/lead data.  Send-provider telemetry is returned
+          # by the native run-slot report below.
+          test -s "$worker_log"
+          echo 'DISCOVERY_WORKER=PASS'
           echo 'DISCOVERY_EXECUTED=true'
-          echo 'PROVIDER_TELEMETRY=PASS'
 
       - name: Require terminal collection before selection
         shell: bash

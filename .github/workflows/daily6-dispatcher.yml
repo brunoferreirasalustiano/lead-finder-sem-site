@@ -14,7 +14,7 @@ on:
         description: Exact approved HML SHA
         required: true
         type: string
-        default: 5131a4ce3eaa69e035d01096caab04aa6263fd76
+        default: 1f9a40e715cbf5bd791627e25879b5f356224726
       date:
         description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
         required: true
@@ -36,17 +36,20 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 5131a4ce3eaa69e035d01096caab04aa6263fd76
+  EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726
   HML_BRANCH: hml/render-supabase-plan-b
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
     environment: hml-discovery
-    timeout-minutes: 5
+    timeout-minutes: 45
     env:
       HML_API_URL: ${{ vars.HML_API_URL }}
       HML_DAILY6_TOKEN: ${{ secrets.HML_DAILY6_TOKEN }}
+      HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
+      HML_DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
       - name: Checkout default branch control plane
         uses: actions/checkout@v4
@@ -114,6 +117,110 @@ jobs:
           now_epoch="$(date -u +%s)"
           test "$expires_epoch" -gt "$now_epoch"
 
+      - name: Verify HML readiness and fresh Daily-6 identity
+        id: discovery
+        shell: bash
+        env:
+          SLOT_DATE: ${{ steps.slot.outputs.date }}
+          SLOT: ${{ steps.slot.outputs.slot }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$HML_API_URL"
+          test -n "$HML_COLLECTION_TOKEN"
+          test -n "$HML_DATABASE_URL"
+          test -n "$TAVILY_API_KEY"
+          curl --fail-with-body --silent --show-error --max-time 15 \
+            "$HML_API_URL/health/ready" >/dev/null
+          request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"
+          [[ "$request_identity" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\|(09|13|16)\|campinas-sp\|daily6-v1$ ]]
+          existing_job_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select count(*) from public.collection_jobs where request_identity = '$request_identity'")"
+          existing_batch_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select count(*) from public.daily6_batches where batch_id = '$request_identity'")"
+          test "$existing_job_count" = '0'
+          test "$existing_batch_count" = '0'
+          echo "request_identity=$request_identity" >> "$GITHUB_OUTPUT"
+          echo 'CONTROL_PLANE_PASS=true'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build the bounded discovery worker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts
+          npm run build
+          echo 'DISCOVERY_WORKER_BUILD=PASS'
+
+      - name: Enqueue one bounded Daily-6 discovery job
+        shell: bash
+        env:
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
+        run: |
+          set -Eeuo pipefail
+          response="$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST "$HML_API_URL/collect" \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            -H "X-Collection-Identity: $REQUEST_IDENTITY" \
+            -H 'Content-Type: application/json' \
+            --data '{"city":"Campinas","state":"SP","country":"Brasil","category":"saloes-de-beleza","limit":40}')"
+          printf '%s' "$response" | jq -e '.id and (.status == "PENDING" or .status == "PROCESSING" or .status == "COMPLETED")' >/dev/null
+          echo 'DISCOVERY_ENQUEUED=true'
+
+      - name: Run one bounded discovery and enrichment worker
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          DEPLOYMENT_ENVIRONMENT: homologation
+          DEPLOYMENT_PROFILE: supabase-render
+          DATABASE_SSL_MODE: require
+          COLLECTION_EGRESS_ENABLED: 'true'
+          ENRICHMENT_EGRESS_ENABLED: 'true'
+          ENRICHMENT_PROVIDER: composite
+          OVERPASS_API_URL: https://overpass-api.de/api/interpreter
+          WORKER_MODE: oneshot
+          MAX_JOBS_PER_RUN: '1'
+          MAX_CANDIDATES_PER_JOB: '40'
+          MAX_ENRICHMENT_PER_JOB: '10'
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          TAVILY_MIN_INTERVAL_MS: '1000'
+          TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '10000'
+          CNPJ_PROVIDER_MAX_RPM: '3'
+          PILOT_KILL_SWITCH_ENABLED: 'false'
+          DRY_RUN: 'true'
+          REAL_SEND_ENABLED: 'false'
+          REAL_PROVIDERS_ENABLED: 'false'
+          SHADOW_MODE_ENABLED: 'true'
+        run: |
+          set -Eeuo pipefail
+          worker_log="$(mktemp)"
+          trap 'rm -f "$worker_log"' EXIT
+          if ! node apps/worker/dist/index.js >"$worker_log" 2>&1; then
+            echo 'DISCOVERY_WORKER=FAILED' >&2
+            exit 1
+          fi
+          # The worker's persisted collection status is the authoritative
+          # discovery proof; worker logs are intentionally discarded to avoid
+          # exposing provider/lead data.  Send-provider telemetry is returned
+          # by the native run-slot report below.
+          test -s "$worker_log"
+          echo 'DISCOVERY_WORKER=PASS'
+          echo 'DISCOVERY_EXECUTED=true'
+
+      - name: Require terminal collection before selection
+        shell: bash
+        env:
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
+        run: |
+          set -Eeuo pipefail
+          collection_status="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select status from public.collection_jobs where request_identity = '$REQUEST_IDENTITY'")"
+          test "$collection_status" = 'COMPLETED'
+          echo 'DISCOVERY_TERMINAL_STATUS=COMPLETED'
+
       - name: Run one authenticated native Daily-6 slot
         shell: bash
         env:
@@ -130,5 +237,11 @@ jobs:
             -H 'Content-Type: application/json' \
             --data "{\"date\":\"$SLOT_DATE\",\"slot\":\"$SLOT\",\"city\":\"Campinas\",\"policyVersion\":\"daily6-v1\",\"expectedOperationalSha\":\"$EXPECTED_SHA\"}")"
           printf '%s' "$response" | jq -e --arg date "$SLOT_DATE" --arg slot "$SLOT" \
-            '.batchId == ($date + "|" + $slot + "|campinas-sp|daily6-v1") and (.sent >= 0 and .sent <= 2) and (.providerCalls >= 0)' >/dev/null
+            '.batchId == ($date + "|" + $slot + "|campinas-sp|daily6-v1")
+             and .discoveryExecuted == true
+             and .discoveryTerminalStatus == "COMPLETED"
+             and (.batchStatus == "COMPLETED" or .batchStatus == "BLOCKED")
+             and (.sent >= 0 and .sent <= 2)
+             and (.providerCalls >= 0)' >/dev/null
+          printf '%s' "$response" | jq -r '"DAILY6_REPORT=" + ({discovered,finalistsEvaluated,autoApproved,ready,providerCalls,sent,delivered,failed,ambiguous,stopReason,batchStatus,batchTerminalReason} | tojson)'
           echo 'daily6_native_slot=PASS'

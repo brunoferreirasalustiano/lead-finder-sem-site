@@ -928,7 +928,12 @@ export function buildApp(db: Database, options: {
     try {
       const result = await runDaily6Slot(db, body.data as Daily6SlotInput, authorizationContextFor(request), options.daily6SlotRuntime);
       request.log.info({
-        event: 'daily6_slot_completed', batchId: result.batchId, discovered: result.discovered,
+        event: 'daily6_slot_completed', batchId: result.batchId,
+        discoveryExecuted: result.discoveryExecuted,
+        discoveryTerminalStatus: result.discoveryTerminalStatus,
+        batchStatus: result.batchStatus,
+        batchTerminalReason: result.batchTerminalReason,
+        discovered: result.discovered,
         cheapFilterRejected: result.cheapFilterRejected, ranked: result.ranked,
         finalistsEvaluated: result.finalistsEvaluated, enriched: result.enriched,
         autoApproved: result.autoApproved, rejected: result.rejected, unknown: result.unknown,

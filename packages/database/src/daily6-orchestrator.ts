@@ -132,6 +132,10 @@ export const shouldCountDaily6ProviderCall = (delivery: Readonly<{
 
 export type Daily6SlotReport = Readonly<{
   batchId: string;
+  discoveryExecuted: boolean;
+  discoveryTerminalStatus: 'COMPLETED';
+  batchStatus: 'COMPLETED' | 'BLOCKED';
+  batchTerminalReason: string;
   discovered: number;
   cheapFilterRejected: number;
   ranked: number;
@@ -361,6 +365,20 @@ export async function runDaily6Slot(
       ${batchId},${input.date}::date,${input.slot},${normalizedCity},${input.policyVersion}
     )
   `);
+  const discoveryRows = await db.execute<{
+    job_exists: boolean;
+    status: string;
+    error: string | null;
+    attempt_count: number;
+  }>(sql`
+    select * from lead_finder_internal.get_daily6_collection_status(${batchId})
+  `);
+  const discovery = discoveryRows[0];
+  if (!discovery?.job_exists || discovery.status !== 'COMPLETED') {
+    throw new Error(discovery?.status === 'FAILED'
+      ? 'DAILY6_DISCOVERY_FAILED'
+      : 'DAILY6_DISCOVERY_NOT_TERMINAL');
+  }
   const rows = await db.execute<CandidateRow>(sql`
     select * from lead_finder_internal.list_daily6_candidates(
       ${queryCity},${input.category ?? null},${DAILY6_PROGRESSIVE_LIMITS.maxDiscoveredPerSlot}
@@ -396,6 +414,10 @@ export async function runDaily6Slot(
   const telemetry = emptyDaily6ProviderTelemetry();
   const report = {
     batchId,
+    discoveryExecuted: true,
+    discoveryTerminalStatus: 'COMPLETED' as const,
+    batchStatus: 'COMPLETED' as 'COMPLETED' | 'BLOCKED',
+    batchTerminalReason: selection.stopReason as string,
     discovered: candidates.length,
     cheapFilterRejected: selection.cheapFilterRejected,
     ranked: selection.rankedCandidates.length,
@@ -466,6 +488,8 @@ export async function runDaily6Slot(
         report.failed += 1;
       } else if (delivery.state === 'AMBIGUOUS') {
         report.ambiguous += 1;
+        report.batchStatus = 'BLOCKED';
+        report.batchTerminalReason = 'AMBIGUOUS_SEND';
         if (shouldStopDaily6SlotAfterDelivery(delivery.state)) break;
       }
     } catch (error) {
@@ -474,6 +498,14 @@ export async function runDaily6Slot(
         report.rejected += 1;
         continue;
       }
+      report.batchStatus = 'BLOCKED';
+      report.batchTerminalReason = 'FAIL_CLOSED';
+      await db.execute(sql`
+        select * from lead_finder_internal.finalize_daily6_batch(
+          ${batchId},${report.discovered},${report.enriched},${report.autoApproved},${report.rejected},${report.ready},
+          ${report.sent},${report.delivered},${report.failed},${report.ambiguous},${report.batchTerminalReason}
+        )
+      `);
       throw error;
     }
   }
@@ -483,6 +515,19 @@ export async function runDaily6Slot(
       ${batchId},${report.discovered},${report.enriched},${report.autoApproved},${report.rejected},${report.ready}
     )
   `);
+  const terminalRows = await db.execute<{
+    status: 'COMPLETED' | 'BLOCKED';
+    terminal_reason: string;
+  }>(sql`
+    select * from lead_finder_internal.finalize_daily6_batch(
+      ${batchId},${report.discovered},${report.enriched},${report.autoApproved},${report.rejected},${report.ready},
+      ${report.sent},${report.delivered},${report.failed},${report.ambiguous},${report.batchTerminalReason}
+    )
+  `);
+  const terminal = terminalRows[0];
+  if (!terminal) throw new Error('DAILY6_BATCH_TERMINALIZATION_MISSING');
+  report.batchStatus = terminal.status;
+  report.batchTerminalReason = terminal.terminal_reason;
   return {
     ...report,
     providerOutcomeCounts: telemetry.outcomes,

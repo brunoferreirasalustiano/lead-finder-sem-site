@@ -13,6 +13,10 @@ const daily6Workflow = (await readFile(
   new URL('../../../.github/workflows/daily6-slot.yml', import.meta.url),
   'utf8',
 )).replace(/\r\n/gu, '\n');
+const terminalMigration = (await readFile(
+  new URL('../../../database/migrations/0063_daily6_discovery_execution_terminalization.sql', import.meta.url),
+  'utf8',
+)).replace(/\r\n/gu, '\n');
 
 describe('Daily-6 automated compliance contract', () => {
   it('keeps machine decisions distinct from human decisions', () => {
@@ -52,5 +56,13 @@ describe('Daily-6 automated compliance contract', () => {
     expect(daily6Workflow).toContain('ref: ' + '${{ inputs.expected_sha }}');
     expect(daily6Workflow).toContain('/internal/daily6/run-slot');
     expect(daily6Workflow).not.toMatch(/GMAIL_(?:ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET)/);
+  });
+
+  it('requires a terminal fresh collection and closes the batch fail-closed', () => {
+    expect(terminalMigration).toContain('get_daily6_collection_status');
+    expect(terminalMigration).toContain("final_status := 'COMPLETED'");
+    expect(terminalMigration).toContain("final_status := 'BLOCKED'");
+    expect(terminalMigration).toContain("p_terminal_reason = 'AMBIGUOUS_SEND'");
+    expect(terminalMigration).toContain('REVOKE ALL ON FUNCTION');
   });
 });

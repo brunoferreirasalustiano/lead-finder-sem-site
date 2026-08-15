@@ -191,8 +191,10 @@ describe('Daily-6 city contract', () => {
   it('accepts the scheduler alias Campinas and canonicalizes its batch identity', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ job_exists: true, status: 'COMPLETED', error: null, attempt_count: 1 }])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ status: 'COMPLETED', terminal_reason: 'NO_ELIGIBLE_CANDIDATES' }]);
     const report = await runDaily6Slot(
       { execute } as never,
       {
@@ -207,7 +209,28 @@ describe('Daily-6 city contract', () => {
     );
 
     expect(report.batchId).toBe('2026-08-13|09|campinas-sp|daily6-v1');
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(report.discoveryExecuted).toBe(true);
+    expect(report.batchStatus).toBe('COMPLETED');
+    expect(report.batchTerminalReason).toBe('NO_ELIGIBLE_CANDIDATES');
+    expect(execute).toHaveBeenCalledTimes(5);
+  });
+
+  it('rejects a slot whose fresh collection identity is missing', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ job_exists: false, status: 'MISSING', error: null, attempt_count: 0 }]);
+    await expect(runDaily6Slot(
+      { execute } as never,
+      {
+        date: '2026-08-13',
+        slot: '13',
+        city: 'Campinas',
+        policyVersion: 'daily6-v1',
+        expectedOperationalSha: 'a'.repeat(40),
+      },
+      authorization,
+      runtime,
+    )).rejects.toThrow('DAILY6_DISCOVERY_NOT_TERMINAL');
   });
 
   it('rejects a non-Campinas city before touching persistence', async () => {

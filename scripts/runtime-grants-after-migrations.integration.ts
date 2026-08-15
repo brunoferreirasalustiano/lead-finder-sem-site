@@ -23,6 +23,7 @@ const migrationVersions = [
   '0059_collection_enqueue_city_normalization_parity',
   '0060_daily6_collection_terminal_reconciliation',
   '0061_daily6_progressive_discovery_pool',
+  '0063_daily6_discovery_execution_terminalization',
 ] as const;
 const hmlFunctions = [
   'resolve_manual_email_contact_context',
@@ -43,6 +44,8 @@ const daily6Functions = [
   'bump_daily6_batch_metrics',
   'sync_daily6_batch_from_collection',
   'enqueue_collection_job',
+  'get_daily6_collection_status',
+  'finalize_daily6_batch',
 ] as const;
 const restrictedTables = [
   'lead_contacts',

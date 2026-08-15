@@ -30,9 +30,9 @@ describe('native Daily-6 scheduler authorization gate', () => {
 
   it('preserves the legitimate authorized path and existing schedule invariants', () => {
     expect(gate).toContain('DAILY6_NATIVE_SEND_AUTHORIZED_V1');
-    expect(workflow).toContain("cron: '0 12 * * *'");
-    expect(workflow).toContain("cron: '0 16 * * *'");
-    expect(workflow).toContain("cron: '0 19 * * *'");
+    expect(workflow).toContain("cron: '7 12 * * *'");
+    expect(workflow).toContain("cron: '7 16 * * *'");
+    expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');

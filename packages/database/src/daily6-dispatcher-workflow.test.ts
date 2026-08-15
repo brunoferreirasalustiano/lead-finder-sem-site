@@ -5,9 +5,9 @@ const workflow = await readFile(new URL('../../../.github/workflows/daily6-dispa
 
 describe('native Daily-6 scheduler control plane', () => {
   it('runs from the default-branch schedule with an immutable HML pin', () => {
-    expect(workflow).toContain("cron: '0 12 * * *'");
-    expect(workflow).toContain("cron: '0 16 * * *'");
-    expect(workflow).toContain("cron: '0 19 * * *'");
+    expect(workflow).toContain("cron: '7 12 * * *'");
+    expect(workflow).toContain("cron: '7 16 * * *'");
+    expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
     expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');

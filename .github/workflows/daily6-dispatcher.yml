@@ -3,11 +3,13 @@ name: Daily-6 native dispatcher
 # GitHub evaluates scheduled workflows from the default branch.  This small
 # control plane therefore lives on main and invokes the already-approved HML
 # runtime by its immutable SHA.  The HML branch check makes drift fail closed.
+# Scheduled runs intentionally avoid minute 00 because GitHub Actions may
+# delay high-load scheduled workflows at the top of the hour.
 on:
   schedule:
-    - cron: '0 12 * * *' # 09:00 America/Sao_Paulo (UTC-3)
-    - cron: '0 16 * * *' # 13:00 America/Sao_Paulo (UTC-3)
-    - cron: '0 19 * * *' # 16:00 America/Sao_Paulo (UTC-3)
+    - cron: '7 12 * * *' # 09:07 America/Sao_Paulo (UTC-3), logical slot 09
+    - cron: '7 16 * * *' # 13:07 America/Sao_Paulo (UTC-3), logical slot 13
+    - cron: '7 19 * * *' # 16:07 America/Sao_Paulo (UTC-3), logical slot 16
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -67,9 +69,9 @@ jobs:
           today="$(TZ=America/Sao_Paulo date +%F)"
           if [ "$GITHUB_EVENT_NAME" = 'schedule' ]; then
             case "$EVENT_SCHEDULE" in
-              '0 12 * * *') slot='09' ;;
-              '0 16 * * *') slot='13' ;;
-              '0 19 * * *') slot='16' ;;
+              '7 12 * * *') slot='09' ;;
+              '7 16 * * *') slot='13' ;;
+              '7 19 * * *') slot='16' ;;
               *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
             esac
             date="$today"

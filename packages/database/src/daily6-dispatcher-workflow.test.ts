@@ -16,6 +16,10 @@ describe('native Daily-6 scheduler control plane', () => {
   it('pins the native scope and hard slot quota without slot replay', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
+    expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
+    expect(workflow).toContain("MAX_SCHEDULE_LATENESS_SECONDS: '1800'");
+    expect(workflow).toContain('test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"');
+    expect(workflow).toContain("format('{0}|{1}', inputs.date, inputs.slot)");
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).toContain('HML_COLLECTION_TOKEN');

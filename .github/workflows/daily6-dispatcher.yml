@@ -5,6 +5,8 @@ name: Daily-6 native dispatcher
 # runtime by its immutable SHA.  The HML branch check makes drift fail closed.
 # Scheduled runs intentionally avoid minute 00 because GitHub Actions may
 # delay high-load scheduled workflows at the top of the hour.
+# A delayed event remains fail-closed after this bounded window; it must never
+# become an implicit catch-up run for a commercial slot.
 on:
   schedule:
     - cron: '7 12 * * *' # 09:07 America/Sao_Paulo (UTC-3), logical slot 09
@@ -34,12 +36,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: daily6-dispatcher-${{ github.event.schedule || inputs.date }}-${{ inputs.slot || github.run_id }}
+  group: daily6-dispatcher-${{ github.event.schedule || format('{0}|{1}', inputs.date, inputs.slot) }}
   cancel-in-progress: false
 
 env:
   EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726
   HML_BRANCH: hml/render-supabase-plan-b
+  MAX_SCHEDULE_LATENESS_SECONDS: '1800'
 
 jobs:
   dispatch:
@@ -68,18 +71,25 @@ jobs:
           set -Eeuo pipefail
           today="$(TZ=America/Sao_Paulo date +%F)"
           if [ "$GITHUB_EVENT_NAME" = 'schedule' ]; then
+            test "${GITHUB_RUN_ATTEMPT:-1}" = '1'
             case "$EVENT_SCHEDULE" in
-              '7 12 * * *') slot='09' ;;
-              '7 16 * * *') slot='13' ;;
-              '7 19 * * *') slot='16' ;;
+              '7 12 * * *') slot='09'; expected_utc='12:07:00' ;;
+              '7 16 * * *') slot='13'; expected_utc='16:07:00' ;;
+              '7 19 * * *') slot='16'; expected_utc='19:07:00' ;;
               *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
             esac
             date="$today"
             sha="$EXPECTED_OPERATIONAL_SHA"
+            expected_epoch="$(date -u -d "$date $expected_utc" +%s)"
+            now_epoch="$(date -u +%s)"
+            lateness_seconds=$((now_epoch - expected_epoch))
+            test "$lateness_seconds" -ge 0
+            test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"
           else
             date="$DISPATCH_DATE"
             slot="$DISPATCH_SLOT"
             sha="$DISPATCH_SHA"
+            lateness_seconds='manual'
           fi
           test "$date" = "$today"
           [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
@@ -90,6 +100,7 @@ jobs:
             echo "date=$date"
             echo "slot=$slot"
             echo "sha=$sha"
+            echo "lateness_seconds=$lateness_seconds"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify HML branch remains pinned to approved SHA

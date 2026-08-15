@@ -9,7 +9,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '0 16 * * *'");
     expect(workflow).toContain("cron: '0 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 5131a4ce3eaa69e035d01096caab04aa6263fd76');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
@@ -18,6 +18,11 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
+    expect(workflow).toContain('HML_COLLECTION_TOKEN');
+    expect(workflow).toContain('HML_DATABASE_URL');
+    expect(workflow).toContain('DISCOVERY_EXECUTED=true');
+    expect(workflow).toContain('DISCOVERY_TERMINAL_STATUS=COMPLETED');
+    expect(workflow).toContain('collection_jobs');
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
   });

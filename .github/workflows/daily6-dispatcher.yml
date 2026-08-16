@@ -42,7 +42,7 @@ concurrency:
 env:
   EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726
   HML_BRANCH: hml/render-supabase-plan-b
-  MAX_SCHEDULE_LATENESS_SECONDS: '1800'
+  MAX_SCHEDULE_LATENESS_SECONDS: '3600'
 
 jobs:
   dispatch:

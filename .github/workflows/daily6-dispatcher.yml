@@ -215,6 +215,10 @@ jobs:
             echo 'DISCOVERY_WORKER=FAILED' >&2
             exit 1
           fi
+          # The worker's persisted collection status is the authoritative
+          # discovery proof; worker logs are intentionally discarded to avoid
+          # exposing provider/lead data.  Send-provider telemetry is returned
+          # by the native run-slot report below.
           test -s "$worker_log"
           echo 'DISCOVERY_WORKER=PASS'
           echo 'DISCOVERY_EXECUTED=true'

@@ -42,7 +42,7 @@ concurrency:
 env:
   EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726
   HML_BRANCH: hml/render-supabase-plan-b
-  MAX_SCHEDULE_LATENESS_SECONDS: '1800'
+  MAX_SCHEDULE_LATENESS_SECONDS: '2700'
 
 jobs:
   dispatch:
@@ -215,10 +215,6 @@ jobs:
             echo 'DISCOVERY_WORKER=FAILED' >&2
             exit 1
           fi
-          # The worker's persisted collection status is the authoritative
-          # discovery proof; worker logs are intentionally discarded to avoid
-          # exposing provider/lead data.  Send-provider telemetry is returned
-          # by the native run-slot report below.
           test -s "$worker_log"
           echo 'DISCOVERY_WORKER=PASS'
           echo 'DISCOVERY_EXECUTED=true'

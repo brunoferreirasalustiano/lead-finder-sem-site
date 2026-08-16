@@ -1,13 +1,10 @@
 name: Daily-6 schedule heartbeat
 
-# This workflow is intentionally incapable of reaching HML, Supabase, mail,
-# providers, or any commercial identity. It exists only to observe whether
-# GitHub creates an independent scheduled run.
+# This workflow is intentionally incapable of reaching external services or
+# commercial identities. It only records whether GitHub creates a scheduled run.
 on:
   schedule:
-    - cron: '13 12 * * *'
-    - cron: '13 16 * * *'
-    - cron: '13 19 * * *'
+    - cron: '17,47 * * * *'
 
 permissions:
   contents: read
@@ -19,13 +16,11 @@ jobs:
     steps:
       - name: Record scheduled event metadata
         shell: bash
-        env:
-          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -Eeuo pipefail
           printf 'heartbeat_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
           printf 'github_event_name=%s\n' "$GITHUB_EVENT_NAME"
-          printf 'github_event_schedule=%s\n' "$EVENT_SCHEDULE"
+          printf 'github_event_schedule=%s\n' '${{ github.event.schedule }}'
           printf 'github_sha=%s\n' "$GITHUB_SHA"
           printf 'github_ref=%s\n' "$GITHUB_REF"

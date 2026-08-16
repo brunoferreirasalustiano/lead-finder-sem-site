@@ -30,4 +30,15 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
   });
+
+  it('uses only bounded GET retries to tolerate a Render cold start before discovery', () => {
+    const start = workflow.indexOf('test -n "$TAVILY_API_KEY"');
+    const end = workflow.indexOf('request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"');
+    const readiness = workflow.slice(start, end);
+    expect(readiness).toContain('for readiness_attempt in 1 2 3; do');
+    expect(readiness).toContain('--fail --silent --show-error --max-time 15 -X GET');
+    expect(readiness).toContain('sleep 5');
+    expect(readiness).toContain('test "${readiness_ok:-false}" = true');
+    expect(readiness).not.toContain('POST');
+  });
 });

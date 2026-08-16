@@ -142,8 +142,15 @@ jobs:
           test -n "$HML_COLLECTION_TOKEN"
           test -n "$HML_DATABASE_URL"
           test -n "$TAVILY_API_KEY"
-          curl --fail-with-body --silent --show-error --max-time 15 \
-            "$HML_API_URL/health/ready" >/dev/null
+          for readiness_attempt in 1 2 3; do
+            if curl --fail --silent --show-error --max-time 15 -X GET \
+              "$HML_API_URL/health/ready" >/dev/null; then
+              readiness_ok=true
+              break
+            fi
+            if [ "$readiness_attempt" -lt 3 ]; then sleep 5; fi
+          done
+          test "${readiness_ok:-false}" = true
           request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"
           [[ "$request_identity" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\|(09|13|16)\|campinas-sp\|daily6-v1$ ]]
           existing_job_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \

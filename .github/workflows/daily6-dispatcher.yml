@@ -156,9 +156,9 @@ jobs:
           existing_job_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
             "select count(*) from public.collection_jobs where request_identity = '$request_identity'")"
           existing_batch_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
-            "select count(*) from public.daily6_batches where batch_id = '$request_identity'")"
+            "select lead_finder_internal.daily6_batch_identity_exists('$request_identity')")"
           test "$existing_job_count" = '0'
-          test "$existing_batch_count" = '0'
+          test "$existing_batch_count" = 'f'
           echo "request_identity=$request_identity" >> "$GITHUB_OUTPUT"
           echo 'CONTROL_PLANE_PASS=true'
 

@@ -18,7 +18,7 @@ on:
         description: Exact approved HML SHA
         required: true
         type: string
-        default: 1f9a40e715cbf5bd791627e25879b5f356224726
+        default: f96ee8b10b7da55ec2e5bd5f69b5b44b6c063985
       date:
         description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
         required: true
@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 1f9a40e715cbf5bd791627e25879b5f356224726
+  EXPECTED_OPERATIONAL_SHA: f96ee8b10b7da55ec2e5bd5f69b5b44b6c063985
   HML_BRANCH: hml/render-supabase-plan-b
   MAX_SCHEDULE_LATENESS_SECONDS: '3600'
 
@@ -156,9 +156,9 @@ jobs:
           existing_job_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
             "select count(*) from public.collection_jobs where request_identity = '$request_identity'")"
           existing_batch_count="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
-            "select count(*) from public.daily6_batches where batch_id = '$request_identity'")"
+            "select lead_finder_internal.daily6_batch_identity_exists('$request_identity')")"
           test "$existing_job_count" = '0'
-          test "$existing_batch_count" = '0'
+          test "$existing_batch_count" = 'f'
           echo "request_identity=$request_identity" >> "$GITHUB_OUTPUT"
           echo 'CONTROL_PLANE_PASS=true'
 

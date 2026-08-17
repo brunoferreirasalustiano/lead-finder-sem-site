@@ -30,4 +30,34 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
   });
+
+  it('uses only bounded GET retries to tolerate a Render cold start before discovery', () => {
+    const start = workflow.indexOf('test -n "$TAVILY_API_KEY"');
+    const end = workflow.indexOf('request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"');
+    const readiness = workflow.slice(start, end);
+    expect(readiness).toContain('for readiness_attempt in 1 2 3; do');
+    expect(readiness).toContain('--fail --silent --show-error --max-time 15 -X GET');
+    expect(readiness).toContain('sleep 5');
+    expect(readiness).toContain('test "${readiness_ok:-false}" = true');
+    expect(readiness).not.toContain('POST');
+  });
+
+  it('revalidates operational authorization immediately before each mutating Daily-6 POST', () => {
+    const collectStepStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const workerStepStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const collectStep = workflow.slice(collectStepStart, workerStepStart);
+    expect(collectStep).toContain('OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}');
+    expect(collectStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
+    expect(collectStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
+    expect(collectStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
+    expect(collectStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(collectStep.indexOf('-X POST "$HML_API_URL/collect"'));
+
+    const runSlotStepStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    const runSlotStep = workflow.slice(runSlotStepStart);
+    expect(runSlotStep).toContain('OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}');
+    expect(runSlotStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
+    expect(runSlotStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
+    expect(runSlotStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
+    expect(runSlotStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
+  });
 });

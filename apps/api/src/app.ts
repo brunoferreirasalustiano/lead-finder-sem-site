@@ -75,6 +75,7 @@ import {
   type WhatsAppCloudRuntime,
   type WhatsAppCloudDeliver,
   getProspectingCityMetricsSnapshot,
+  listDaily6Opportunities,
   runDaily6Slot,
   type Daily6SlotInput,
   type Daily6SlotRuntime,
@@ -124,6 +125,8 @@ import {
   pilotManualContactSchema,
   pilotResultSchema,
   pilotMetricPeriodSchema,
+  evaluateOpportunity,
+  type OpportunitySignals,
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
@@ -175,6 +178,11 @@ export type Daily6GmailConfigDiagnostics = Readonly<{
 }>;
 
 const idSchema = z.string().uuid();
+const daily6OpportunityQuerySchema = z.object({
+  city: z.string().trim().min(2).max(100).default('Campinas'),
+  category: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(40),
+}).strict();
 type HttpContractQueries = Readonly<{
   listLeads: typeof listLeads;
   getLead: typeof getLead;
@@ -195,6 +203,7 @@ type HttpContractQueries = Readonly<{
   reserveSimulatedRecipient: typeof reserveSimulatedRecipient;
   createAttemptWithOutbox: typeof createAttemptWithOutbox;
   getProspectingCityMetricsSnapshot: typeof getProspectingCityMetricsSnapshot;
+  listDaily6Opportunities: typeof listDaily6Opportunities;
 }>;
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
   const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
@@ -224,6 +233,19 @@ const safeGmailPreflightResult = (result: GmailPreflightResult) => ({
   ...(result.errorClass && GMAIL_PREFLIGHT_ERROR_CLASSES.includes(result.errorClass)
     ? { errorClass: result.errorClass }
     : {}),
+});
+const safeDaily6OpportunityDto = (row: Record<string, unknown>, evaluation: ReturnType<typeof evaluateOpportunity>) => ({
+  leadId: typeof row['lead_id'] === 'string' ? row['lead_id'] : 'UNKNOWN',
+  city: typeof row['city'] === 'string' ? row['city'] : 'UNKNOWN',
+  category: typeof row['category'] === 'string' ? row['category'] : 'UNKNOWN',
+  opportunityState: evaluation.state,
+  reasons: evaluation.reasons,
+  contactable: evaluation.contactable,
+  sendEligible: evaluation.sendEligible,
+  publicBusinessEmailPresent: row['public_business_email_present'] === true,
+  businessIdentityConfirmed: row['business_identity_confirmed'] === true,
+  businessActivePass: row['business_active_pass'] === true,
+  evidenceCount: Array.isArray(row['evidence_ids']) ? row['evidence_ids'].length : 0,
 });
 export const safeCampaignAuditItem = (value: unknown) => {
   const item = row(value);
@@ -317,6 +339,7 @@ export function buildApp(db: Database, options: {
     reserveSimulatedRecipient,
     createAttemptWithOutbox,
     getProspectingCityMetricsSnapshot,
+    listDaily6Opportunities,
     ...options.contractQueries,
   };
   const app = Fastify({
@@ -442,6 +465,71 @@ export function buildApp(db: Database, options: {
       return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
     }
     return options.daily6GmailConfigDiagnostics();
+  });
+  app.get('/internal/daily6/opportunities', async (request, reply) => {
+    if (!options.daily6AuthRequired) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_DAILY6_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    const query = daily6OpportunityQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: 'Invalid opportunity query', code: 'INVALID_REQUEST' });
+    try {
+      const candidates = query.data.category
+        ? await contractQueries.listDaily6Opportunities(db, {
+            city: query.data.city,
+            category: query.data.category,
+            limit: query.data.limit,
+          })
+        : await contractQueries.listDaily6Opportunities(db, {
+            city: query.data.city,
+            limit: query.data.limit,
+          });
+      const stateCounts = {
+        OPPORTUNITY_PENDING_EVIDENCE: 0,
+        OPPORTUNITY_READY: 0,
+        CONTACTABLE: 0,
+        SEND_ELIGIBLE: 0,
+        BLOCKED: 0,
+      };
+      const reasonCounts: Record<string, number> = {};
+      const items = candidates.map((candidate) => {
+        const signals: OpportunitySignals = {
+          businessIdentityConfirmed: candidate.business_identity_confirmed,
+          businessActivePass: candidate.business_active_pass,
+          publicBusinessEmailPresent: candidate.public_business_email_present,
+          emailBusinessAssociationPass: candidate.email_business_association_pass,
+          officialSiteFound: candidate.official_site_found,
+          siteSearchHigh: candidate.site_search_high,
+          priorContact: candidate.prior_contact,
+          duplicate: candidate.duplicate,
+          pendingOrAmbiguousSend: candidate.pending_or_ambiguous_send,
+          suppressed: candidate.suppressed,
+          hardBounce: candidate.hard_bounce,
+          optOut: candidate.opt_out,
+          doNotContact: candidate.do_not_contact,
+          naoContatar: candidate.nao_contatar,
+          emailChannelAllowed: candidate.email_channel_allowed,
+          currentVerifiedEvidenceRequired: candidate.current_verified_evidence_required,
+          legacyStatusOnly: candidate.legacy_status_only,
+        };
+        const evaluation = evaluateOpportunity(signals);
+        stateCounts[evaluation.state] += 1;
+        for (const reason of evaluation.reasons) reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+        return safeDaily6OpportunityDto(candidate, evaluation);
+      });
+      return {
+        city: query.data.city,
+        ...(query.data.category ? { category: query.data.category } : {}),
+        total: items.length,
+        stateCounts,
+        reasonCounts,
+        items,
+      };
+    } catch {
+      return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
+    }
   });
   app.get('/internal/prospecting/city-metrics', async (_request, reply) => {
     if (options.prospectingMetricsEnabled !== true) {

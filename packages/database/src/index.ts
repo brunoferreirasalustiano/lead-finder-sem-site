@@ -45,6 +45,7 @@ export * from './deployment-processing.js';
 export * from './prospecting-metrics.js';
 export * from './enrichment.js';
 export * from './daily6.js';
+export * from './daily6-opportunities.js';
 export * from './daily6-orchestrator.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>

@@ -4,27 +4,15 @@ name: Daily-6 Render HML wake
 # a public, read-only liveness GET; it never touches discovery or sending.
 on:
   schedule:
-    # 09:00-10:10 America/Sao_Paulo (UTC-3)
-    - cron: '0 12 * * *'
-    - cron: '14 12 * * *'
-    - cron: '28 12 * * *'
-    - cron: '42 12 * * *'
-    - cron: '56 12 * * *'
-    - cron: '10 13 * * *'
-    # 13:00-14:10 America/Sao_Paulo (UTC-3)
-    - cron: '0 16 * * *'
-    - cron: '14 16 * * *'
-    - cron: '28 16 * * *'
-    - cron: '42 16 * * *'
-    - cron: '56 16 * * *'
-    - cron: '10 17 * * *'
-    # 16:00-17:10 America/Sao_Paulo (UTC-3)
-    - cron: '0 19 * * *'
-    - cron: '14 19 * * *'
-    - cron: '28 19 * * *'
-    - cron: '42 19 * * *'
-    - cron: '56 19 * * *'
-    - cron: '10 20 * * *'
+    # 09:07-10:07 America/Sao_Paulo (UTC-3), every 13 minutes plus the window boundary.
+    - cron: '7,20,33,46,59 12 * * *'
+    - cron: '7 13 * * *'
+    # 13:07-14:07 America/Sao_Paulo (UTC-3), every 13 minutes plus the window boundary.
+    - cron: '7,20,33,46,59 16 * * *'
+    - cron: '7 17 * * *'
+    # 16:07-17:07 America/Sao_Paulo (UTC-3), every 13 minutes plus the window boundary.
+    - cron: '7,20,33,46,59 19 * * *'
+    - cron: '7 20 * * *'
 
 permissions:
   contents: read

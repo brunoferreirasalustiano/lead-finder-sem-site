@@ -1,0 +1,20 @@
+name: Daily-6 Render wake smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify Render liveness with one read-only request
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --max-time 15 -X GET \
+            https://lead-finder-api-hml.onrender.com/health/live >/dev/null
+          echo 'RENDER_WAKE_SMOKE=PASS'

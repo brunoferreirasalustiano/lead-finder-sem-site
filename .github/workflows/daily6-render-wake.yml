@@ -1,0 +1,43 @@
+name: Daily-6 Render HML wake
+
+# Defense-in-depth for Render free-tier hibernation. This workflow only makes
+# a public, read-only liveness GET; it never touches discovery or sending.
+on:
+  schedule:
+    # 09:00-10:10 America/Sao_Paulo (UTC-3)
+    - cron: '0 12 * * *'
+    - cron: '14 12 * * *'
+    - cron: '28 12 * * *'
+    - cron: '42 12 * * *'
+    - cron: '56 12 * * *'
+    - cron: '10 13 * * *'
+    # 13:00-14:10 America/Sao_Paulo (UTC-3)
+    - cron: '0 16 * * *'
+    - cron: '14 16 * * *'
+    - cron: '28 16 * * *'
+    - cron: '42 16 * * *'
+    - cron: '56 16 * * *'
+    - cron: '10 17 * * *'
+    # 16:00-17:10 America/Sao_Paulo (UTC-3)
+    - cron: '0 19 * * *'
+    - cron: '14 19 * * *'
+    - cron: '28 19 * * *'
+    - cron: '42 19 * * *'
+    - cron: '56 19 * * *'
+    - cron: '10 20 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Wake Render with read-only liveness check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --max-time 15 -X GET \
+            https://lead-finder-api-hml.onrender.com/health/live >/dev/null
+          echo 'RENDER_WAKE=PASS'

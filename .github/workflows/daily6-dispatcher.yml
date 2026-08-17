@@ -179,8 +179,16 @@ jobs:
         shell: bash
         env:
           REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
+          OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}
+          OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}
         run: |
           set -Eeuo pipefail
+          test "$OPERATIONAL_AUTHORIZATION" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'
+          [[ "$OPERATIONAL_AUTH_EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          expires_epoch="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%s)"
+          canonical_expiry="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%Y-%m-%dT%H:%M:%SZ)"
+          test "$canonical_expiry" = "$OPERATIONAL_AUTH_EXPIRES_AT"
+          test "$expires_epoch" -gt "$(date -u +%s)"
           response="$(curl --fail-with-body --silent --show-error --max-time 30 \
             -X POST "$HML_API_URL/collect" \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
@@ -247,10 +255,18 @@ jobs:
           SLOT_DATE: ${{ steps.slot.outputs.date }}
           SLOT: ${{ steps.slot.outputs.slot }}
           EXPECTED_SHA: ${{ steps.slot.outputs.sha }}
+          OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}
+          OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}
         run: |
           set -Eeuo pipefail
           test -n "$HML_API_URL"
           test -n "$HML_DAILY6_TOKEN"
+          test "$OPERATIONAL_AUTHORIZATION" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'
+          [[ "$OPERATIONAL_AUTH_EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          expires_epoch="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%s)"
+          canonical_expiry="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%Y-%m-%dT%H:%M:%SZ)"
+          test "$canonical_expiry" = "$OPERATIONAL_AUTH_EXPIRES_AT"
+          test "$expires_epoch" -gt "$(date -u +%s)"
           response="$(curl --fail-with-body --silent --show-error --max-time 60 \
             -X POST "$HML_API_URL/internal/daily6/run-slot" \
             -H "Authorization: Bearer $HML_DAILY6_TOKEN" \

@@ -224,6 +224,24 @@ jobs:
           fi
           echo 'DISCOVERY_WORKER_CONFIG=PASS'
 
+      - name: Validate bounded worker database identity before enqueue
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          if ! database_user="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc 'select current_user' 2>/dev/null)"; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=DATABASE_CONNECTION' >&2
+            exit 1
+          fi
+          if [ "$database_user" != 'lead_finder_discovery_runtime' ]; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=UNEXPECTED_RUNTIME_ROLE' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_IDENTITY=PASS'
+
       - name: Enqueue one bounded Daily-6 discovery job
         shell: bash
         env:

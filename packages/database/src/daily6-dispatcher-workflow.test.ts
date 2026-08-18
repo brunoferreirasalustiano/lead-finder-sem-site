@@ -17,12 +17,15 @@ describe('native Daily-6 scheduler control plane', () => {
     const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
     const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
     const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
     expect(checkoutStart).toBeGreaterThanOrEqual(0);
     expect(buildStart).toBeGreaterThan(checkoutStart);
     expect(configStart).toBeGreaterThan(buildStart);
     expect(enqueueStart).toBeGreaterThan(configStart);
+    expect(databaseIdentityStart).toBeGreaterThan(configStart);
+    expect(enqueueStart).toBeGreaterThan(databaseIdentityStart);
     expect(workerStart).toBeGreaterThan(buildStart);
     const build = workflow.slice(checkoutStart, workerStart);
     expect(build).toContain('ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}');
@@ -34,7 +37,7 @@ describe('native Daily-6 scheduler control plane', () => {
   it('fails before collection enqueue when the exact worker config is invalid', () => {
     const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
-    const config = workflow.slice(configStart, enqueueStart);
+    const config = workflow.slice(configStart, databaseIdentityStart);
     expect(configStart).toBeGreaterThanOrEqual(0);
     expect(enqueueStart).toBeGreaterThan(configStart);
     expect(config).toContain('parseWorkerConfig');
@@ -44,6 +47,12 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(config).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(config).not.toContain('curl');
     expect(config).not.toContain('psql');
+    const databaseIdentity = workflow.slice(databaseIdentityStart, enqueueStart);
+    expect(databaseIdentity).toContain('default_transaction_read_only=on');
+    expect(databaseIdentity).toContain("select current_user");
+    expect(databaseIdentity).toContain("lead_finder_discovery_runtime");
+    expect(databaseIdentity).toContain('DISCOVERY_DATABASE_IDENTITY=PASS');
+    expect(databaseIdentity).not.toContain('echo "$database_user"');
   });
 
   it('surfaces only sanitized worker failure classification', () => {

@@ -237,7 +237,7 @@ const safeCollectionError = (error?: string): string | null => {
   return /^[A-Z0-9_]{1,80}$/u.test(code) ? code : 'COLLECTION_FAILED';
 };
 
-export async function claimCollection(db: Database) {
+export async function claimCollection(db: Database, requestIdentity?: string) {
   return db.transaction(async (tx) => {
     const now = new Date();
     const expiredTerminalJobs = await tx
@@ -266,11 +266,12 @@ export async function claimCollection(db: Database) {
       await tx
         .select()
         .from(collectionJobs)
-        .where(and(
-          eq(collectionJobs.status, 'PENDING'),
-          sql`${collectionJobs.attemptCount} < ${collectionMaxAttempts}`,
-          sql`${collectionJobs.payload} @> ${JSON.stringify({ collectionEgress: collectionAuthorization })}::jsonb`,
-        ))
+          .where(and(
+            eq(collectionJobs.status, 'PENDING'),
+            sql`${collectionJobs.attemptCount} < ${collectionMaxAttempts}`,
+            sql`${collectionJobs.payload} @> ${JSON.stringify({ collectionEgress: collectionAuthorization })}::jsonb`,
+            ...(requestIdentity === undefined ? [] : [eq(collectionJobs.requestIdentity, requestIdentity)]),
+          ))
         .orderBy(collectionJobs.createdAt)
         .limit(1)
         .for('update', { skipLocked: true })

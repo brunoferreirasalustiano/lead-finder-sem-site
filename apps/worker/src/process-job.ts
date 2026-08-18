@@ -25,8 +25,9 @@ export async function processNextJob(
   maxEnrichmentCandidates = 10,
   maxCandidatesPerJob = 50,
   onFailure?: (telemetry: CollectionFailureTelemetry) => void,
+  requestIdentity?: string,
 ): Promise<boolean> {
-  const job = await claimCollection(db);
+  const job = await claimCollection(db, requestIdentity);
   if (!job) return false;
   let providerCallInFlight = false;
   try {

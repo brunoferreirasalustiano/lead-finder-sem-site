@@ -13,6 +13,34 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
+  it('builds the discovery worker from the exact approved HML SHA', () => {
+    const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
+    const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
+    const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    expect(checkoutStart).toBeGreaterThanOrEqual(0);
+    expect(buildStart).toBeGreaterThan(checkoutStart);
+    expect(workerStart).toBeGreaterThan(buildStart);
+    const build = workflow.slice(checkoutStart, workerStart);
+    expect(build).toContain('ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}');
+    expect(build).toContain('path: hml-worker');
+    expect(build).toContain('working-directory: hml-worker');
+    expect(workflow).toContain('node hml-worker/apps/worker/dist/index.js');
+  });
+
+  it('surfaces only sanitized worker failure classification', () => {
+    const start = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const end = workflow.indexOf('- name: Require terminal collection before selection');
+    const worker = workflow.slice(start, end);
+    expect(worker).toContain('DISCOVERY_WORKER_EXIT_CODE=');
+    expect(worker).toContain('DISCOVERY_WORKER_FAILURE_CLASS=');
+    expect(worker).toContain("worker_failure_class='UNKNOWN'");
+    expect(worker).toContain('worker_startup_blocked');
+    expect(worker).toContain('collection_source_failure');
+    expect(worker).toContain('worker_fatal');
+    expect(worker).not.toContain('cat "$worker_log"');
+    expect(worker).not.toContain('printf \'%s\' "$worker_log"');
+  });
+
   it('pins the native scope and hard slot quota without slot replay', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');

@@ -167,6 +167,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Checkout exact approved HML worker source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}
+          fetch-depth: 1
+          path: hml-worker
+
       - name: Build the bounded discovery worker
         shell: bash
         run: |
@@ -174,6 +181,7 @@ jobs:
           npm ci --ignore-scripts
           npm run build
           echo 'DISCOVERY_WORKER_BUILD=PASS'
+        working-directory: hml-worker
 
       - name: Enqueue one bounded Daily-6 discovery job
         shell: bash
@@ -226,8 +234,22 @@ jobs:
           set -Eeuo pipefail
           worker_log="$(mktemp)"
           trap 'rm -f "$worker_log"' EXIT
-          if ! node apps/worker/dist/index.js >"$worker_log" 2>&1; then
+          set +e
+          node hml-worker/apps/worker/dist/index.js >"$worker_log" 2>&1
+          worker_exit_code=$?
+          set -e
+          if [ "$worker_exit_code" -ne 0 ]; then
+            worker_failure_class='UNKNOWN'
+            if grep -Fq '"event":"worker_startup_blocked"' "$worker_log"; then
+              worker_failure_class='INVALID_CONFIGURATION'
+            elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
+              worker_failure_class='COLLECTION_SOURCE_FAILURE'
+            elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
+              worker_failure_class='WORKER_FATAL'
+            fi
             echo 'DISCOVERY_WORKER=FAILED' >&2
+            echo "DISCOVERY_WORKER_EXIT_CODE=$worker_exit_code" >&2
+            echo "DISCOVERY_WORKER_FAILURE_CLASS=$worker_failure_class" >&2
             exit 1
           fi
           # The worker's persisted collection status is the authoritative

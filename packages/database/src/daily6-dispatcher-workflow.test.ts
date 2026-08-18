@@ -13,6 +13,52 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
+  it('builds the discovery worker from the exact approved HML SHA', () => {
+    const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
+    const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
+    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    expect(checkoutStart).toBeGreaterThanOrEqual(0);
+    expect(buildStart).toBeGreaterThan(checkoutStart);
+    expect(configStart).toBeGreaterThan(buildStart);
+    expect(enqueueStart).toBeGreaterThan(configStart);
+    expect(workerStart).toBeGreaterThan(buildStart);
+    const build = workflow.slice(checkoutStart, workerStart);
+    expect(build).toContain('ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}');
+    expect(build).toContain('path: hml-worker');
+    expect(build).toContain('working-directory: hml-worker');
+    expect(workflow).toContain('node hml-worker/apps/worker/dist/index.js');
+  });
+
+  it('fails before collection enqueue when the exact worker config is invalid', () => {
+    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const config = workflow.slice(configStart, enqueueStart);
+    expect(configStart).toBeGreaterThanOrEqual(0);
+    expect(enqueueStart).toBeGreaterThan(configStart);
+    expect(config).toContain('parseWorkerConfig');
+    expect(config).toContain('packages/shared/dist/config.js');
+    expect(config).toContain('DISCOVERY_WORKER_CONFIG=FAIL');
+    expect(config).toContain('DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION');
+    expect(config).not.toContain('curl');
+    expect(config).not.toContain('psql');
+  });
+
+  it('surfaces only sanitized worker failure classification', () => {
+    const start = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const end = workflow.indexOf('- name: Require terminal collection before selection');
+    const worker = workflow.slice(start, end);
+    expect(worker).toContain('DISCOVERY_WORKER_EXIT_CODE=');
+    expect(worker).toContain('DISCOVERY_WORKER_FAILURE_CLASS=');
+    expect(worker).toContain("worker_failure_class='UNKNOWN'");
+    expect(worker).toContain('worker_startup_blocked');
+    expect(worker).toContain('collection_source_failure');
+    expect(worker).toContain('worker_fatal');
+    expect(worker).not.toContain('cat "$worker_log"');
+    expect(worker).not.toContain('printf \'%s\' "$worker_log"');
+  });
+
   it('pins the native scope and hard slot quota without slot replay', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');

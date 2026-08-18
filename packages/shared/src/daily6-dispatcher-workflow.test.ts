@@ -38,7 +38,8 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
     expect(workflow).toContain("MAX_SCHEDULE_LATENESS_SECONDS: '3600'");
     expect(workflow).toContain('test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"');
-    expect(workflow).toContain("format('{0}|{1}', inputs.date, inputs.slot)");
+    expect(workflow).not.toContain('workflow_dispatch:');
+    expect(workflow).not.toContain('inputs.');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain('default: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');

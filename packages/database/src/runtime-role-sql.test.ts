@@ -29,6 +29,7 @@ const hmlRuntimeFunctions = [
   'lead_finder_internal.reserve_daily6_send(text, text, uuid, char(64), text)',
   'lead_finder_internal.finalize_daily6_send(text, text, text, char(64), text)',
   'lead_finder_internal.enqueue_collection_job(text, jsonb)',
+  'lead_finder_internal.list_daily6_whatsapp_opportunities(text, text, integer)',
 ] as const;
 
 const operatorEmailSelfTestReadTables = [

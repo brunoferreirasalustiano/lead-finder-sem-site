@@ -75,6 +75,7 @@ import {
   type WhatsAppCloudRuntime,
   type WhatsAppCloudDeliver,
   getProspectingCityMetricsSnapshot,
+  listDaily6WhatsappOpportunities,
   runDaily6Slot,
   type Daily6SlotInput,
   type Daily6SlotRuntime,
@@ -175,6 +176,11 @@ export type Daily6GmailConfigDiagnostics = Readonly<{
 }>;
 
 const idSchema = z.string().uuid();
+const daily6WhatsappOpportunityQuerySchema = z.object({
+  city: z.string().trim().min(2).max(100).default('Campinas'),
+  category: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(30).default(30),
+}).strict();
 type HttpContractQueries = Readonly<{
   listLeads: typeof listLeads;
   getLead: typeof getLead;
@@ -195,6 +201,7 @@ type HttpContractQueries = Readonly<{
   reserveSimulatedRecipient: typeof reserveSimulatedRecipient;
   createAttemptWithOutbox: typeof createAttemptWithOutbox;
   getProspectingCityMetricsSnapshot: typeof getProspectingCityMetricsSnapshot;
+  listDaily6WhatsappOpportunities: typeof listDaily6WhatsappOpportunities;
 }>;
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
   const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
@@ -224,6 +231,23 @@ const safeGmailPreflightResult = (result: GmailPreflightResult) => ({
   ...(result.errorClass && GMAIL_PREFLIGHT_ERROR_CLASSES.includes(result.errorClass)
     ? { errorClass: result.errorClass }
     : {}),
+});
+const safeDaily6WhatsappOpportunityDto = (candidate: Awaited<ReturnType<typeof listDaily6WhatsappOpportunities>>[number]) => ({
+  leadId: candidate.lead_id,
+  businessName: (candidate.lead_name ?? 'empresa').slice(0, 200),
+  city: candidate.city,
+  category: candidate.category,
+  whatsapp: candidate.whatsapp_value,
+  whatsappSource: candidate.whatsapp_source.slice(0, 64),
+  whatsappEvidence: candidate.whatsapp_evidence,
+  websiteStatus: candidate.website_status,
+  qualificationStatus: candidate.qualification_status,
+  businessIdentityConfirmed: candidate.business_identity_confirmed,
+  businessActivePass: candidate.business_active_pass,
+  opportunityState: candidate.business_identity_confirmed && candidate.business_active_pass
+    ? 'WHATSAPP_OPPORTUNITY_READY'
+    : 'WHATSAPP_REVIEW_REQUIRED',
+  manualReviewOnly: true,
 });
 export const safeCampaignAuditItem = (value: unknown) => {
   const item = row(value);
@@ -277,6 +301,7 @@ export function buildApp(db: Database, options: {
   operationalBacklogDegradedCount?: number;
   operationalOldestPendingDegradedMs?: number;
   prospectingMetricsEnabled?: boolean;
+  whatsappOpportunityReviewEnabled?: boolean;
   authentication?: AuthenticationOptions;
   enqueueCollection?: typeof enqueueCollection;
   internalCronSecret?: string;
@@ -317,6 +342,7 @@ export function buildApp(db: Database, options: {
     reserveSimulatedRecipient,
     createAttemptWithOutbox,
     getProspectingCityMetricsSnapshot,
+    listDaily6WhatsappOpportunities,
     ...options.contractQueries,
   };
   const app = Fastify({
@@ -442,6 +468,37 @@ export function buildApp(db: Database, options: {
       return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
     }
     return options.daily6GmailConfigDiagnostics();
+  });
+  app.get('/internal/daily6/whatsapp-opportunities', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (options.whatsappOpportunityReviewEnabled !== true) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_OPERATOR_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    const query = daily6WhatsappOpportunityQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: 'Invalid WhatsApp opportunity query', code: 'INVALID_REQUEST' });
+    try {
+      const candidates = await contractQueries.listDaily6WhatsappOpportunities(db, {
+        city: query.data.city,
+        ...(query.data.category ? { category: query.data.category } : {}),
+        limit: query.data.limit,
+      });
+      if (candidates.length > query.data.limit) {
+        return reply.status(503).send({ error: 'Service unavailable', code: 'OPPORTUNITY_RESULT_OVER_LIMIT' });
+      }
+      return {
+        city: query.data.city,
+        ...(query.data.category ? { category: query.data.category } : {}),
+        total: candidates.length,
+        limit: query.data.limit,
+        manualReviewOnly: true,
+        items: candidates.map(safeDaily6WhatsappOpportunityDto),
+      };
+    } catch {
+      return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
+    }
   });
   app.get('/internal/prospecting/city-metrics', async (_request, reply) => {
     if (options.prospectingMetricsEnabled !== true) {

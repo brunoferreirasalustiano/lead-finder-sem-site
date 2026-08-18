@@ -10,6 +10,7 @@ export const apiAuthPermissions = [
   'campaigns:read',
   'campaigns:write',
   'operations:read',
+  'opportunity:read',
   'prospecting:metrics:read',
   'collection:execute',
   'pilot:read',
@@ -50,6 +51,7 @@ export const hmlSmokeAuthPermissions = [
 // not configurable through an environment variable and grants no campaign,
 // collection, administrative, secret-reading, or automatic-delivery access.
 export const hmlOperatorAuthPermissions = [
+  'opportunity:read',
   'manual-messaging:prepare',
   'manual-messaging:open',
   'manual-messaging:cancel',
@@ -190,6 +192,7 @@ const apiSchema = commonSchema.extend({
   OPERATOR_TEST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   PROSPECTING_METRICS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_WHATSAPP_E164: optionalEnvironmentString(
     z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'OPERATOR_TEST_WHATSAPP_E164 must use E.164 format'),
   ),
@@ -646,6 +649,10 @@ const apiSchema = commonSchema.extend({
   }
   if (configuration.DAILY6_PILOT_ENABLED && !configuration.EXPECTED_OPERATIONAL_SHA) {
     context.addIssue({ code: 'custom', path: ['EXPECTED_OPERATIONAL_SHA'], message: 'EXPECTED_OPERATIONAL_SHA is required when DAILY6_PILOT_ENABLED=true' });
+  }
+  if (configuration.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED
+    && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+    context.addIssue({ code: 'custom', path: ['WHATSAPP_OPPORTUNITY_REVIEW_ENABLED'], message: 'WHATSAPP_OPPORTUNITY_REVIEW_ENABLED is permitted only in homologation' });
   }
   if (configuration.DAILY6_PILOT_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({ code: 'custom', path: ['DAILY6_PILOT_ENABLED'], message: 'DAILY6_PILOT_ENABLED is permitted only in homologation' });

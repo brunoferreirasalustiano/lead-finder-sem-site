@@ -34,6 +34,7 @@ describe('environment configuration', () => {
       API_BATCH_PROCESSING_ENABLED: false,
       COLLECTION_EGRESS_ENABLED: false,
       PROSPECTING_METRICS_ENABLED: false,
+      WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: false,
       HML_SUPPRESSION_PROBE_ENABLED: false,
       PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
@@ -66,6 +67,24 @@ describe('environment configuration', () => {
     expect(parseApiConfig(database).PROSPECTING_METRICS_ENABLED).toBe(false);
     expect(parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'true' }).PROSPECTING_METRICS_ENABLED).toBe(true);
     expect(() => parseApiConfig({ ...database, PROSPECTING_METRICS_ENABLED: 'yes' })).toThrow('PROSPECTING_METRICS_ENABLED');
+  });
+
+  it('keeps the WhatsApp opportunity review surface HML-only and disabled by default', () => {
+    expect(parseApiConfig(database).WHATSAPP_OPPORTUNITY_REVIEW_ENABLED).toBe(false);
+    expect(parseApiConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'true',
+    }).WHATSAPP_OPPORTUNITY_REVIEW_ENABLED).toBe(true);
+    expect(() => parseApiConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'production',
+      WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'true',
+    })).toThrow('WHATSAPP_OPPORTUNITY_REVIEW_ENABLED');
+    expect(() => parseApiConfig({
+      ...database,
+      WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'yes',
+    })).toThrow('WHATSAPP_OPPORTUNITY_REVIEW_ENABLED');
   });
 
   it('allows the suppression harness only in HML', () => {

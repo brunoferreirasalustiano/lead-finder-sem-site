@@ -36,6 +36,7 @@ describe('native Daily-6 scheduler control plane', () => {
 
   it('fails before collection enqueue when the exact worker config is invalid', () => {
     const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const config = workflow.slice(configStart, databaseIdentityStart);
     expect(configStart).toBeGreaterThanOrEqual(0);

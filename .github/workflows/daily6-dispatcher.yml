@@ -183,6 +183,46 @@ jobs:
           echo 'DISCOVERY_WORKER_BUILD=PASS'
         working-directory: hml-worker
 
+      - name: Validate bounded discovery worker configuration before enqueue
+        shell: bash
+        working-directory: hml-worker
+        env:
+          DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          DEPLOYMENT_ENVIRONMENT: homologation
+          DEPLOYMENT_PROFILE: supabase-render
+          DATABASE_SSL_MODE: require
+          COLLECTION_EGRESS_ENABLED: 'true'
+          ENRICHMENT_EGRESS_ENABLED: 'true'
+          ENRICHMENT_PROVIDER: composite
+          OVERPASS_API_URL: https://overpass-api.de/api/interpreter
+          WORKER_MODE: oneshot
+          MAX_JOBS_PER_RUN: '1'
+          MAX_CANDIDATES_PER_JOB: '40'
+          MAX_ENRICHMENT_PER_JOB: '10'
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          TAVILY_MIN_INTERVAL_MS: '1000'
+          TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '10000'
+          CNPJ_PROVIDER_MAX_RPM: '3'
+          PILOT_KILL_SWITCH_ENABLED: 'false'
+          DRY_RUN: 'true'
+          REAL_SEND_ENABLED: 'false'
+          REAL_PROVIDERS_ENABLED: 'false'
+          SHADOW_MODE_ENABLED: 'true'
+        run: |
+          set -Eeuo pipefail
+          config_log="$(mktemp)"
+          trap 'rm -f "$config_log"' EXIT
+          set +e
+          node --input-type=module -e "import { parseWorkerConfig } from './packages/shared/dist/config.js'; parseWorkerConfig(process.env);" >"$config_log" 2>&1
+          config_exit_code=$?
+          set -e
+          if [ "$config_exit_code" -ne 0 ]; then
+            echo 'DISCOVERY_WORKER_CONFIG=FAIL' >&2
+            echo 'DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_WORKER_CONFIG=PASS'
+
       - name: Enqueue one bounded Daily-6 discovery job
         shell: bash
         env:

@@ -16,15 +16,33 @@ describe('native Daily-6 scheduler control plane', () => {
   it('builds the discovery worker from the exact approved HML SHA', () => {
     const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
     const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
+    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
     expect(checkoutStart).toBeGreaterThanOrEqual(0);
     expect(buildStart).toBeGreaterThan(checkoutStart);
+    expect(configStart).toBeGreaterThan(buildStart);
+    expect(enqueueStart).toBeGreaterThan(configStart);
     expect(workerStart).toBeGreaterThan(buildStart);
     const build = workflow.slice(checkoutStart, workerStart);
     expect(build).toContain('ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}');
     expect(build).toContain('path: hml-worker');
     expect(build).toContain('working-directory: hml-worker');
     expect(workflow).toContain('node hml-worker/apps/worker/dist/index.js');
+  });
+
+  it('fails before collection enqueue when the exact worker config is invalid', () => {
+    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const config = workflow.slice(configStart, enqueueStart);
+    expect(configStart).toBeGreaterThanOrEqual(0);
+    expect(enqueueStart).toBeGreaterThan(configStart);
+    expect(config).toContain('parseWorkerConfig');
+    expect(config).toContain('packages/shared/dist/config.js');
+    expect(config).toContain('DISCOVERY_WORKER_CONFIG=FAIL');
+    expect(config).toContain('DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION');
+    expect(config).not.toContain('curl');
+    expect(config).not.toContain('psql');
   });
 
   it('surfaces only sanitized worker failure classification', () => {

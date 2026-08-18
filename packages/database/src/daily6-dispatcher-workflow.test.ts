@@ -41,6 +41,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(config).toContain('packages/shared/dist/config.js');
     expect(config).toContain('DISCOVERY_WORKER_CONFIG=FAIL');
     expect(config).toContain('DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION');
+    expect(config).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(config).not.toContain('curl');
     expect(config).not.toContain('psql');
   });
@@ -55,6 +56,8 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(worker).toContain('worker_startup_blocked');
     expect(worker).toContain('collection_source_failure');
     expect(worker).toContain('worker_fatal');
+    expect(worker).toContain('NO_COLLECTION_JOB_CLAIMED');
+    expect(worker).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(worker).not.toContain('cat "$worker_log"');
     expect(worker).not.toContain('printf \'%s\' "$worker_log"');
   });

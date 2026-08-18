@@ -188,6 +188,7 @@ jobs:
         working-directory: hml-worker
         env:
           DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
           DEPLOYMENT_ENVIRONMENT: homologation
           DEPLOYMENT_PROFILE: supabase-render
           DATABASE_SSL_MODE: require
@@ -250,6 +251,7 @@ jobs:
         shell: bash
         env:
           DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
           DEPLOYMENT_ENVIRONMENT: homologation
           DEPLOYMENT_PROFILE: supabase-render
           DATABASE_SSL_MODE: require
@@ -284,6 +286,8 @@ jobs:
               worker_failure_class='INVALID_CONFIGURATION'
             elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
               worker_failure_class='COLLECTION_SOURCE_FAILURE'
+            elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
+              worker_failure_class='COLLECTION_NOT_CLAIMED'
             elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
               worker_failure_class='WORKER_FATAL'
             fi

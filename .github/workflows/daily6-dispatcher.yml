@@ -12,31 +12,14 @@ on:
     - cron: '7 12 * * *' # 09:07 America/Sao_Paulo (UTC-3), logical slot 09
     - cron: '7 16 * * *' # 13:07 America/Sao_Paulo (UTC-3), logical slot 13
     - cron: '7 19 * * *' # 16:07 America/Sao_Paulo (UTC-3), logical slot 16
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact approved HML SHA
-        required: true
-        type: string
-        default: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892
-      date:
-        description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
-        required: true
-        type: string
-      slot:
-        description: Current Daily-6 slot
-        required: true
-        type: choice
-        options:
-          - '09'
-          - '13'
-          - '16'
+  # Deliberately schedule-only: manual dispatch could bypass the natural-slot
+  # lateness gate and turn a failed slot into an unsafe catch-up attempt.
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily6-dispatcher-${{ github.event.schedule || format('{0}|{1}', inputs.date, inputs.slot) }}
+  group: daily6-dispatcher-${{ github.event.schedule }}
   cancel-in-progress: false
 
 env:
@@ -64,34 +47,25 @@ jobs:
         shell: bash
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
-          DISPATCH_DATE: ${{ inputs.date }}
-          DISPATCH_SLOT: ${{ inputs.slot }}
-          DISPATCH_SHA: ${{ inputs.expected_sha }}
         run: |
           set -Eeuo pipefail
+          test "$GITHUB_EVENT_NAME" = 'schedule'
+          test "${GITHUB_RUN_ATTEMPT:-1}" = '1'
           today="$(TZ=America/Sao_Paulo date +%F)"
-          if [ "$GITHUB_EVENT_NAME" = 'schedule' ]; then
-            test "${GITHUB_RUN_ATTEMPT:-1}" = '1'
-            case "$EVENT_SCHEDULE" in
-              '7 12 * * *') slot='09'; expected_utc='12:07:00' ;;
-              '7 16 * * *') slot='13'; expected_utc='16:07:00' ;;
-              '7 19 * * *') slot='16'; expected_utc='19:07:00' ;;
-              *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
-            esac
-            date="$today"
-            sha="$EXPECTED_OPERATIONAL_SHA"
-            expected_epoch="$(date -u -d "$date $expected_utc" +%s)"
-            now_epoch="$(date -u +%s)"
-            lateness_seconds=$((now_epoch - expected_epoch))
-            test "$lateness_seconds" -ge 0
-            test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"
-          else
-            date="$DISPATCH_DATE"
-            slot="$DISPATCH_SLOT"
-            sha="$DISPATCH_SHA"
-            lateness_seconds='manual'
-          fi
+          case "$EVENT_SCHEDULE" in
+            '7 12 * * *') slot='09'; expected_utc='12:07:00' ;;
+            '7 16 * * *') slot='13'; expected_utc='16:07:00' ;;
+            '7 19 * * *') slot='16'; expected_utc='19:07:00' ;;
+            *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
+          esac
+          date="$today"
           test "$date" = "$today"
+          sha="$EXPECTED_OPERATIONAL_SHA"
+          expected_epoch="$(date -u -d "$date $expected_utc" +%s)"
+          now_epoch="$(date -u +%s)"
+          lateness_seconds=$((now_epoch - expected_epoch))
+          test "$lateness_seconds" -ge 0
+          test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"
           [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
           [[ "$slot" =~ ^(09|13|16)$ ]]
           [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]

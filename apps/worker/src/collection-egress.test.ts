@@ -74,4 +74,25 @@ describe('collection egress', () => {
     await expect(processCollection()).resolves.toBe(true);
     expect(processJob).toHaveBeenCalledWith(db, client);
   });
+
+  it('passes the bounded request identity to the claim processor', async () => {
+    const client = {} as OverpassClient;
+    const processJob = vi.fn(() => Promise.resolve(true));
+    const processCollection = createCollectionProcessor(
+      db,
+      {
+        enabled: true,
+        endpoint: 'https://overpass.example.test/api',
+        timeoutMs: 5_000,
+        maxRetries: 1,
+        requestIdentity: '2026-08-18|13|campinas-sp|daily6-v1',
+      },
+      createLogger(),
+      () => client,
+      processJob,
+    );
+
+    await expect(processCollection()).resolves.toBe(true);
+    expect(processJob).toHaveBeenCalledWith(db, client, '2026-08-18|13|campinas-sp|daily6-v1');
+  });
 });

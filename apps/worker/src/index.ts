@@ -1,6 +1,6 @@
 import { createDatabase } from '@lead-finder/database';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
-import { parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
+import { collectionRequestIdentitySchema, parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
 import { createCollectionProcessor } from './collection-egress.js';
 import {
   CnpjWsBusinessRegistryProvider,
@@ -18,6 +18,10 @@ import { createConsoleOperationalLogger } from './operational-observability.js';
 import { runOneShot } from './oneshot.js';
 import { safeCnpjWsPublicRpm } from './provider-policy.js';
 const config = parseWorkerConfig(process.env);
+const requestIdentity = process.env.REQUEST_IDENTITY?.trim();
+if (config.WORKER_MODE === 'oneshot' && (!requestIdentity || !collectionRequestIdentitySchema.safeParse(requestIdentity).success)) {
+  throw new Error('REQUEST_IDENTITY is required for bounded oneshot worker');
+}
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
 const operationalLogger = createConsoleOperationalLogger();
 const providerCallAccounting = new ProviderCallAccounting();
@@ -56,7 +60,8 @@ const processCollection = createCollectionProcessor(db, {
   endpoint: config.OVERPASS_API_URL,
   timeoutMs: config.OVERPASS_TIMEOUT_MS,
   maxRetries: config.OVERPASS_MAX_RETRIES,
-}, operationalLogger, undefined, (database, client) => processNextJob(
+  ...(requestIdentity === undefined ? {} : { requestIdentity }),
+}, operationalLogger, undefined, (database, client, identity) => processNextJob(
   database,
   client,
   enrichmentProvider,
@@ -67,6 +72,7 @@ const processCollection = createCollectionProcessor(db, {
     ...(failure.provider === undefined ? {} : { provider: failure.provider }),
     ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
   }),
+  identity,
 ));
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
 const executionPolicy = {
@@ -109,8 +115,17 @@ process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error))
 process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
   if (config.WORKER_MODE === 'oneshot') {
-    await runOneShot(processCollection, config.MAX_JOBS_PER_RUN, () => gracefulStop.running);
+    const processed = await runOneShot(processCollection, config.MAX_JOBS_PER_RUN, () => gracefulStop.running);
     reportProviderCallAccounting();
+    if (processed === 0 && gracefulStop.running) {
+      console.error(JSON.stringify({
+        event: 'worker_fatal',
+        failureClass: 'NO_COLLECTION_JOB_CLAIMED',
+        decision: 'SHUTDOWN_REQUESTED',
+      }));
+      await shutdown(1);
+      break;
+    }
     await shutdown();
     break;
   }

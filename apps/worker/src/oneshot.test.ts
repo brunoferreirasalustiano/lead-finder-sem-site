@@ -14,6 +14,12 @@ describe('bounded one-shot worker', () => {
     expect(processJob).toHaveBeenCalledTimes(2);
   });
 
+  it('returns zero when the bounded identity has no claimable job', async () => {
+    const processJob = vi.fn().mockResolvedValue(false);
+    await expect(runOneShot(processJob, 1)).resolves.toBe(0);
+    expect(processJob).toHaveBeenCalledTimes(1);
+  });
+
   it('stops cleanly when shutdown is requested', async () => {
     let running = true;
     const processJob = vi.fn().mockImplementation(() => { running = false; return Promise.resolve(true); });

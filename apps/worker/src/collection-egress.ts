@@ -8,17 +8,20 @@ interface CollectionEgressConfig {
   endpoint: string | undefined;
   timeoutMs: number;
   maxRetries: number;
+  requestIdentity?: string;
 }
 
 type ClientFactory = (options: OverpassClientOptions) => OverpassClient;
-type JobProcessor = (db: Database, client: OverpassClient) => Promise<boolean>;
+type JobProcessor = (db: Database, client: OverpassClient, requestIdentity?: string) => Promise<boolean>;
+const defaultJobProcessor: JobProcessor = (db, client, requestIdentity) =>
+  processNextJob(db, client, undefined, 10, 50, undefined, requestIdentity);
 
 export function createCollectionProcessor(
   db: Database,
   config: CollectionEgressConfig,
   logger: OperationalLogger,
   createClient: ClientFactory = (options) => new OverpassClient(options),
-  processJob: JobProcessor = processNextJob,
+  processJob: JobProcessor = defaultJobProcessor,
 ): () => Promise<boolean> {
   if (!config.enabled) {
     logger.info({
@@ -40,5 +43,7 @@ export function createCollectionProcessor(
     timeoutMs: config.timeoutMs,
     maxRetries: config.maxRetries,
   });
-  return () => processJob(db, client);
+  return config.requestIdentity === undefined
+    ? () => processJob(db, client)
+    : () => processJob(db, client, config.requestIdentity);
 }

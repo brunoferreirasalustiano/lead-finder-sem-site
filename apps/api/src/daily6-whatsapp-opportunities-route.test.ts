@@ -120,6 +120,32 @@ describe('Daily-6 WhatsApp opportunity route', () => {
     await app.close();
   });
 
+  it('supports an exactly 30-row synthetic review batch without any send path', async () => {
+    const thirtyRows = Array.from({ length: 30 }, (_, index) => ({
+      ...rows[0]!,
+      lead_id: `10dfeb9d-30f0-4d5a-8762-3dbb4ed50${String(index).padStart(2, '0')}`,
+      whatsapp_value: `+551999999${String(1000 + index).slice(-4)}`,
+    }));
+    const list = vi.fn().mockResolvedValue(thirtyRows);
+    const app = buildApp({} as Database, {
+      daily6AuthRequired: true,
+      whatsappOpportunityReviewEnabled: true,
+      authentication: { operatorTemporary: operatorAuth },
+      contractQueries: { listDaily6WhatsappOpportunities: list },
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/internal/daily6/whatsapp-opportunities?city=Campinas&limit=30',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    const body: { total: number; limit: number; manualReviewOnly: boolean; items: unknown[] } = response.json();
+    expect(body).toMatchObject({ total: 30, limit: 30, manualReviewOnly: true });
+    expect(body.items).toHaveLength(30);
+    expect(list).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
   it('fails closed if a query implementation violates the response bound', async () => {
     const overLimit = Array.from({ length: 31 }, (_, index) => ({
       ...rows[0]!,

@@ -5,6 +5,10 @@ const workflow = readFileSync(
   new URL('../../../.github/workflows/daily6-readonly-opportunity-tests.yml', import.meta.url),
   'utf8',
 );
+const dailyWhatsappWorkflow = readFileSync(
+  new URL('../../../.github/workflows/dailywhatsapp-readonly-validation.yml', import.meta.url),
+  'utf8',
+);
 
 describe('Daily-6 read-only opportunity workflow', () => {
   it('is manual-only and never becomes a commercial schedule', () => {
@@ -22,5 +26,17 @@ describe('Daily-6 read-only opportunity workflow', () => {
     expect(workflow).toContain("ENRICHMENT_EGRESS_ENABLED: 'false'");
     expect(workflow).not.toMatch(/POST\s+.*\/(?:collect|internal\/daily6\/run-slot)/i);
     expect(workflow).not.toMatch(/HML_(?:DAILY6|COLLECTION)_TOKEN/);
+  });
+
+  it('runs DailyWhatsApp validation once per day and keeps it read-only', () => {
+    expect(dailyWhatsappWorkflow).toContain('schedule:');
+    expect(dailyWhatsappWorkflow).toContain("- cron: '0 12 * * *'");
+    expect(dailyWhatsappWorkflow).toContain('workflow_dispatch:');
+    expect(dailyWhatsappWorkflow).toContain("REAL_SEND_ENABLED: 'false'");
+    expect(dailyWhatsappWorkflow).toContain("REAL_PROVIDERS_ENABLED: 'false'");
+    expect(dailyWhatsappWorkflow).toContain("COLLECTION_EGRESS_ENABLED: 'false'");
+    expect(dailyWhatsappWorkflow).toContain("ENRICHMENT_EGRESS_ENABLED: 'false'");
+    expect(dailyWhatsappWorkflow).not.toMatch(/HML_(?:DAILY6|COLLECTION)_TOKEN/);
+    expect(dailyWhatsappWorkflow).not.toMatch(/POST\s+.*\/(?:collect|internal\/daily6\/run-slot)/i);
   });
 });

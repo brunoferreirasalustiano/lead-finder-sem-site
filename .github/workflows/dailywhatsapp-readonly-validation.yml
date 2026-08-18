@@ -1,0 +1,66 @@
+name: DailyWhatsApp read-only validation
+
+on:
+  # Once per day at 09:00 America/Sao_Paulo (12:00 UTC), plus on-demand.
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dailywhatsapp-readonly-validation
+  cancel-in-progress: true
+
+jobs:
+  validate-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOYMENT_PROFILE: supabase-render
+      DEPLOYMENT_ENVIRONMENT: homologation
+      DRY_RUN: 'true'
+      REAL_SEND_ENABLED: 'false'
+      REAL_PROVIDERS_ENABLED: 'false'
+      COLLECTION_EGRESS_ENABLED: 'false'
+      ENRICHMENT_EGRESS_ENABLED: 'false'
+      SHADOW_MODE_ENABLED: 'true'
+    steps:
+      - name: Checkout requested revision
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build without starting services
+        run: npm run build
+
+      - name: Run DailyWhatsApp policy and safety tests
+        run: >-
+          npx vitest run
+          apps/api/src/daily6-whatsapp-opportunities-route.test.ts
+          packages/database/src/daily6-whatsapp-opportunity-migration.test.ts
+          packages/database/src/runtime-role-sql.test.ts
+          packages/shared/src/config.test.ts
+          --reporter=dot
+
+      - name: Verify clean diff
+        run: git diff --check
+
+      - name: Publish sanitized summary
+        if: always()
+        run: |
+          {
+            echo '## DailyWhatsApp read-only validation'
+            echo "- Revision: \`$GITHUB_SHA\`"
+            echo '- Data mode: synthetic/contract only; no HML candidate export'
+            echo '- Side effects: provider=0, Gmail/WhatsApp send=0, database mutations=0'
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

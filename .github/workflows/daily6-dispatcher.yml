@@ -18,7 +18,7 @@ on:
         description: Exact approved HML SHA
         required: true
         type: string
-        default: f96ee8b10b7da55ec2e5bd5f69b5b44b6c063985
+        default: 8f5a0aee7a97abddbb29e56efab023a8d4c17fbb
       date:
         description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
         required: true
@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: f96ee8b10b7da55ec2e5bd5f69b5b44b6c063985
+  EXPECTED_OPERATIONAL_SHA: 8f5a0aee7a97abddbb29e56efab023a8d4c17fbb
   HML_BRANCH: hml/render-supabase-plan-b
   MAX_SCHEDULE_LATENESS_SECONDS: '3600'
 
@@ -188,6 +188,7 @@ jobs:
         working-directory: hml-worker
         env:
           DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
           DEPLOYMENT_ENVIRONMENT: homologation
           DEPLOYMENT_PROFILE: supabase-render
           DATABASE_SSL_MODE: require
@@ -223,6 +224,24 @@ jobs:
           fi
           echo 'DISCOVERY_WORKER_CONFIG=PASS'
 
+      - name: Validate bounded worker database identity before enqueue
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          if ! database_user="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc 'select current_user' 2>/dev/null)"; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=DATABASE_CONNECTION' >&2
+            exit 1
+          fi
+          if [ "$database_user" != 'lead_finder_discovery_runtime' ]; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=UNEXPECTED_RUNTIME_ROLE' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_IDENTITY=PASS'
+
       - name: Enqueue one bounded Daily-6 discovery job
         shell: bash
         env:
@@ -250,6 +269,7 @@ jobs:
         shell: bash
         env:
           DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
           DEPLOYMENT_ENVIRONMENT: homologation
           DEPLOYMENT_PROFILE: supabase-render
           DATABASE_SSL_MODE: require
@@ -284,6 +304,8 @@ jobs:
               worker_failure_class='INVALID_CONFIGURATION'
             elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
               worker_failure_class='COLLECTION_SOURCE_FAILURE'
+            elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
+              worker_failure_class='COLLECTION_NOT_CLAIMED'
             elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
               worker_failure_class='WORKER_FATAL'
             fi

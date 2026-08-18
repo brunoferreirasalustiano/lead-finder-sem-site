@@ -9,7 +9,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '7 16 * * *'");
     expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: f96ee8b10b7da55ec2e5bd5f69b5b44b6c063985');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 8f5a0aee7a97abddbb29e56efab023a8d4c17fbb');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
@@ -17,12 +17,15 @@ describe('native Daily-6 scheduler control plane', () => {
     const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
     const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
     const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
     expect(checkoutStart).toBeGreaterThanOrEqual(0);
     expect(buildStart).toBeGreaterThan(checkoutStart);
     expect(configStart).toBeGreaterThan(buildStart);
     expect(enqueueStart).toBeGreaterThan(configStart);
+    expect(databaseIdentityStart).toBeGreaterThan(configStart);
+    expect(enqueueStart).toBeGreaterThan(databaseIdentityStart);
     expect(workerStart).toBeGreaterThan(buildStart);
     const build = workflow.slice(checkoutStart, workerStart);
     expect(build).toContain('ref: ${{ env.EXPECTED_OPERATIONAL_SHA }}');
@@ -33,16 +36,24 @@ describe('native Daily-6 scheduler control plane', () => {
 
   it('fails before collection enqueue when the exact worker config is invalid', () => {
     const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
+    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
-    const config = workflow.slice(configStart, enqueueStart);
+    const config = workflow.slice(configStart, databaseIdentityStart);
     expect(configStart).toBeGreaterThanOrEqual(0);
     expect(enqueueStart).toBeGreaterThan(configStart);
     expect(config).toContain('parseWorkerConfig');
     expect(config).toContain('packages/shared/dist/config.js');
     expect(config).toContain('DISCOVERY_WORKER_CONFIG=FAIL');
     expect(config).toContain('DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION');
+    expect(config).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(config).not.toContain('curl');
     expect(config).not.toContain('psql');
+    const databaseIdentity = workflow.slice(databaseIdentityStart, enqueueStart);
+    expect(databaseIdentity).toContain('default_transaction_read_only=on');
+    expect(databaseIdentity).toContain("select current_user");
+    expect(databaseIdentity).toContain("lead_finder_discovery_runtime");
+    expect(databaseIdentity).toContain('DISCOVERY_DATABASE_IDENTITY=PASS');
+    expect(databaseIdentity).not.toContain('echo "$database_user"');
   });
 
   it('surfaces only sanitized worker failure classification', () => {
@@ -55,6 +66,8 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(worker).toContain('worker_startup_blocked');
     expect(worker).toContain('collection_source_failure');
     expect(worker).toContain('worker_fatal');
+    expect(worker).toContain('NO_COLLECTION_JOB_CLAIMED');
+    expect(worker).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(worker).not.toContain('cat "$worker_log"');
     expect(worker).not.toContain('printf \'%s\' "$worker_log"');
   });

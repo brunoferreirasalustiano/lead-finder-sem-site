@@ -152,7 +152,7 @@ export const approvedTemplates = {
     channel: 'EMAIL',
     approved: true,
     subject: 'Posso preparar uma ideia de site para a [EMPRESA]?',
-    body: `Olá, tudo bem? Meu nome é Bruno F. Salustiano, fundador da Lead Finder Brasil. Encontrei o e-mail comercial da [EMPRESA] em [FONTE]. Ao revisar a presença digital do negócio, não localizei um site oficial próprio. Posso preparar uma demonstração de site sem compromisso? Estes são exemplos de sites e demonstrações da Lead Finder Brasil: ${LEAD_FINDER_DEMOS_URL} Caso prefira não receber novos contatos, basta responder a este e-mail e farei o bloqueio imediato.`,
+    body: `Olá, tudo bem?\n\nSou Bruno F. Salustiano, fundador da Lead Finder Brasil.\n\nEncontrei a [EMPRESA] durante uma pesquisa de negócios da região e não localizei um site oficial próprio da empresa.\n\nPosso preparar uma ideia de site demonstrativo, sem compromisso, para mostrar como a presença online do seu negócio poderia ficar.\n\nSite simples e profissional a partir de R$ 650, com pagamento em até 10x no cartão.\n\nAlguns exemplos de sites e demonstrações da Lead Finder Brasil:\n${LEAD_FINDER_DEMOS_URL}\n\nSe fizer sentido para vocês, posso preparar uma ideia e explicar de forma simples o que podemos incluir no site.\n\nWhatsApp Lead Finder Brasil: (19) 97151-9337\n\nSe preferir não receber novos contatos, basta responder a este e-mail informando que não tem interesse.\n\nBruno F. Salustiano\nFundador | Lead Finder Brasil\nWhatsApp: (19) 97151-9337\nE-mail: leadfinderbrasil@gmail.com`,
   }),
 } as const;
 

@@ -26,7 +26,7 @@ describe('fake messaging provider', () => {
     expect(approvedTemplates.emailV1.body).not.toContain(LEAD_FINDER_DEMOS_URL);
   });
 
-  it('prepares the current manual email v2 with the approved subject, demo link and opt-out', () => {
+  it('prepares the current manual email v2 with the approved commercial copy', () => {
     const prepared = new DeterministicFakeMessagingProvider().prepare(
       currentPilotEmailTemplate,
       {
@@ -38,11 +38,15 @@ describe('fake messaging provider', () => {
     expect(prepared.templateId).toBe('pilot-email-first-contact');
     expect(prepared.templateVersion).toBe('v2');
     expect(prepared.subject).toBe('Posso preparar uma ideia de site para a Studio Bela?');
-    expect(prepared.body).toContain('não localizei um site oficial próprio');
-    expect(prepared.body).toContain('demonstração de site sem compromisso');
+    expect(prepared.body).toContain('Encontrei a Studio Bela durante uma pesquisa de negócios da região');
+    expect(prepared.body).toContain('ideia de site demonstrativo, sem compromisso');
+    expect(prepared.body).toContain('a partir de R$ 650');
+    expect(prepared.body).toContain('pagamento em até 10x no cartão');
     expect(prepared.body).toContain(LEAD_FINDER_DEMOS_URL);
-    expect(prepared.body).toContain('basta responder a este e-mail');
+    expect(prepared.body).toContain('WhatsApp Lead Finder Brasil: (19) 97151-9337');
+    expect(prepared.body).toContain('basta responder a este e-mail informando que não tem interesse');
     expect(`${prepared.subject}\n${prepared.body}`).not.toMatch(/\[[A-Z_]+\]/);
+    expect(prepared.body).not.toContain('[FONTE]');
     expect(prepared.body).not.toMatch(/utm_|tracking|pixel invisível/i);
   });
 

@@ -38,6 +38,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl --fail --silent --show-error --max-time 15 -X GET \
-            https://lead-finder-api-hml.onrender.com/health/live >/dev/null
-          echo 'RENDER_WAKE=PASS'
+          for wake_attempt in 1 2 3; do
+            if curl --fail --silent --show-error --max-time 15 -X GET \
+              https://lead-finder-api-hml.onrender.com/health/live >/dev/null; then
+              echo 'RENDER_WAKE=PASS'
+              exit 0
+            fi
+            if [ "$wake_attempt" -lt 3 ]; then sleep 5; fi
+          done
+          echo 'RENDER_WAKE=FAIL' >&2
+          exit 1

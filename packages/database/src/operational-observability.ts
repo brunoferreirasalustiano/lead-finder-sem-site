@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from './index.js';
 
+export type DatabaseExecutor = Pick<Database, 'execute'>;
+
 export interface OperationalSnapshot {
   pendingCount: number; duePendingCount: number; scheduledPendingCount: number; oldestPendingAgeMs: number; claimedCount: number; publishedCount: number;
   exhaustedCount: number; retryCount: number; staleAckCount: number; expiredLeaseCount: number;
@@ -13,7 +15,7 @@ export type ReadinessStatus = 'ready' | 'degraded' | 'unhealthy';
 export type ReadinessMode = 'operational' | 'restricted';
 
 const number = (value: unknown) => Number(value ?? 0);
-export async function getOperationalSnapshot(db: Database, now = new Date()): Promise<OperationalSnapshot> {
+export async function getOperationalSnapshot(db: DatabaseExecutor, now = new Date()): Promise<OperationalSnapshot> {
   const rows = await db.execute<{
     pending_count: unknown; due_pending_count: unknown; scheduled_pending_count: unknown; oldest_pending_age_ms: unknown; claimed_count: unknown; published_count: unknown;
     exhausted_count: unknown; retry_count: unknown; expired_lease_count: unknown; recovered_lease_count: unknown;
@@ -47,7 +49,7 @@ export async function getOperationalSnapshot(db: Database, now = new Date()): Pr
     averageDurationMs: 0, errorsByReason: {} };
 }
 
-export async function verifyMigrationsCompatible(db: Database): Promise<void> {
+export async function verifyMigrationsCompatible(db: DatabaseExecutor): Promise<void> {
   const rows = await db.execute<{ missing: number }>(sql`
     SELECT count(*)::int AS missing FROM (VALUES
       ('0001_initial'), ('0010_campaign_outbox_max_attempts_snapshot'), ('0012_pilot_referential_integrity')
@@ -56,7 +58,7 @@ export async function verifyMigrationsCompatible(db: Database): Promise<void> {
   if ((rows[0]?.missing ?? 0) !== 0) throw new Error('MIGRATIONS_INCOMPATIBLE');
 }
 
-export async function canReadOperationalSnapshot(db: Database): Promise<boolean> {
+export async function canReadOperationalSnapshot(db: DatabaseExecutor): Promise<boolean> {
   const rows = await db.execute<{ allowed: boolean }>(sql`
     SELECT
       has_table_privilege(current_user, 'public.campaign_outbox', 'SELECT')
@@ -68,7 +70,7 @@ export async function canReadOperationalSnapshot(db: Database): Promise<boolean>
   return rows[0]?.allowed === true;
 }
 
-export async function getReadiness(db: Database, thresholds: ReadinessThresholds, now = new Date()) {
+export async function getReadiness(db: DatabaseExecutor, thresholds: ReadinessThresholds, now = new Date()) {
   try {
     await verifyMigrationsCompatible(db);
     if (!await canReadOperationalSnapshot(db)) {

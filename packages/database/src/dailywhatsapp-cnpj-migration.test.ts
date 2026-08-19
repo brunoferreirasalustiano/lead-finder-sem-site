@@ -26,6 +26,7 @@ describe('DailyWhatsApp registry evidence migration', () => {
     expect(migration).toContain('match_confidence >= 0.800');
     expect(migration).toContain("registration_status = 'ACTIVE'");
     expect(migration).toContain('opening_date IS NOT NULL');
+    expect(migration).toContain("opening_date >= DATE '2026-01-01'");
     expect(migration).toContain('opening_date <= current_date');
     expect(migration).toContain('ORDER BY e.lead_id, e.observed_at DESC, e.created_at DESC, e.id DESC');
     expect(migration).toContain('PARTITION BY r.cnpj');

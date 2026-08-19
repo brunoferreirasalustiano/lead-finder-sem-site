@@ -183,10 +183,13 @@ const daily6WhatsappOpportunityQuerySchema = z.object({
   category: z.string().trim().min(1).max(100).optional(),
   limit: z.coerce.number().int().min(1).max(30).default(30),
 }).strict();
+const DAILYWHATSAPP_MIN_OPENED_SINCE = '2026-01-01';
 const dailyWhatsappRecentCnpjQuerySchema = z.object({
   city: z.string().trim().min(2).max(100).default('Campinas'),
   category: z.string().trim().min(1).max(100).optional(),
-  openedSince: z.string().date(),
+  openedSince: z.string().date().refine((value) => value >= DAILYWHATSAPP_MIN_OPENED_SINCE, {
+    message: 'openedSince must be 2026-01-01 or later',
+  }),
   limit: z.coerce.number().int().min(1).max(30).default(30),
 }).strict();
 type HttpContractQueries = Readonly<{

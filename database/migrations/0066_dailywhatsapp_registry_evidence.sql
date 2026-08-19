@@ -332,6 +332,7 @@ AS $$
       AND match_confidence >= 0.800
       AND registration_status = 'ACTIVE'
       AND opening_date IS NOT NULL
+      AND opening_date >= DATE '2026-01-01'
       AND opening_date <= current_date
   ), ranked AS (
     SELECT b.*, r.cnpj, r.opening_date, r.registration_status, r.source,

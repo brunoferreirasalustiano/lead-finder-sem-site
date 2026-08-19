@@ -131,6 +131,23 @@ describe('DailyWhatsApp CNPJ opportunity route', () => {
     await app.close();
   });
 
+  it('rejects dates before the recent-CNPJ policy floor', async () => {
+    const list = vi.fn().mockResolvedValue([row]);
+    const app = buildApp({} as Database, {
+      whatsappOpportunityReviewEnabled: true,
+      authentication: { opportunityReviewTemporary: opportunityAuth },
+      contractQueries: { listDailyWhatsappRecentCnpjOpportunities: list },
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/internal/dailywhatsapp/cnpj-opportunities?openedSince=2025-12-31',
+      headers: { authorization: `Bearer ${opportunityToken}` },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(list).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('sanitizes resolver failures without exposing database details', async () => {
     const list = vi.fn().mockRejectedValue(new Error('sensitive database connection detail'));
     const app = buildApp({} as Database, {

@@ -100,7 +100,7 @@ export async function checkDatabase(db: Database): Promise<void> {
   await db.execute(sql`select 1`);
 }
 export async function checkExpectedMigration(
-  db: Database,
+  db: Pick<Database, 'execute'>,
   version = '0049_precontact_email_existing_duplicate_hardening',
 ): Promise<void> {
   const localRows = await db.execute<{ version: string }>(sql`

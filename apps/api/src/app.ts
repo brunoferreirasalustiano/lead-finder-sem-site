@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { sql } from 'drizzle-orm';
 import {
   getOperationalSnapshot,
   getReadiness,
@@ -388,14 +389,21 @@ export function buildApp(db: Database, options: {
   ) => {
     try {
       const timeout = () => new Promise<never>((_, reject) => setTimeout(() => reject(new Error('READINESS_TIMEOUT')), 3_000));
-      const readiness = await Promise.race([getReadiness(db, {
-        backlogCount: options.operationalBacklogDegradedCount ?? 100,
-        oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
+      const readiness = await Promise.race([db.transaction(async (tx) => {
+        // Keep the database-side cancellation ahead of the HTTP timeout so a
+        // slow/unavailable dependency cannot leave a query running after the
+        // readiness request has failed closed.
+        await tx.execute(sql`SET LOCAL statement_timeout = '2500ms'`);
+        const result = await getReadiness(tx, {
+          backlogCount: options.operationalBacklogDegradedCount ?? 100,
+          oldestPendingAgeMs: options.operationalOldestPendingDegradedMs ?? 300_000,
+        });
+        await checkExpectedMigration(tx);
+        if (options.hmlSuppressionProbeEnabled) {
+          await checkExpectedMigration(tx, '0050_hml_suppression_probe');
+        }
+        return result;
       }), timeout()]);
-       await Promise.race([checkExpectedMigration(db), timeout()]);
-       if (options.hmlSuppressionProbeEnabled) {
-         await Promise.race([checkExpectedMigration(db, '0050_hml_suppression_probe'), timeout()]);
-       }
       if (readiness.status === 'unhealthy') return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
       return { status: readiness.status, timestamp: new Date().toISOString() };
     } catch {

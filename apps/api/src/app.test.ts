@@ -60,6 +60,22 @@ const contractApp = (overrides: NonNullable<BuildOptions['contractQueries']>) =>
 });
 
 describe('security-safe API output', () => {
+  it('runs readiness database checks inside a bounded transaction', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ missing: 0 }])
+      .mockResolvedValueOnce([{ allowed: false }])
+      .mockResolvedValueOnce([{ version: '0049_precontact_email_existing_duplicate_hardening' }]);
+    const transaction = vi.fn(async (callback: (tx: { execute: typeof execute }) => Promise<unknown>) => callback({ execute }));
+    const app = buildApp({ transaction } as unknown as Database);
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(200);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute.mock.calls[0]?.[0]).toBeDefined();
+    await app.close();
+  });
+
   it('rejects concurrent collection requests before service or database access when egress is disabled', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     let databaseAccesses = 0;

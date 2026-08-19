@@ -242,6 +242,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     ...(daily6Temporary ? { daily6Temporary } : {}),
   },
   prospectingMetricsEnabled: config.PROSPECTING_METRICS_ENABLED,
+  whatsappOpportunityReviewEnabled: config.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED,
   ...(config.INTERNAL_CRON_SECRET ? { internalCronSecret: config.INTERNAL_CRON_SECRET } : {}),
   cronAuthAudience: config.CRON_AUTH_AUDIENCE,
   ...(config.API_BATCH_PROCESSING_ENABLED ? {

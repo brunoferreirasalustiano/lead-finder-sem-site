@@ -29,6 +29,9 @@ describe('DailyWhatsApp registry evidence migration', () => {
     expect(migration).toContain('opening_date <= current_date');
     expect(migration).toContain('ORDER BY e.lead_id, e.observed_at DESC, e.created_at DESC, e.id DESC');
     expect(migration).toContain('PARTITION BY r.cnpj');
+    expect(migration).toContain('ranked.lead_id');
+    expect(migration).toContain('WHERE ranked.cnpj_rank = 1');
+    expect(migration).not.toContain('FROM ranked\n  WHERE cnpj_rank = 1');
     expect(migration).toContain('pilot_manual_contacts_whatsapp_contact_idx');
     expect(migration).toContain('pilot_manual_message_preparations_whatsapp_contact_idx');
     expect(migration).toContain('pilot_manual_whatsapp_cloud_attempts_contact_idx');

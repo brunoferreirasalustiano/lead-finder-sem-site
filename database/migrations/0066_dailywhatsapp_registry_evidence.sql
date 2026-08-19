@@ -344,25 +344,25 @@ AS $$
     WHERE p_opened_since IS NULL OR r.opening_date >= p_opened_since
   )
   SELECT
-    b.lead_id,
-    b.contact_id,
-    b.lead_name,
-    b.city,
-    b.category,
-    b.whatsapp_value,
-    b.whatsapp_source,
-    b.whatsapp_evidence,
-    b.website_status,
-    b.qualification_status,
-    b.business_identity_confirmed,
-    b.business_active_pass,
-    cnpj,
-    opening_date,
-    registration_status,
-    left(source, 128)
+    ranked.lead_id,
+    ranked.contact_id,
+    ranked.lead_name,
+    ranked.city,
+    ranked.category,
+    ranked.whatsapp_value,
+    ranked.whatsapp_source,
+    ranked.whatsapp_evidence,
+    ranked.website_status,
+    ranked.qualification_status,
+    ranked.business_identity_confirmed,
+    ranked.business_active_pass,
+    ranked.cnpj,
+    ranked.opening_date,
+    ranked.registration_status,
+    left(ranked.source, 128)
   FROM ranked
-  WHERE cnpj_rank = 1
-  ORDER BY opening_date DESC, business_identity_confirmed DESC, lead_id
+  WHERE ranked.cnpj_rank = 1
+  ORDER BY ranked.opening_date DESC, ranked.business_identity_confirmed DESC, ranked.lead_id
   LIMIT greatest(0, least(coalesce(p_limit, 0), 30));
 $$;
 

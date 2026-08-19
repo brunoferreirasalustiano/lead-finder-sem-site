@@ -1,0 +1,75 @@
+name: DailyWhatsApp read-only control-plane validation
+
+on:
+  # Once per day at 09:00 America/Sao_Paulo (12:00 UTC), plus on-demand.
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dailywhatsapp-readonly-control-plane
+  cancel-in-progress: true
+
+env:
+  # Fail closed if HML moves without a reviewed pin update.
+  EXPECTED_HML_SHA: 8f5a0aee7a97abddbb29e56efab023a8d4c17fbb
+
+jobs:
+  validate-hml-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control-plane revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify exact HML source pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin hml/render-supabase-plan-b
+          actual_hml_sha="$(git rev-parse origin/hml/render-supabase-plan-b)"
+          test "$actual_hml_sha" = "$EXPECTED_HML_SHA"
+          mkdir -p hml-source
+          git archive "$EXPECTED_HML_SHA" | tar -x -C hml-source
+          echo "HML_SHA=$actual_hml_sha" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies from pinned HML source
+        working-directory: hml-source
+        run: npm ci
+
+      - name: Build pinned HML source without starting services
+        working-directory: hml-source
+        run: npm run build
+
+      - name: Run all DailyWhatsApp read-only tests
+        working-directory: hml-source
+        run: >-
+          npx vitest run
+          apps/api/src/daily6-whatsapp-opportunities-route.test.ts
+          packages/database/src/daily6-whatsapp-opportunity-migration.test.ts
+          packages/database/src/runtime-role-sql.test.ts
+          packages/shared/src/config.test.ts
+          packages/shared/src/daily6-readonly-workflow.contract.test.ts
+          --reporter=dot
+
+      - name: Publish sanitized result
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## DailyWhatsApp read-only control-plane validation'
+            echo "- HML SHA pin: \\`$EXPECTED_HML_SHA\\`"
+            echo '- Mode: synthetic/contract tests only'
+            echo '- Side effects: discovery=0, provider=0, Gmail/WhatsApp send=0, database mutations=0'
+            echo "- Result: \\`${{ job.status }}\\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Fail closed if HML moves without a reviewed pin update.
-  EXPECTED_HML_SHA: 8f5a0aee7a97abddbb29e56efab023a8d4c17fbb
+  EXPECTED_HML_SHA: 17d75748f8f23b03059a6e11b7c66e313bb16e1d
 
 jobs:
   validate-hml-source:

@@ -43,7 +43,9 @@ jobs:
         run: >-
           npx vitest run
           apps/api/src/daily6-whatsapp-opportunities-route.test.ts
+          apps/api/src/dailywhatsapp-cnpj-opportunities-route.test.ts
           packages/database/src/daily6-whatsapp-opportunity-migration.test.ts
+          packages/database/src/dailywhatsapp-cnpj-migration.test.ts
           packages/database/src/runtime-role-sql.test.ts
           packages/shared/src/config.test.ts
           --reporter=dot

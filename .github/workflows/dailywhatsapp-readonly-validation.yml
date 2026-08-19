@@ -1,9 +1,10 @@
 name: DailyWhatsApp read-only validation
 
 on:
-  # Once per day at 09:00 America/Sao_Paulo (12:00 UTC), plus on-demand.
+  # Once per day outside all official Daily-6 commercial windows, plus on-demand.
+  # 03:00 UTC is 00:00 America/Sao_Paulo during the current offset.
   schedule:
-    - cron: '0 12 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 permissions:

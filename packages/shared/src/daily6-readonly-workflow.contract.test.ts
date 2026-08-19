@@ -30,7 +30,8 @@ describe('Daily-6 read-only opportunity workflow', () => {
 
   it('runs DailyWhatsApp validation once per day and keeps it read-only', () => {
     expect(dailyWhatsappWorkflow).toContain('schedule:');
-    expect(dailyWhatsappWorkflow).toContain("- cron: '0 12 * * *'");
+    expect(dailyWhatsappWorkflow).toContain("- cron: '0 3 * * *'");
+    expect(dailyWhatsappWorkflow).not.toMatch(/cron: ['"](?:7 12|7 16|7 19) /);
     expect(dailyWhatsappWorkflow).toContain('workflow_dispatch:');
     expect(dailyWhatsappWorkflow).toContain("REAL_SEND_ENABLED: 'false'");
     expect(dailyWhatsappWorkflow).toContain("REAL_PROVIDERS_ENABLED: 'false'");
@@ -38,5 +39,7 @@ describe('Daily-6 read-only opportunity workflow', () => {
     expect(dailyWhatsappWorkflow).toContain("ENRICHMENT_EGRESS_ENABLED: 'false'");
     expect(dailyWhatsappWorkflow).not.toMatch(/HML_(?:DAILY6|COLLECTION)_TOKEN/);
     expect(dailyWhatsappWorkflow).not.toMatch(/POST\s+.*\/(?:collect|internal\/daily6\/run-slot)/i);
+    expect(dailyWhatsappWorkflow).not.toMatch(/\/internal\/daily6\/run-slot/i);
+    expect(dailyWhatsappWorkflow).not.toMatch(/\/collect/i);
   });
 });

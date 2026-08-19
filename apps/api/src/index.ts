@@ -1,5 +1,5 @@
 import { abandonBatchInvocation, beginBatchInvocation, completeBatchInvocation, createDatabase } from '@lead-finder/database';
-import { assertApiKillSwitchReleased, hmlDaily6AuthPermissions, hmlDiscoveryAuthPermissions, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions } from '@lead-finder/shared';
+import { assertApiKillSwitchReleased, hmlDaily6AuthPermissions, hmlDiscoveryAuthPermissions, hmlOpportunityReviewAuthPermissions, hmlOperatorAuthPermissions, hmlSmokeAuthPermissions } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { registerOperatorTestRoutes } from './operator-test-routes.js';
 import { registerOperatorEmailTestRoute } from './operator-email-test-routes.js';
@@ -114,6 +114,13 @@ const daily6Temporary = config.HML_DAILY6_AUTH_ENABLED ? {
   expiresAt: config.HML_DAILY6_AUTH_EXPIRES_AT!,
   principalId: config.HML_DAILY6_AUTH_PRINCIPAL_ID!,
   principalPermissions: hmlDaily6AuthPermissions,
+  environment: 'homologation' as const,
+} : undefined;
+const opportunityReviewTemporary = config.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED ? {
+  tokenHash: config.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH!,
+  expiresAt: config.HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT!,
+  principalId: config.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID!,
+  principalPermissions: hmlOpportunityReviewAuthPermissions,
   environment: 'homologation' as const,
 } : undefined;
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
@@ -240,6 +247,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
     ...(emailTemporary ? { emailTemporary } : {}),
     ...(discoveryTemporary ? { discoveryTemporary } : {}),
     ...(daily6Temporary ? { daily6Temporary } : {}),
+    ...(opportunityReviewTemporary ? { opportunityReviewTemporary } : {}),
   },
   prospectingMetricsEnabled: config.PROSPECTING_METRICS_ENABLED,
   whatsappOpportunityReviewEnabled: config.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED,

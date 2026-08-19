@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { Database } from '@lead-finder/database';
-import { hmlDaily6AuthPermissions, hmlOperatorAuthPermissions } from '@lead-finder/shared';
+import { hmlDaily6AuthPermissions, hmlOpportunityReviewAuthPermissions, hmlOperatorAuthPermissions } from '@lead-finder/shared';
 import { buildApp } from './app.js';
 import { permissions } from './auth.js';
 
@@ -20,6 +20,14 @@ const operatorAuth = {
   expiresAt: new Date(Date.now() + 60_000),
   principalId: 'hml-operator-whatsapp-reader',
   principalPermissions: hmlOperatorAuthPermissions,
+  environment: 'homologation' as const,
+};
+const opportunityToken = 'synthetic-hml-opportunity-review-token-for-whatsapp-0001';
+const opportunityAuth = {
+  tokenHash: createHash('sha256').update(opportunityToken, 'utf8').digest('hex'),
+  expiresAt: new Date(Date.now() + 60_000),
+  principalId: 'hml-opportunity-whatsapp-reader',
+  principalPermissions: hmlOpportunityReviewAuthPermissions,
   environment: 'homologation' as const,
 };
 
@@ -43,7 +51,7 @@ describe('Daily-6 WhatsApp opportunity route', () => {
     const list = vi.fn().mockResolvedValue(rows);
     const app = buildApp({} as Database, {
       daily6AuthRequired: true,
-      authentication: { operatorTemporary: operatorAuth },
+      authentication: { operatorTemporary: operatorAuth, opportunityReviewTemporary: opportunityAuth },
       contractQueries: { listDaily6WhatsappOpportunities: list },
     });
     await expect(app.inject({
@@ -65,6 +73,7 @@ describe('Daily-6 WhatsApp opportunity route', () => {
         principalPermissions: permissions,
         daily6Temporary: hmlAuth,
         operatorTemporary: operatorAuth,
+        opportunityReviewTemporary: opportunityAuth,
       },
       contractQueries: { listDaily6WhatsappOpportunities: list },
     });
@@ -81,6 +90,11 @@ describe('Daily-6 WhatsApp opportunity route', () => {
       url: '/internal/daily6/whatsapp-opportunities',
       headers: { authorization: `Bearer ${hmlToken}` },
     })).resolves.toMatchObject({ statusCode: 403 });
+    await expect(app.inject({
+      method: 'GET',
+      url: '/internal/daily6/whatsapp-opportunities',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })).resolves.toMatchObject({ statusCode: 403 });
     expect(list).not.toHaveBeenCalled();
     await app.close();
   });
@@ -95,6 +109,7 @@ describe('Daily-6 WhatsApp opportunity route', () => {
         principalPermissions: permissions,
         daily6Temporary: hmlAuth,
         operatorTemporary: operatorAuth,
+        opportunityReviewTemporary: opportunityAuth,
       },
       contractQueries: { listDaily6WhatsappOpportunities: list },
     });
@@ -102,7 +117,7 @@ describe('Daily-6 WhatsApp opportunity route', () => {
     const response = await app.inject({
       method: 'GET',
       url: '/internal/daily6/whatsapp-opportunities?city=Campinas&limit=30',
-      headers: { authorization: `Bearer ${operatorToken}` },
+      headers: { authorization: `Bearer ${opportunityToken}` },
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBe('no-store');
@@ -130,13 +145,13 @@ describe('Daily-6 WhatsApp opportunity route', () => {
     const app = buildApp({} as Database, {
       daily6AuthRequired: true,
       whatsappOpportunityReviewEnabled: true,
-      authentication: { operatorTemporary: operatorAuth },
+      authentication: { operatorTemporary: operatorAuth, opportunityReviewTemporary: opportunityAuth },
       contractQueries: { listDaily6WhatsappOpportunities: list },
     });
     const response = await app.inject({
       method: 'GET',
       url: '/internal/daily6/whatsapp-opportunities?city=Campinas&limit=30',
-      headers: { authorization: `Bearer ${operatorToken}` },
+      headers: { authorization: `Bearer ${opportunityToken}` },
     });
     expect(response.statusCode).toBe(200);
     const body: { total: number; limit: number; manualReviewOnly: boolean; items: unknown[] } = response.json();
@@ -155,13 +170,13 @@ describe('Daily-6 WhatsApp opportunity route', () => {
     const app = buildApp({} as Database, {
       daily6AuthRequired: true,
       whatsappOpportunityReviewEnabled: true,
-      authentication: { operatorTemporary: operatorAuth },
+      authentication: { operatorTemporary: operatorAuth, opportunityReviewTemporary: opportunityAuth },
       contractQueries: { listDaily6WhatsappOpportunities: list },
     });
     const response = await app.inject({
       method: 'GET',
       url: '/internal/daily6/whatsapp-opportunities?limit=30',
-      headers: { authorization: `Bearer ${operatorToken}` },
+      headers: { authorization: `Bearer ${opportunityToken}` },
     });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ error: 'Service unavailable', code: 'OPPORTUNITY_RESULT_OVER_LIMIT' });

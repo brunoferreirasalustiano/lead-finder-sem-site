@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { assertApiKillSwitchReleased, parseApiConfig, parseContactResolverConfig, parseWorkerConfig } from './config.js';
 
@@ -75,6 +76,10 @@ describe('environment configuration', () => {
       ...database,
       DEPLOYMENT_ENVIRONMENT: 'homologation',
       WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'true',
+      HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: 'true',
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'f'.repeat(64),
+      HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID: 'hml-opportunity-review',
     }).WHATSAPP_OPPORTUNITY_REVIEW_ENABLED).toBe(true);
     expect(() => parseApiConfig({
       ...database,
@@ -85,6 +90,79 @@ describe('environment configuration', () => {
       ...database,
       WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'yes',
     })).toThrow('WHATSAPP_OPPORTUNITY_REVIEW_ENABLED');
+  });
+
+  it('requires a valid dedicated HML opportunity-review principal', () => {
+    const valid = {
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: 'true',
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'f'.repeat(64),
+      HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID: 'hml-opportunity-review',
+    } as const;
+    expect(parseApiConfig(valid)).toMatchObject({
+      HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: true,
+      HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID: 'hml-opportunity-review',
+    });
+    expect(() => parseApiConfig({
+      ...database,
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'f'.repeat(64),
+    })).toThrow('fields require HML_OPPORTUNITY_REVIEW_AUTH_ENABLED=true');
+    expect(() => parseApiConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: 'true',
+    })).toThrow('HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH is required');
+    expect(() => parseApiConfig({
+      ...valid,
+      DEPLOYMENT_ENVIRONMENT: 'production',
+    })).toThrow('permitted only in homologation');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT: '2020-01-01T00:00:00.000Z',
+    })).toThrow('HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT must be in the future');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_OPERATOR_AUTH_ENABLED: 'true',
+      HML_OPERATOR_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_OPERATOR_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_OPERATOR_AUTH_PRINCIPAL_ID: 'hml-operator-review',
+    })).toThrow('must differ from HML_OPERATOR_AUTH_TOKEN_HASH');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_DAILY6_AUTH_ENABLED: 'true',
+      HML_DAILY6_AUTH_TOKEN_HASH: 'b'.repeat(64),
+      HML_DAILY6_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_DAILY6_AUTH_PRINCIPAL_ID: 'hml-daily6-review',
+    })).toThrow('must differ from HML_DAILY6_AUTH_TOKEN_HASH');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'c'.repeat(64),
+      HML_DISCOVERY_AUTH_ENABLED: 'true',
+      HML_DISCOVERY_AUTH_TOKEN_HASH: 'c'.repeat(64),
+      HML_DISCOVERY_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_DISCOVERY_AUTH_PRINCIPAL_ID: 'hml-discovery-review',
+    })).toThrow('must differ from HML_DISCOVERY_AUTH_TOKEN_HASH');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPERATOR_AUTH_ENABLED: 'true',
+      HML_OPERATOR_AUTH_TOKEN_HASH: 'a'.repeat(64),
+      HML_OPERATOR_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_OPERATOR_AUTH_PRINCIPAL_ID: 'hml-opportunity-review',
+    })).toThrow('must differ from HML_OPERATOR_AUTH_PRINCIPAL_ID');
+    const apiTokenHash = createHash('sha256').update(database.API_AUTH_TOKEN, 'utf8').digest('hex');
+    expect(() => parseApiConfig({
+      ...valid,
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: apiTokenHash,
+    })).toThrow('must differ from API_AUTH_TOKEN');
+    expect(() => parseApiConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'true',
+    })).toThrow('HML_OPPORTUNITY_REVIEW_AUTH_ENABLED is required');
   });
 
   it('allows the suppression harness only in HML', () => {

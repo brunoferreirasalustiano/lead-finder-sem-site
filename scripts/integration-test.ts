@@ -107,6 +107,7 @@ try {
       crm_opportunities,
       crm_tags,
       lead_evidence,
+      lead_registry_evidence,
       contact_delivery_suppressions,
       lead_contacts,
       lead_qualification_history,

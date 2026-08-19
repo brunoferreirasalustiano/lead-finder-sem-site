@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 export const apiAuthPermissions = [
@@ -57,6 +58,12 @@ export const hmlOperatorAuthPermissions = [
   'manual-messaging:cancel',
   'manual-messaging:confirm',
   'manual-messaging:cloud-send',
+] as const satisfies readonly ApiAuthPermission[];
+
+// Dedicated read-only principal for PII-bearing opportunity review routes.
+// It must never inherit manual messaging or cloud-send permissions.
+export const hmlOpportunityReviewAuthPermissions = [
+  'opportunity:read',
 ] as const satisfies readonly ApiAuthPermission[];
 
 // Dedicated HML principals. Their permission sets are fixed in code and
@@ -245,6 +252,16 @@ const apiSchema = commonSchema.extend({
   ),
   HML_OPERATOR_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
     z.string().trim().regex(/^hml-[a-z0-9-]{1,80}$/, 'HML_OPERATOR_AUTH_PRINCIPAL_ID must use an hml- prefix'),
+  ),
+  HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: optionalEnvironmentString(
+    z.string().regex(/^[0-9a-f]{64}$/i, 'HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH must be a SHA-256 hex digest').transform((value) => value.toLowerCase()),
+  ),
+  HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT: optionalEnvironmentString(
+    z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+  ),
+  HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID: optionalEnvironmentString(
+    z.string().trim().regex(/^hml-opportunity-[a-z0-9-]{1,80}$/, 'HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID must use the hml-opportunity- prefix'),
   ),
   HML_DISCOVERY_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   HML_DISCOVERY_AUTH_TOKEN_HASH: optionalEnvironmentString(
@@ -625,6 +642,18 @@ const apiSchema = commonSchema.extend({
       expiresPath: 'HML_DAILY6_AUTH_EXPIRES_AT', principalPath: 'HML_DAILY6_AUTH_PRINCIPAL_ID',
       label: 'HML Daily-6 authentication',
     },
+    {
+      enabled: configuration.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED,
+      fieldsConfigured: configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH !== undefined
+        || configuration.HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT !== undefined
+        || configuration.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID !== undefined,
+      tokenHash: configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH,
+      expiresAt: configuration.HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT,
+      principalId: configuration.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID,
+      enabledPath: 'HML_OPPORTUNITY_REVIEW_AUTH_ENABLED', tokenPath: 'HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH',
+      expiresPath: 'HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT', principalPath: 'HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID',
+      label: 'HML opportunity review authentication',
+    },
   ] as const;
   for (const auth of dedicatedAuth) {
     if (!auth.enabled) {
@@ -647,12 +676,40 @@ const apiSchema = commonSchema.extend({
     && configuration.HML_DISCOVERY_AUTH_TOKEN_HASH === configuration.HML_DAILY6_AUTH_TOKEN_HASH) {
     context.addIssue({ code: 'custom', path: ['HML_DISCOVERY_AUTH_TOKEN_HASH'], message: 'HML discovery and Daily-6 token hashes must differ' });
   }
+  const distinctAuthHashes = [
+    ['HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH', configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH, 'HML_OPERATOR_AUTH_TOKEN_HASH', configuration.HML_OPERATOR_AUTH_TOKEN_HASH],
+    ['HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH', configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH, 'HML_DAILY6_AUTH_TOKEN_HASH', configuration.HML_DAILY6_AUTH_TOKEN_HASH],
+    ['HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH', configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH, 'HML_DISCOVERY_AUTH_TOKEN_HASH', configuration.HML_DISCOVERY_AUTH_TOKEN_HASH],
+  ] as const;
+  for (const [leftName, leftValue, rightName, rightValue] of distinctAuthHashes) {
+    if (leftValue && rightValue && leftValue === rightValue) {
+      context.addIssue({ code: 'custom', path: [leftName], message: `${leftName} must differ from ${rightName}` });
+    }
+  }
+  const distinctOpportunityPrincipals = [
+    ['HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID', configuration.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID, 'HML_OPERATOR_AUTH_PRINCIPAL_ID', configuration.HML_OPERATOR_AUTH_PRINCIPAL_ID],
+    ['HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID', configuration.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID, 'HML_DAILY6_AUTH_PRINCIPAL_ID', configuration.HML_DAILY6_AUTH_PRINCIPAL_ID],
+    ['HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID', configuration.HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID, 'HML_DISCOVERY_AUTH_PRINCIPAL_ID', configuration.HML_DISCOVERY_AUTH_PRINCIPAL_ID],
+  ] as const;
+  for (const [leftName, leftValue, rightName, rightValue] of distinctOpportunityPrincipals) {
+    if (leftValue && rightValue && leftValue === rightValue) {
+      context.addIssue({ code: 'custom', path: [leftName], message: `${leftName} must differ from ${rightName}` });
+    }
+  }
+  if (configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH
+    && configuration.HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH === createHash('sha256').update(configuration.API_AUTH_TOKEN, 'utf8').digest('hex')) {
+    context.addIssue({ code: 'custom', path: ['HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH'], message: 'HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH must differ from API_AUTH_TOKEN' });
+  }
   if (configuration.DAILY6_PILOT_ENABLED && !configuration.EXPECTED_OPERATIONAL_SHA) {
     context.addIssue({ code: 'custom', path: ['EXPECTED_OPERATIONAL_SHA'], message: 'EXPECTED_OPERATIONAL_SHA is required when DAILY6_PILOT_ENABLED=true' });
   }
   if (configuration.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED
     && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({ code: 'custom', path: ['WHATSAPP_OPPORTUNITY_REVIEW_ENABLED'], message: 'WHATSAPP_OPPORTUNITY_REVIEW_ENABLED is permitted only in homologation' });
+  }
+  if (configuration.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED
+    && !configuration.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED) {
+    context.addIssue({ code: 'custom', path: ['HML_OPPORTUNITY_REVIEW_AUTH_ENABLED'], message: 'HML_OPPORTUNITY_REVIEW_AUTH_ENABLED is required when WHATSAPP_OPPORTUNITY_REVIEW_ENABLED=true' });
   }
   if (configuration.DAILY6_PILOT_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({ code: 'custom', path: ['DAILY6_PILOT_ENABLED'], message: 'DAILY6_PILOT_ENABLED is permitted only in homologation' });

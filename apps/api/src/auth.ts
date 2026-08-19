@@ -23,6 +23,7 @@ export type OperationalPrincipal = Readonly<{
     | 'BEARER_TOKEN'
     | 'HML_SMOKE_BEARER_TOKEN'
     | 'HML_OPERATOR_BEARER_TOKEN'
+    | 'HML_OPPORTUNITY_REVIEW_BEARER_TOKEN'
     | 'HML_METRICS_BEARER_TOKEN'
     | 'HML_EMAIL_BEARER_TOKEN'
     | 'HML_DISCOVERY_BEARER_TOKEN'
@@ -45,6 +46,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/internal/daily6/gmail-preflight', 'daily6:execute'),
   policy('GET', '/internal/daily6/gmail-config-diagnostics', 'daily6:execute'),
   policy('GET', '/internal/daily6/whatsapp-opportunities', 'opportunity:read'),
+  policy('GET', '/internal/dailywhatsapp/cnpj-opportunities', 'opportunity:read'),
   policy('GET', '/internal/prospecting/city-metrics', 'prospecting:metrics:read'),
   policy('GET', '/leads', 'leads:read'),
   policy('GET', '/leads/:id', 'leads:read'),
@@ -138,6 +140,7 @@ export type AuthenticationOptions = Readonly<{
   principalPermissions?: readonly Permission[];
   temporary?: TemporaryAuthentication;
   operatorTemporary?: TemporaryAuthentication;
+  opportunityReviewTemporary?: TemporaryAuthentication;
   metricsTemporary?: TemporaryAuthentication;
   emailTemporary?: TemporaryAuthentication;
   discoveryTemporary?: TemporaryAuthentication;
@@ -182,6 +185,16 @@ const authenticateBearer = (authorization: string | undefined, options: Authenti
       type: 'OPERATOR' as const,
       permissions: new Set(operatorTemporary.principalPermissions),
       authenticationSource: 'HML_OPERATOR_BEARER_TOKEN' as const,
+    };
+  }
+  const opportunityReviewTemporary = options.opportunityReviewTemporary;
+  if (opportunityReviewTemporary && opportunityReviewTemporary.environment === 'homologation'
+    && opportunityReviewTemporary.expiresAt.getTime() > Date.now() && matchesDigest(provided, opportunityReviewTemporary.tokenHash)) {
+    return {
+      id: opportunityReviewTemporary.principalId,
+      type: 'OPERATOR' as const,
+      permissions: new Set(opportunityReviewTemporary.principalPermissions),
+      authenticationSource: 'HML_OPPORTUNITY_REVIEW_BEARER_TOKEN' as const,
     };
   }
   const metricsTemporary = options.metricsTemporary;
@@ -265,6 +278,7 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     const activeTemporary = [
       options.temporary,
       options.operatorTemporary,
+      options.opportunityReviewTemporary,
       options.metricsTemporary,
       options.emailTemporary,
       options.discoveryTemporary,
@@ -311,6 +325,9 @@ export function installAuthorization(app: FastifyInstance, options: Authenticati
     }
     if (principal.authenticationSource === 'HML_OPERATOR_BEARER_TOKEN') {
       request.log.info({ event: 'hml_operator_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_operator_authentication_accepted');
+    }
+    if (principal.authenticationSource === 'HML_OPPORTUNITY_REVIEW_BEARER_TOKEN') {
+      request.log.info({ event: 'hml_opportunity_review_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_opportunity_review_authentication_accepted');
     }
     if (principal.authenticationSource === 'HML_METRICS_BEARER_TOKEN') {
       request.log.info({ event: 'hml_metrics_authentication_accepted', requestId: request.id, principalId: principal.id }, 'hml_metrics_authentication_accepted');

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { claimCollection, enqueueCollection, uniqueByOsm } from './index.js';
+import { describe, expect, it, vi } from 'vitest';
+import postgres from 'postgres';
+import { claimCollection, createDatabase, enqueueCollection, uniqueByOsm } from './index.js';
 import type { Database } from './index.js';
+
+vi.mock('postgres', () => ({ default: vi.fn() }));
+vi.mock('drizzle-orm/postgres-js', () => ({ drizzle: vi.fn((client: unknown) => ({ client })) }));
 describe('uniqueByOsm', () =>
   it('deduplicates by composite OSM identity', () =>
     expect(
@@ -38,5 +42,24 @@ describe('collection terminal reconciliation boundary', () => {
     expect(source).toContain('expiredTerminalJobs');
     expect(source).toMatch(/expiredJob\.status === ["']FAILED["']/u);
     expect(source).toContain('sync_daily6_batch_from_collection');
+  });
+});
+
+describe('database connection bounds', () => {
+  it('allows the API to use a short connection timeout without changing the worker default', async () => {
+    const client = { end: vi.fn() };
+    vi.mocked(postgres).mockReturnValue(client as never);
+
+    const apiDatabase = createDatabase('postgres://example', { connectTimeoutSeconds: 3 });
+    const workerDatabase = createDatabase('postgres://example');
+
+    expect(vi.mocked(postgres)).toHaveBeenNthCalledWith(1, 'postgres://example', expect.objectContaining({
+      connect_timeout: 3,
+    }));
+    expect(vi.mocked(postgres)).toHaveBeenNthCalledWith(2, 'postgres://example', expect.objectContaining({
+      connect_timeout: 10,
+    }));
+    await apiDatabase.close();
+    await workerDatabase.close();
   });
 });

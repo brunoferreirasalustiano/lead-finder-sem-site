@@ -123,7 +123,14 @@ const opportunityReviewTemporary = config.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED ? 
   principalPermissions: hmlOpportunityReviewAuthPermissions,
   environment: 'homologation' as const,
 } : undefined;
-const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });
+// Keep readiness bounded even when the database is cold or unreachable. The
+// handler already applies a 2.5s statement timeout; a short connection timeout
+// prevents pool acquisition from outliving the scheduler's HTTP budget.
+const { db, close } = createDatabase(config.DATABASE_URL, {
+  max: config.DATABASE_POOL_MAX,
+  ssl: config.DATABASE_SSL_MODE,
+  connectTimeoutSeconds: 3,
+});
 const executorId = `api:${hostname()}:${process.pid}`;
 const policy = { dailyLimitEmail: config.CAMPAIGN_DAILY_LIMIT_EMAIL,
   dailyLimitWhatsapp: config.CAMPAIGN_DAILY_LIMIT_WHATSAPP,

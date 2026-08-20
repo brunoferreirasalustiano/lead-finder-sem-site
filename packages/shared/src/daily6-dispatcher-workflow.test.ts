@@ -53,4 +53,16 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).not.toContain('set -x');
     expect(workflow).not.toContain('echo "$HML_DAILY6_TOKEN"');
   });
+
+  it('reports only sanitized run-slot HTTP failures without fail-with-body output', () => {
+    const runSlotStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    expect(runSlotStart).toBeGreaterThanOrEqual(0);
+    const runSlot = workflow.slice(runSlotStart);
+    expect(runSlot).toContain('--output "$response_file"');
+    expect(runSlot).toContain("--write-out '%{http_code}'");
+    expect(runSlot).toContain("DAILY6_RUN_SLOT_FAILURE_CLASS=NETWORK_OR_TIMEOUT");
+    expect(runSlot).toContain("DAILY6_RUN_SLOT_ERROR=$error_summary");
+    expect(runSlot).toContain("{code: (.code // null), errorClass: (.errorClass // null)}");
+    expect(runSlot).not.toContain('--fail-with-body');
+  });
 });

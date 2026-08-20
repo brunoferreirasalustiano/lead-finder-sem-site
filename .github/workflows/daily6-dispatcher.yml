@@ -351,11 +351,29 @@ jobs:
           canonical_expiry="$(date -u -d "$OPERATIONAL_AUTH_EXPIRES_AT" +%Y-%m-%dT%H:%M:%SZ)"
           test "$canonical_expiry" = "$OPERATIONAL_AUTH_EXPIRES_AT"
           test "$expires_epoch" -gt "$(date -u +%s)"
-          response="$(curl --fail-with-body --silent --show-error --max-time 60 \
+          response_file="$(mktemp)"
+          status_file="$(mktemp)"
+          cleanup() { rm -f "$response_file" "$status_file"; }
+          trap cleanup EXIT
+          if ! curl --silent --show-error --max-time 60 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
             -X POST "$HML_API_URL/internal/daily6/run-slot" \
             -H "Authorization: Bearer $HML_DAILY6_TOKEN" \
             -H 'Content-Type: application/json' \
-            --data "{\"date\":\"$SLOT_DATE\",\"slot\":\"$SLOT\",\"city\":\"Campinas\",\"policyVersion\":\"daily6-v1\",\"expectedOperationalSha\":\"$EXPECTED_SHA\"}")"
+            --data "{\"date\":\"$SLOT_DATE\",\"slot\":\"$SLOT\",\"city\":\"Campinas\",\"policyVersion\":\"daily6-v1\",\"expectedOperationalSha\":\"$EXPECTED_SHA\"}" \
+            >"$status_file"; then
+            echo 'DAILY6_RUN_SLOT_FAILURE_CLASS=NETWORK_OR_TIMEOUT' >&2
+            exit 1
+          fi
+          http_status="$(<"$status_file")"
+          error_summary="$(jq -c '{code: (.code // null), errorClass: (.errorClass // null)}' "$response_file" 2>/dev/null || printf '%s' '{"code":"INVALID_JSON","errorClass":"INVALID_RESPONSE"}')"
+          if [ "$http_status" != '200' ]; then
+            echo "DAILY6_RUN_SLOT_HTTP_STATUS=$http_status" >&2
+            echo "DAILY6_RUN_SLOT_ERROR=$error_summary" >&2
+            exit 1
+          fi
+          response="$(<"$response_file")"
           printf '%s' "$response" | jq -e --arg date "$SLOT_DATE" --arg slot "$SLOT" \
             '.batchId == ($date + "|" + $slot + "|campinas-sp|daily6-v1")
              and .discoveryExecuted == true

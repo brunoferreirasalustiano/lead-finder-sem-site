@@ -9,7 +9,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '7 16 * * *'");
     expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 3ef2baf261ffb47e88a3e52a532b654effeccc6a');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: 37a4df183bbb660ec8d3d55570fafce3dacbe6d5');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
@@ -66,6 +66,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(worker).toContain('worker_startup_blocked');
     expect(worker).toContain('collection_source_failure');
     expect(worker).toContain('worker_fatal');
+    expect(worker).toContain('COLLECTION_LEASE_LOST');
     expect(worker).toContain('NO_COLLECTION_JOB_CLAIMED');
     expect(worker).toContain('REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}');
     expect(worker).not.toContain('cat "$worker_log"');

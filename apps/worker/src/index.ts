@@ -17,6 +17,7 @@ import { createGracefulStop } from './graceful-stop.js';
 import { createConsoleOperationalLogger } from './operational-observability.js';
 import { runOneShot } from './oneshot.js';
 import { safeCnpjWsPublicRpm } from './provider-policy.js';
+import { formatWorkerFailure } from './failure-classification.js';
 const config = parseWorkerConfig(process.env);
 const requestIdentity = process.env.REQUEST_IDENTITY?.trim();
 if (config.WORKER_MODE === 'oneshot' && (!requestIdentity || !collectionRequestIdentitySchema.safeParse(requestIdentity).success)) {
@@ -95,8 +96,7 @@ const shutdown = (exitCode = 0) => {
   return shutdownPromise;
 };
 const fatal = (kind: string, error: unknown) => {
-  void error;
-  console.error('worker_fatal', { kind, decision: 'SHUTDOWN_REQUESTED' });
+  console.error(formatWorkerFailure(kind, error));
   process.exitCode = 1;
   gracefulStop.request();
 };

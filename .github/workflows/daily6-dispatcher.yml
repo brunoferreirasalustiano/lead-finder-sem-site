@@ -18,7 +18,7 @@ on:
         description: Exact approved HML SHA
         required: true
         type: string
-        default: 3ef2baf261ffb47e88a3e52a532b654effeccc6a
+        default: 37a4df183bbb660ec8d3d55570fafce3dacbe6d5
       date:
         description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
         required: true
@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 3ef2baf261ffb47e88a3e52a532b654effeccc6a
+  EXPECTED_OPERATIONAL_SHA: 37a4df183bbb660ec8d3d55570fafce3dacbe6d5
   HML_BRANCH: hml/render-supabase-plan-b
   MAX_SCHEDULE_LATENESS_SECONDS: '3600'
 
@@ -306,6 +306,8 @@ jobs:
               worker_failure_class='COLLECTION_SOURCE_FAILURE'
             elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
               worker_failure_class='COLLECTION_NOT_CLAIMED'
+            elif grep -Fq '"failureClass":"COLLECTION_LEASE_LOST"' "$worker_log"; then
+              worker_failure_class='COLLECTION_LEASE_LOST'
             elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
               worker_failure_class='WORKER_FATAL'
             fi

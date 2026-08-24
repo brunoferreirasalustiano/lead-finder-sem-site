@@ -18,7 +18,7 @@ on:
         description: Exact approved HML SHA
         required: true
         type: string
-        default: 37a4df183bbb660ec8d3d55570fafce3dacbe6d5
+        default: d22891b213bc889d6fe639af916b79eb6493a0c2
       date:
         description: Current slot date in America/Sao_Paulo (YYYY-MM-DD)
         required: true
@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 37a4df183bbb660ec8d3d55570fafce3dacbe6d5
+  EXPECTED_OPERATIONAL_SHA: d22891b213bc889d6fe639af916b79eb6493a0c2
   HML_BRANCH: hml/render-supabase-plan-b
   MAX_SCHEDULE_LATENESS_SECONDS: '3600'
 

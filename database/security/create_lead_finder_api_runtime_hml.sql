@@ -39,6 +39,8 @@ GRANT EXECUTE ON FUNCTION
   lead_finder_internal.prepare_daily6_pilot_context(text, date, text, text, text, uuid, uuid, text, jsonb, jsonb),
   lead_finder_internal.ensure_daily6_batch(text, date, text, text, text),
   lead_finder_internal.bump_daily6_batch_metrics(text, integer, integer, integer, integer, integer),
+  lead_finder_internal.get_daily6_collection_status(text),
+  lead_finder_internal.finalize_daily6_batch(text, integer, integer, integer, integer, integer, integer, integer, integer, integer, text),
   lead_finder_internal.sync_daily6_batch_from_collection(text),
   lead_finder_internal.enqueue_collection_job(text, jsonb),
   lead_finder_internal.list_daily6_whatsapp_opportunities(text, text, integer)

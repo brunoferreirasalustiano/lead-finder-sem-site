@@ -10,7 +10,7 @@ describe('DailyWhatsApp control-plane workflow', () => {
   it('runs once daily and pins the exact HML source', () => {
     expect(workflow).toContain("cron: '0 12 * * *'");
     expect(workflow).toContain('workflow_dispatch:');
-    expect(workflow).toContain('EXPECTED_HML_SHA: 17d75748f8f23b03059a6e11b7c66e313bb16e1d');
+    expect(workflow).toContain('EXPECTED_HML_SHA: d22891b213bc889d6fe639af916b79eb6493a0c2');
     expect(workflow).toContain('git fetch --no-tags --depth=1 origin hml/render-supabase-plan-b');
     expect(workflow).toContain('test "$actual_hml_sha" = "$EXPECTED_HML_SHA"');
   });

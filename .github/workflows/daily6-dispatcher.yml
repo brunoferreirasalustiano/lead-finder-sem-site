@@ -143,6 +143,11 @@ jobs:
           test -n "$HML_DATABASE_URL"
           test -n "$TAVILY_API_KEY"
           for readiness_attempt in 1 2 3; do
+            # A free Render instance may be hibernating. Wake it with a
+            # bounded read-only liveness GET before the readiness check;
+            # readiness remains the authoritative gate for database health.
+            curl --fail --silent --show-error --max-time 10 -X GET \
+              "$HML_API_URL/health/live" >/dev/null || true
             if curl --fail --silent --show-error --max-time 15 -X GET \
               "$HML_API_URL/health/ready" >/dev/null; then
               readiness_ok=true

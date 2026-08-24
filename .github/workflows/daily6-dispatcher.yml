@@ -438,5 +438,5 @@ jobs:
              and (.batchStatus == "COMPLETED" or .batchStatus == "BLOCKED")
              and (.sent >= 0 and .sent <= 2)
              and (.providerCalls >= 0)' >/dev/null
-          printf '%s' "$response" | jq -r '"DAILY6_REPORT=" + ({discovered,finalistsEvaluated,autoApproved,ready,providerCalls,sent,delivered,failed,ambiguous,stopReason,batchStatus,batchTerminalReason} | tojson)'
+          printf '%s' "$response" | jq -r '"DAILY6_REPORT=" + ({discovered,finalistsEvaluated,autoApproved,ready,providerCalls,sent,delivered,failed,ambiguous,stopReason,rejectionReasons,batchStatus,batchTerminalReason} | tojson)'
           echo 'daily6_native_slot=PASS'

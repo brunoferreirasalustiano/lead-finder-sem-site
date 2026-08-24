@@ -127,4 +127,14 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(runSlotStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
     expect(runSlotStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
   });
+
+  it('reports aggregate rejection reasons without exposing candidate data', () => {
+    const runSlotStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    expect(runSlotStart).toBeGreaterThanOrEqual(0);
+    const runSlot = workflow.slice(runSlotStart);
+    expect(runSlot).toContain('rejectionReasons');
+    expect(runSlot).not.toContain('businessName');
+    expect(runSlot).not.toContain('email');
+    expect(runSlot).not.toContain('phone');
+  });
 });

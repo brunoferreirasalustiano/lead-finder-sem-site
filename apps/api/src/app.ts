@@ -178,6 +178,9 @@ export type Daily6GmailConfigDiagnostics = Readonly<{
 }>;
 
 const idSchema = z.string().uuid();
+const daily6RuntimePreflightQuerySchema = z.object({
+  expectedOperationalSha: z.string().regex(/^[0-9a-f]{40}$/iu),
+}).strict();
 const daily6WhatsappOpportunityQuerySchema = z.object({
   city: z.string().trim().min(2).max(100).default('Campinas'),
   category: z.string().trim().min(1).max(100).optional(),
@@ -511,6 +514,63 @@ export function buildApp(db: Database, options: {
       return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
     }
     return options.daily6GmailConfigDiagnostics();
+  });
+  app.get('/internal/daily6/runtime-preflight', async (request, reply) => {
+    reply.header('cache-control', 'no-store').header('pragma', 'no-cache');
+    if (!options.daily6AuthRequired) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_DAILY6_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    const query = daily6RuntimePreflightQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({
+        runtimeConfigured: false,
+        operationalShaMatch: false,
+        daily6RuntimeReady: false,
+        errorClass: 'INVALID_REQUEST',
+      });
+    }
+    const runtime = options.daily6SlotRuntime;
+    if (!options.expectedOperationalSha || !runtime) {
+      return reply.status(503).send({
+        runtimeConfigured: false,
+        operationalShaMatch: false,
+        daily6RuntimeReady: false,
+        errorClass: 'MISSING_CONFIG',
+      });
+    }
+    const operationalShaMatch = query.data.expectedOperationalSha.toLowerCase()
+      === options.expectedOperationalSha.toLowerCase()
+      && runtime.operationalSha.toLowerCase() === options.expectedOperationalSha.toLowerCase();
+    if (!operationalShaMatch) {
+      return reply.status(409).send({
+        runtimeConfigured: true,
+        operationalShaMatch: false,
+        daily6RuntimeReady: false,
+        errorClass: 'OPERATIONAL_SHA_MISMATCH',
+      });
+    }
+    const daily6RuntimeReady = options.daily6PilotEnabled === true
+      && runtime.enabled
+      && runtime.realSendEnabled
+      && runtime.manualEmailSendEnabled
+      && !runtime.killSwitchEnabled
+      && runtime.sender.trim().toLowerCase() === 'leadfinderbrasil@gmail.com';
+    if (!daily6RuntimeReady) {
+      return reply.status(503).send({
+        runtimeConfigured: true,
+        operationalShaMatch: true,
+        daily6RuntimeReady: false,
+        errorClass: 'RUNTIME_NOT_READY',
+      });
+    }
+    return {
+      runtimeConfigured: true,
+      operationalShaMatch: true,
+      daily6RuntimeReady: true,
+    };
   });
   app.get('/internal/daily6/whatsapp-opportunities', async (request, reply) => {
     reply.header('cache-control', 'no-store');

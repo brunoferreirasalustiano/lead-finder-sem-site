@@ -36,6 +36,7 @@ describe('environment configuration', () => {
       COLLECTION_EGRESS_ENABLED: false,
       PROSPECTING_METRICS_ENABLED: false,
       WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: false,
+      DAILY6_OPPORTUNITY_SHADOW_ENABLED: false,
       HML_SUPPRESSION_PROBE_ENABLED: false,
       PILOT_KILL_SWITCH_ENABLED: true,
       API_AUTH_PERMISSIONS: ['pilot:read', 'pilot:write', 'pilot:review', 'pilot:record-contact', 'pilot:record-result'],
@@ -90,6 +91,37 @@ describe('environment configuration', () => {
       ...database,
       WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: 'yes',
     })).toThrow('WHATSAPP_OPPORTUNITY_REVIEW_ENABLED');
+  });
+
+  it('keeps the Daily-6 opportunity shadow HML-only, disabled by default, and auth-gated', () => {
+    const auth = {
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      HML_OPPORTUNITY_REVIEW_AUTH_ENABLED: 'true',
+      HML_OPPORTUNITY_REVIEW_AUTH_TOKEN_HASH: 'f'.repeat(64),
+      HML_OPPORTUNITY_REVIEW_AUTH_EXPIRES_AT: '2099-01-01T00:00:00.000Z',
+      HML_OPPORTUNITY_REVIEW_AUTH_PRINCIPAL_ID: 'hml-opportunity-review',
+    } as const;
+    expect(parseApiConfig(database).DAILY6_OPPORTUNITY_SHADOW_ENABLED).toBe(false);
+    expect(parseApiConfig({
+      ...database,
+      ...auth,
+      DAILY6_OPPORTUNITY_SHADOW_ENABLED: 'true',
+    }).DAILY6_OPPORTUNITY_SHADOW_ENABLED).toBe(true);
+    expect(() => parseApiConfig({
+      ...database,
+      ...auth,
+      DEPLOYMENT_ENVIRONMENT: 'production',
+      DAILY6_OPPORTUNITY_SHADOW_ENABLED: 'true',
+    })).toThrow('DAILY6_OPPORTUNITY_SHADOW_ENABLED');
+    expect(() => parseApiConfig({
+      ...database,
+      DEPLOYMENT_ENVIRONMENT: 'homologation',
+      DAILY6_OPPORTUNITY_SHADOW_ENABLED: 'true',
+    })).toThrow('HML_OPPORTUNITY_REVIEW_AUTH_ENABLED is required when DAILY6_OPPORTUNITY_SHADOW_ENABLED=true');
+    expect(() => parseApiConfig({
+      ...database,
+      DAILY6_OPPORTUNITY_SHADOW_ENABLED: 'yes',
+    })).toThrow('DAILY6_OPPORTUNITY_SHADOW_ENABLED');
   });
 
   it('requires a valid dedicated HML opportunity-review principal', () => {

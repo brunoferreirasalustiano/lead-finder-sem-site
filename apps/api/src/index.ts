@@ -193,6 +193,7 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   daily6PilotEnabled: config.DAILY6_PILOT_ENABLED,
   discoveryAuthRequired: config.HML_DISCOVERY_AUTH_ENABLED,
   daily6AuthRequired: config.HML_DAILY6_AUTH_ENABLED,
+  daily6OpportunityShadowEnabled: config.DAILY6_OPPORTUNITY_SHADOW_ENABLED,
   ...(config.EXPECTED_OPERATIONAL_SHA ? { expectedOperationalSha: config.EXPECTED_OPERATIONAL_SHA } : {}),
   ...(config.EXPECTED_OPERATIONAL_SHA && config.MANUAL_EMAIL_SENDER && config.MANUAL_EMAIL_FINGERPRINT_KEY
     ? {

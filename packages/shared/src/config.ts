@@ -200,6 +200,7 @@ const apiSchema = commonSchema.extend({
   OPERATOR_TEST_KILL_SWITCH_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   PROSPECTING_METRICS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WHATSAPP_OPPORTUNITY_REVIEW_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  DAILY6_OPPORTUNITY_SHADOW_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPERATOR_TEST_WHATSAPP_E164: optionalEnvironmentString(
     z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'OPERATOR_TEST_WHATSAPP_E164 must use E.164 format'),
   ),
@@ -710,6 +711,22 @@ const apiSchema = commonSchema.extend({
   if (configuration.WHATSAPP_OPPORTUNITY_REVIEW_ENABLED
     && !configuration.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED) {
     context.addIssue({ code: 'custom', path: ['HML_OPPORTUNITY_REVIEW_AUTH_ENABLED'], message: 'HML_OPPORTUNITY_REVIEW_AUTH_ENABLED is required when WHATSAPP_OPPORTUNITY_REVIEW_ENABLED=true' });
+  }
+  if (configuration.DAILY6_OPPORTUNITY_SHADOW_ENABLED
+    && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
+    context.addIssue({
+      code: 'custom',
+      path: ['DAILY6_OPPORTUNITY_SHADOW_ENABLED'],
+      message: 'DAILY6_OPPORTUNITY_SHADOW_ENABLED is permitted only in homologation',
+    });
+  }
+  if (configuration.DAILY6_OPPORTUNITY_SHADOW_ENABLED
+    && !configuration.HML_OPPORTUNITY_REVIEW_AUTH_ENABLED) {
+    context.addIssue({
+      code: 'custom',
+      path: ['HML_OPPORTUNITY_REVIEW_AUTH_ENABLED'],
+      message: 'HML_OPPORTUNITY_REVIEW_AUTH_ENABLED is required when DAILY6_OPPORTUNITY_SHADOW_ENABLED=true',
+    });
   }
   if (configuration.DAILY6_PILOT_ENABLED && configuration.DEPLOYMENT_ENVIRONMENT !== 'homologation') {
     context.addIssue({ code: 'custom', path: ['DAILY6_PILOT_ENABLED'], message: 'DAILY6_PILOT_ENABLED is permitted only in homologation' });

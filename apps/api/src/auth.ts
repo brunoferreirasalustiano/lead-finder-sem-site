@@ -48,6 +48,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/internal/daily6/runtime-preflight', 'daily6:execute'),
   policy('GET', '/internal/daily6/whatsapp-opportunities', 'opportunity:read'),
   policy('GET', '/internal/dailywhatsapp/cnpj-opportunities', 'opportunity:read'),
+  policy('GET', '/internal/daily6/opportunity-shadow', 'opportunity:read'),
   policy('GET', '/internal/prospecting/city-metrics', 'prospecting:metrics:read'),
   policy('GET', '/leads', 'leads:read'),
   policy('GET', '/leads/:id', 'leads:read'),

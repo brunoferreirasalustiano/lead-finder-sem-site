@@ -11,6 +11,7 @@ export * from './pilot.js';
 export * from './pilot-real-preflight.js';
 export * from './operator-test-recipient-binding.js';
 export * from './automated-compliance.js';
+export * from './daily6-opportunity-shadow.js';
 
 export const leadStatuses = [
   'SEM_SITE_CADASTRADO',

@@ -47,6 +47,7 @@ export * from './enrichment.js';
 export * from './daily6.js';
 export * from './daily6-whatsapp-opportunities.js';
 export * from './dailywhatsapp-cnpj-opportunities.js';
+export * from './daily6-opportunity-shadow.js';
 export * from './daily6-orchestrator.js';
 
 export const deriveStatus = (lead: NormalizedLead): LeadStatus =>

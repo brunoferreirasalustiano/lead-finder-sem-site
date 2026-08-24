@@ -78,6 +78,8 @@ import {
   getProspectingCityMetricsSnapshot,
   listDaily6WhatsappOpportunities,
   listDailyWhatsappRecentCnpjOpportunities,
+  listDaily6OpportunityShadow,
+  type Daily6OpportunityShadowRow,
   runDaily6Slot,
   type Daily6SlotInput,
   type Daily6SlotRuntime,
@@ -127,6 +129,13 @@ import {
   pilotManualContactSchema,
   pilotResultSchema,
   pilotMetricPeriodSchema,
+  evaluateDaily6OpportunityShadow,
+  opportunityShadowHardReasons,
+  opportunityShadowQualityReasons,
+  opportunityShadowStates,
+  type Daily6OpportunityShadowEvaluation,
+  type Daily6OpportunityShadowSignals,
+  type OpportunityShadowReason,
 } from '@lead-finder/shared';
 import { z } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
@@ -195,6 +204,11 @@ const dailyWhatsappRecentCnpjQuerySchema = z.object({
   }),
   limit: z.coerce.number().int().min(1).max(30).default(30),
 }).strict();
+const daily6OpportunityShadowQuerySchema = z.object({
+  city: z.string().trim().min(2).max(100).default('Campinas'),
+  category: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(30).default(30),
+}).strict();
 type HttpContractQueries = Readonly<{
   listLeads: typeof listLeads;
   getLead: typeof getLead;
@@ -217,6 +231,7 @@ type HttpContractQueries = Readonly<{
   getProspectingCityMetricsSnapshot: typeof getProspectingCityMetricsSnapshot;
   listDaily6WhatsappOpportunities: typeof listDaily6WhatsappOpportunities;
   listDailyWhatsappRecentCnpjOpportunities: typeof listDailyWhatsappRecentCnpjOpportunities;
+  listDaily6OpportunityShadow: typeof listDaily6OpportunityShadow;
 }>;
 export const csvCell = (value: string | number | boolean | Date | null | undefined) => {
   const raw = value instanceof Date ? value.toISOString() : String(value ?? '');
@@ -287,6 +302,59 @@ const safeDailyWhatsappRecentCnpjOpportunityDto = (
     : 'WHATSAPP_CNPJ_REVIEW_REQUIRED',
   manualReviewOnly: true,
 });
+const opportunityShadowReasonCodes = new Set<OpportunityShadowReason>([
+  ...opportunityShadowHardReasons,
+  ...opportunityShadowQualityReasons,
+]);
+const mapDaily6OpportunityShadowSignals = (
+  candidate: Daily6OpportunityShadowRow,
+): Daily6OpportunityShadowSignals => ({
+  identity: candidate.identity_state,
+  activity: candidate.activity_state,
+  email: candidate.email_state,
+  website: candidate.website_state,
+  businessClosed: candidate.business_closed,
+  currentEvidencePresent: candidate.current_evidence_present,
+  legacyStatusOnly: candidate.legacy_status_only,
+  blockedLead: candidate.lead_blocked,
+  priorContact: candidate.prior_contact,
+  duplicate: candidate.duplicate,
+  pendingOrAmbiguousSend: candidate.pending_or_ambiguous_send,
+  suppressed: candidate.suppressed,
+  hardBounce: candidate.hard_bounce,
+  optOut: candidate.opt_out,
+  doNotContact: candidate.do_not_contact,
+  naoContatar: candidate.nao_contatar,
+  emailChannelAllowed: candidate.email_channel_allowed,
+});
+const safeDaily6OpportunityShadowDto = (
+  candidate: Daily6OpportunityShadowRow,
+  evaluation: Daily6OpportunityShadowEvaluation,
+) => {
+  const leadId = candidate.lead_id.trim();
+  const city = candidate.city.trim().slice(0, 100);
+  const category = candidate.category.trim().slice(0, 100);
+  if (!leadId || !city || !category) throw new Error('SHADOW_CANDIDATE_INVALID');
+  if (!opportunityShadowStates.includes(evaluation.state)) {
+    throw new Error('SHADOW_EVALUATION_INVALID');
+  }
+  if (evaluation.reasons.some((reason) => !opportunityShadowReasonCodes.has(reason))) {
+    throw new Error('SHADOW_EVALUATION_INVALID');
+  }
+  return {
+    leadId,
+    city,
+    category,
+    evidenceStates: {
+      identity: candidate.identity_state,
+      activity: candidate.activity_state,
+      email: candidate.email_state,
+      website: candidate.website_state,
+    },
+    opportunityState: evaluation.state,
+    reasons: [...evaluation.reasons],
+  };
+};
 export const safeCampaignAuditItem = (value: unknown) => {
   const item = row(value);
   return {
@@ -326,6 +394,7 @@ export function buildApp(db: Database, options: {
   daily6PilotEnabled?: boolean;
   discoveryAuthRequired?: boolean;
   daily6AuthRequired?: boolean;
+  daily6OpportunityShadowEnabled?: boolean;
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
   daily6GmailPreflight?: () => Promise<GmailPreflightResult>;
@@ -382,6 +451,7 @@ export function buildApp(db: Database, options: {
     getProspectingCityMetricsSnapshot,
     listDaily6WhatsappOpportunities,
     listDailyWhatsappRecentCnpjOpportunities,
+    listDaily6OpportunityShadow,
     ...options.contractQueries,
   };
   const app = Fastify({
@@ -634,6 +704,54 @@ export function buildApp(db: Database, options: {
         items: candidates.map(safeDailyWhatsappRecentCnpjOpportunityDto),
       };
     } catch {
+      return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
+    }
+  });
+  app.get('/internal/daily6/opportunity-shadow', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (options.daily6OpportunityShadowEnabled !== true) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_OPPORTUNITY_REVIEW_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    const query = daily6OpportunityShadowQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: 'Invalid opportunity shadow query', code: 'INVALID_REQUEST' });
+    try {
+      const candidates: readonly Daily6OpportunityShadowRow[] = await contractQueries.listDaily6OpportunityShadow(db, {
+        city: query.data.city,
+        ...(query.data.category ? { category: query.data.category } : {}),
+        limit: query.data.limit,
+      });
+      if (candidates.length > query.data.limit) {
+        return reply.status(503).send({ error: 'Service unavailable', code: 'OPPORTUNITY_RESULT_OVER_LIMIT' });
+      }
+      const evaluations: readonly Daily6OpportunityShadowEvaluation[] = candidates.map((candidate) =>
+        evaluateDaily6OpportunityShadow(mapDaily6OpportunityShadowSignals(candidate)));
+      const items = candidates.map((candidate, index) => safeDaily6OpportunityShadowDto(candidate, evaluations[index]!));
+      const sampleStateCounts: Record<string, number> = {};
+      const sampleReasonCounts: Record<string, number> = {};
+      for (const evaluation of evaluations) {
+        sampleStateCounts[evaluation.state] = (sampleStateCounts[evaluation.state] ?? 0) + 1;
+        for (const reason of evaluation.reasons) {
+          sampleReasonCounts[reason] = (sampleReasonCounts[reason] ?? 0) + 1;
+        }
+      }
+      return {
+        city: query.data.city,
+        ...(query.data.category ? { category: query.data.category } : {}),
+        sampleTotal: items.length,
+        limit: query.data.limit,
+        manualReviewOnly: true,
+        autoSendAllowed: false,
+        sampleStateCounts,
+        sampleReasonCounts,
+        items,
+      };
+    } catch (error) {
+      if (error instanceof Error && (error.message === 'SHADOW_EVALUATION_INVALID' || error.message === 'SHADOW_CANDIDATE_INVALID')) {
+        return reply.status(503).send({ error: 'Service unavailable', code: 'OPPORTUNITY_RESULT_INVALID' });
+      }
       return reply.status(503).send({ error: 'Service unavailable', code: 'DATABASE_UNAVAILABLE' });
     }
   });

@@ -99,6 +99,8 @@ describe('native Daily-6 scheduler control plane', () => {
     const end = workflow.indexOf('request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"');
     const readiness = workflow.slice(start, end);
     expect(readiness).toContain('for readiness_attempt in 1 2 3; do');
+    expect(readiness).toContain('"$HML_API_URL/health/live"');
+    expect(readiness).toContain('--max-time 10 -X GET');
     expect(readiness).toContain('--fail --silent --show-error --max-time 15 -X GET');
     expect(readiness).toContain('sleep 5');
     expect(readiness).toContain('test "${readiness_ok:-false}" = true');

@@ -57,6 +57,7 @@ describe('Daily-6 opportunity shadow tri-state migration', () => {
     expect(migration).toContain("send_event.event_type = 'AMBIGUOUS'");
     expect(migration).toContain("terminal_event.event_type IN ('CANCELLED', 'CONTACT_CONFIRMED')");
     expect(migration).toContain("coalesce(f0.crm_stage = 'NAO_CONTATAR', false) AS nao_contatar");
+    expect(migration).not.toContain('f0.do_not_contact AS do_not_contact');
     expect(migration).toContain('true AS email_channel_allowed');
     expect(migration).not.toContain("(f.email_state = 'PASS'");
     expect(migration).toContain("scored.email_state IN ('UNKNOWN', 'MISSING', 'UNSUITABLE')");

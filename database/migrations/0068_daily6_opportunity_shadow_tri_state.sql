@@ -412,7 +412,6 @@ AS $$
         f0.*,
         f0.is_blocked AS lead_blocked,
         f0.is_closed AS business_closed,
-        f0.do_not_contact AS do_not_contact,
         coalesce(f0.crm_stage = 'NAO_CONTATAR', false) AS nao_contatar
       FROM flags f0
     ) f

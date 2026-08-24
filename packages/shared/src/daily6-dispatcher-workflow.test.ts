@@ -41,8 +41,8 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain("format('{0}|{1}', inputs.date, inputs.slot)");
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
-    expect(workflow).toContain('default: d22891b213bc889d6fe639af916b79eb6493a0c2');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: d22891b213bc889d6fe639af916b79eb6493a0c2');
+    expect(workflow).toContain('default: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).not.toContain('backfill');
@@ -66,5 +66,63 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(runSlot).toContain("DAILY6_RUN_SLOT_ERROR=$error_summary");
     expect(runSlot).toContain("{code: (.code // null), errorClass: (.errorClass // null)}");
     expect(runSlot).not.toContain('--fail-with-body');
+  });
+
+  it('proves the loaded runtime contract once before checking identity or enqueueing', () => {
+    const readinessStart = workflow.indexOf('- name: Verify HML readiness');
+    const preflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
+    const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const preflight = workflow.slice(preflightStart, identityStart);
+
+    expect(readinessStart).toBeGreaterThanOrEqual(0);
+    expect(preflightStart).toBeGreaterThan(readinessStart);
+    expect(identityStart).toBeGreaterThan(preflightStart);
+    expect(enqueueStart).toBeGreaterThan(identityStart);
+    expect(preflight).toContain('/internal/daily6/runtime-preflight');
+    expect(preflight).toContain('--get');
+    expect(preflight).toContain('--max-time 30');
+    expect(preflight).toContain('expectedOperationalSha=$EXPECTED_SHA');
+    expect(preflight).toContain('Authorization: Bearer $HML_DAILY6_TOKEN');
+    expect(preflight).toContain('.runtimeConfigured == true');
+    expect(preflight).toContain('.operationalShaMatch == true');
+    expect(preflight).toContain('.daily6RuntimeReady == true');
+    expect(preflight.match(/curl /g)).toHaveLength(1);
+    expect(preflight).not.toContain('/collect');
+    expect(preflight).not.toContain('/internal/daily6/run-slot');
+    expect(preflight).not.toContain('--fail-with-body');
+    expect(preflight).not.toContain('cat "$response_file"');
+    expect(preflight).toContain('or .errorClass == "RUNTIME_NOT_READY"');
+    expect(preflight).toContain('else "INVALID_RESPONSE"');
+  });
+});
+
+describe('Daily-6 hosted runtime preflight workflow', () => {
+  it('is manual-only, read-only, single-request and output-sanitized', async () => {
+    const hosted = await readFile(
+      new URL('../../../.github/workflows/daily6-runtime-preflight.yml', import.meta.url),
+      'utf8',
+    );
+
+    expect(hosted).toContain('workflow_dispatch:');
+    expect(hosted).not.toContain('schedule:');
+    expect(hosted).not.toContain('push:');
+    expect(hosted).not.toContain('pull_request:');
+    expect(hosted).toContain('contents: read');
+    expect(hosted).toContain(
+      'EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892',
+    );
+    expect(hosted).toContain('/internal/daily6/runtime-preflight');
+    expect(hosted.match(/curl /g)).toHaveLength(1);
+    expect(hosted).toContain('--get');
+    expect(hosted).toContain('Cache-Control');
+    expect(hosted).not.toContain('/collect');
+    expect(hosted).not.toContain('/internal/daily6/run-slot');
+    expect(hosted).not.toContain('provider');
+    expect(hosted).not.toContain('gmail');
+    expect(hosted).not.toContain('artifact');
+    expect(hosted).not.toContain('set -x');
+    expect(hosted).not.toContain('cat "$response_file"');
+    expect(hosted).toContain('else "INVALID_RESPONSE"');
   });
 });

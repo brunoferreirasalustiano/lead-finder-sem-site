@@ -9,7 +9,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '7 16 * * *'");
     expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: d22891b213bc889d6fe639af916b79eb6493a0c2');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
@@ -95,9 +95,11 @@ describe('native Daily-6 scheduler control plane', () => {
   });
 
   it('uses only bounded GET retries to tolerate a Render cold start before discovery', () => {
-    const start = workflow.indexOf('test -n "$TAVILY_API_KEY"');
-    const end = workflow.indexOf('request_identity="${SLOT_DATE}|${SLOT}|campinas-sp|daily6-v1"');
+    const start = workflow.indexOf('- name: Verify HML readiness');
+    const end = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
     const readiness = workflow.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
     expect(readiness).toContain('for readiness_attempt in 1 2 3; do');
     expect(readiness).toContain('"$HML_API_URL/health/live"');
     expect(readiness).toContain('--max-time 10 -X GET');

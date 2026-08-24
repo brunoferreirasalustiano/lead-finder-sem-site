@@ -1,0 +1,75 @@
+name: Daily-6 runtime contract read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892
+
+jobs:
+  runtime-preflight:
+    name: Daily-6 runtime contract read-only preflight
+    runs-on: ubuntu-latest
+    environment: hml-discovery
+    timeout-minutes: 1
+    env:
+      HML_API_URL: ${{ vars.HML_API_URL }}
+      HML_DAILY6_TOKEN: ${{ secrets.HML_DAILY6_TOKEN }}
+    steps:
+      - name: Execute exactly one authenticated read-only request
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$HML_API_URL"
+          test -n "$HML_DAILY6_TOKEN"
+          [[ "$EXPECTED_OPERATIONAL_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+          response_file="$(mktemp)"
+          status_file="$(mktemp)"
+          cleanup() { rm -f "$response_file" "$status_file"; }
+          trap cleanup EXIT
+          if ! curl --silent --show-error --max-time 30 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --get "$HML_API_URL/internal/daily6/runtime-preflight" \
+            --data-urlencode "expectedOperationalSha=$EXPECTED_OPERATIONAL_SHA" \
+            -H "Authorization: Bearer $HML_DAILY6_TOKEN" \
+            -H 'Cache-Control: no-cache' \
+            >"$status_file"; then
+            echo 'HTTP_STATUS=000'
+            echo 'RUNTIME_CONFIGURED=NOT_PROVEN'
+            echo 'OPERATIONAL_SHA_MATCH=NOT_PROVEN'
+            echo 'DAILY6_RUNTIME_READY=NOT_PROVEN'
+            echo 'ERROR_CLASS=NETWORK_OR_TIMEOUT'
+            exit 1
+          fi
+          http_status="$(<"$status_file")"
+          runtime_configured="$(jq -r 'if .runtimeConfigured == true then "PASS" else "FAIL" end' "$response_file" 2>/dev/null || printf '%s' 'FAIL')"
+          sha_match="$(jq -r 'if .operationalShaMatch == true then "PASS" else "FAIL" end' "$response_file" 2>/dev/null || printf '%s' 'FAIL')"
+          runtime_ready="$(jq -r 'if .daily6RuntimeReady == true then "PASS" else "FAIL" end' "$response_file" 2>/dev/null || printf '%s' 'FAIL')"
+          error_class="$(jq -r '
+            if .errorClass == null then "NONE"
+            elif .errorClass == "INVALID_REQUEST"
+              or .errorClass == "MISSING_CONFIG"
+              or .errorClass == "OPERATIONAL_SHA_MISMATCH"
+              or .errorClass == "RUNTIME_NOT_READY"
+            then .errorClass
+            else "INVALID_RESPONSE"
+            end' "$response_file" 2>/dev/null || printf '%s' 'INVALID_RESPONSE')"
+          printf 'HTTP_STATUS=%s\n' "$http_status"
+          printf 'RUNTIME_CONFIGURED=%s\n' "$runtime_configured"
+          printf 'OPERATIONAL_SHA_MATCH=%s\n' "$sha_match"
+          printf 'DAILY6_RUNTIME_READY=%s\n' "$runtime_ready"
+          printf 'ERROR_CLASS=%s\n' "$error_class"
+          if [ "$http_status" != '200' ] \
+            || [ "$runtime_configured" != 'PASS' ] \
+            || [ "$sha_match" != 'PASS' ] \
+            || [ "$runtime_ready" != 'PASS' ]; then
+            exit 1
+          fi
+          jq -e \
+            '(keys | sort) == ["daily6RuntimeReady", "operationalShaMatch", "runtimeConfigured"]' \
+            "$response_file" >/dev/null
+          echo 'STATUS=DAILY6_RUNTIME_PREFLIGHT_PASS'

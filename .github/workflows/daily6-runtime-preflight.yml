@@ -54,6 +54,8 @@ jobs:
             elif .errorClass == "INVALID_REQUEST"
               or .errorClass == "MISSING_CONFIG"
               or .errorClass == "OPERATIONAL_SHA_MISMATCH"
+              or .errorClass == "DISCOVERY_AUTH_NOT_READY"
+              or .errorClass == "DISCOVERY_AUTH_EXPIRED"
               or .errorClass == "RUNTIME_NOT_READY"
             then .errorClass
             else "INVALID_RESPONSE"

@@ -178,6 +178,8 @@ jobs:
             if .errorClass == "INVALID_REQUEST"
               or .errorClass == "MISSING_CONFIG"
               or .errorClass == "OPERATIONAL_SHA_MISMATCH"
+              or .errorClass == "DISCOVERY_AUTH_NOT_READY"
+              or .errorClass == "DISCOVERY_AUTH_EXPIRED"
               or .errorClass == "RUNTIME_NOT_READY"
             then .errorClass
             else "INVALID_RESPONSE"
@@ -194,6 +196,48 @@ jobs:
              and (keys | sort) == ["daily6RuntimeReady", "operationalShaMatch", "runtimeConfigured"]' \
             "$response_file" >/dev/null
           echo 'DAILY6_RUNTIME_PREFLIGHT=PASS'
+
+      - name: Verify dedicated discovery authentication
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$HML_API_URL"
+          test -n "$HML_COLLECTION_TOKEN"
+          response_file="$(mktemp)"
+          status_file="$(mktemp)"
+          cleanup() { rm -f "$response_file" "$status_file"; }
+          trap cleanup EXIT
+          if ! curl --silent --show-error --max-time 30 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --get "$HML_API_URL/internal/discovery/preflight" \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            >"$status_file"; then
+            echo 'DISCOVERY_AUTH_PREFLIGHT_FAILURE_CLASS=NETWORK_OR_TIMEOUT' >&2
+            exit 1
+          fi
+          http_status="$(<"$status_file")"
+          if [ "$http_status" != '200' ]; then
+            case "$http_status" in
+              401) failure_class='AUTH_INVALID_OR_EXPIRED' ;;
+              403) failure_class='PERMISSION_OR_SOURCE_DENIED' ;;
+              404) failure_class='PREFLIGHT_DISABLED' ;;
+              5??) failure_class='RUNTIME_UNAVAILABLE' ;;
+              *) failure_class='INVALID_RESPONSE' ;;
+            esac
+            echo "DISCOVERY_AUTH_PREFLIGHT_HTTP_STATUS=$http_status" >&2
+            echo "DISCOVERY_AUTH_PREFLIGHT_FAILURE_CLASS=$failure_class" >&2
+            exit 1
+          fi
+          jq -e \
+            '.discoveryAuth == "PASS"
+             and .collectionPermission == "PASS"
+             and (keys | sort) == ["collectionPermission", "discoveryAuth"]' \
+            "$response_file" >/dev/null || {
+              echo 'DISCOVERY_AUTH_PREFLIGHT_FAILURE_CLASS=INVALID_RESPONSE' >&2
+              exit 1
+            }
+          echo 'DISCOVERY_AUTH_PREFLIGHT=PASS'
 
       - name: Verify fresh Daily-6 identity
         id: discovery

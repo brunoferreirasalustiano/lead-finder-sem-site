@@ -56,6 +56,26 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(databaseIdentity).not.toContain('echo "$database_user"');
   });
 
+  it('proves dedicated discovery auth with one read-only GET before identity and enqueue', () => {
+    const runtimePreflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
+    const discoveryPreflightStart = workflow.indexOf('- name: Verify dedicated discovery authentication');
+    const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const discoveryPreflight = workflow.slice(discoveryPreflightStart, identityStart);
+
+    expect(discoveryPreflightStart).toBeGreaterThan(runtimePreflightStart);
+    expect(identityStart).toBeGreaterThan(discoveryPreflightStart);
+    expect(enqueueStart).toBeGreaterThan(identityStart);
+    expect(discoveryPreflight).toContain('/internal/discovery/preflight');
+    expect(discoveryPreflight).toContain('--get');
+    expect(discoveryPreflight.match(/curl /g)).toHaveLength(1);
+    expect(discoveryPreflight).toContain('Authorization: Bearer $HML_COLLECTION_TOKEN');
+    expect(discoveryPreflight).toContain('DISCOVERY_AUTH_PREFLIGHT=PASS');
+    expect(discoveryPreflight).not.toContain('/collect');
+    expect(discoveryPreflight).not.toContain('psql');
+    expect(discoveryPreflight).not.toContain('cat "$response_file"');
+  });
+
   it('surfaces only sanitized worker failure classification', () => {
     const start = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
     const end = workflow.indexOf('- name: Require terminal collection before selection');

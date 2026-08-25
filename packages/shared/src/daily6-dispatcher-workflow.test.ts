@@ -72,13 +72,16 @@ describe('native Daily-6 scheduler authorization gate', () => {
   it('proves the loaded runtime contract once before checking identity or enqueueing', () => {
     const readinessStart = workflow.indexOf('- name: Verify HML readiness');
     const preflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
+    const discoveryPreflightStart = workflow.indexOf('- name: Verify dedicated discovery authentication');
     const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
-    const preflight = workflow.slice(preflightStart, identityStart);
+    const preflight = workflow.slice(preflightStart, discoveryPreflightStart);
+    const discoveryPreflight = workflow.slice(discoveryPreflightStart, identityStart);
 
     expect(readinessStart).toBeGreaterThanOrEqual(0);
     expect(preflightStart).toBeGreaterThan(readinessStart);
-    expect(identityStart).toBeGreaterThan(preflightStart);
+    expect(discoveryPreflightStart).toBeGreaterThan(preflightStart);
+    expect(identityStart).toBeGreaterThan(discoveryPreflightStart);
     expect(enqueueStart).toBeGreaterThan(identityStart);
     expect(preflight).toContain('/internal/daily6/runtime-preflight');
     expect(preflight).toContain('--get');
@@ -94,7 +97,23 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(preflight).not.toContain('--fail-with-body');
     expect(preflight).not.toContain('cat "$response_file"');
     expect(preflight).toContain('or .errorClass == "RUNTIME_NOT_READY"');
+    expect(preflight).toContain('or .errorClass == "DISCOVERY_AUTH_NOT_READY"');
+    expect(preflight).toContain('or .errorClass == "DISCOVERY_AUTH_EXPIRED"');
     expect(preflight).toContain('else "INVALID_RESPONSE"');
+
+    expect(discoveryPreflight).toContain('/internal/discovery/preflight');
+    expect(discoveryPreflight).toContain('--get');
+    expect(discoveryPreflight).toContain('--max-time 30');
+    expect(discoveryPreflight).toContain('Authorization: Bearer $HML_COLLECTION_TOKEN');
+    expect(discoveryPreflight).toContain("401) failure_class='AUTH_INVALID_OR_EXPIRED'");
+    expect(discoveryPreflight).toContain("403) failure_class='PERMISSION_OR_SOURCE_DENIED'");
+    expect(discoveryPreflight).toContain('.discoveryAuth == "PASS"');
+    expect(discoveryPreflight).toContain('.collectionPermission == "PASS"');
+    expect(discoveryPreflight.match(/curl /g)).toHaveLength(1);
+    expect(discoveryPreflight).not.toContain('/collect');
+    expect(discoveryPreflight).not.toContain('/internal/daily6/run-slot');
+    expect(discoveryPreflight).not.toContain('--fail-with-body');
+    expect(discoveryPreflight).not.toContain('cat "$response_file"');
   });
 });
 
@@ -124,6 +143,36 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('artifact');
     expect(hosted).not.toContain('set -x');
     expect(hosted).not.toContain('cat "$response_file"');
+    expect(hosted).toContain('or .errorClass == "DISCOVERY_AUTH_NOT_READY"');
+    expect(hosted).toContain('or .errorClass == "DISCOVERY_AUTH_EXPIRED"');
     expect(hosted).toContain('else "INVALID_RESPONSE"');
+  });
+});
+
+describe('Daily-6 hosted discovery authentication preflight workflow', () => {
+  it('is manual-only, read-only, single-request and output-sanitized', async () => {
+    const hosted = await readFile(
+      new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),
+      'utf8',
+    );
+
+    expect(hosted).toContain('workflow_dispatch:');
+    expect(hosted).not.toContain('schedule:');
+    expect(hosted).not.toContain('push:');
+    expect(hosted).not.toContain('pull_request:');
+    expect(hosted).toContain('contents: read');
+    expect(hosted).toContain('/internal/discovery/preflight');
+    expect(hosted.match(/curl /g)).toHaveLength(1);
+    expect(hosted).toContain('--get');
+    expect(hosted).toContain('Authorization: Bearer $HML_COLLECTION_TOKEN');
+    expect(hosted).not.toContain('/collect');
+    expect(hosted).not.toContain('/internal/daily6/run-slot');
+    expect(hosted).not.toContain('provider');
+    expect(hosted).not.toContain('gmail');
+    expect(hosted).not.toContain('artifact');
+    expect(hosted).not.toContain('set -x');
+    expect(hosted).not.toContain('cat "$response_file"');
+    expect(hosted).toContain("401) error_class='AUTH_INVALID_OR_EXPIRED'");
+    expect(hosted).toContain('STATUS=DISCOVERY_AUTH_PREFLIGHT_PASS');
   });
 });

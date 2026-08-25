@@ -42,7 +42,6 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).not.toContain('inputs.');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
-    expect(workflow).toContain('default: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
     expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');

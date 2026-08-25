@@ -46,6 +46,7 @@ export const routePolicies: readonly RoutePolicy[] = [
   policy('GET', '/internal/daily6/gmail-preflight', 'daily6:execute'),
   policy('GET', '/internal/daily6/gmail-config-diagnostics', 'daily6:execute'),
   policy('GET', '/internal/daily6/runtime-preflight', 'daily6:execute'),
+  policy('GET', '/internal/discovery/preflight', 'collection:execute'),
   policy('GET', '/internal/daily6/whatsapp-opportunities', 'opportunity:read'),
   policy('GET', '/internal/dailywhatsapp/cnpj-opportunities', 'opportunity:read'),
   policy('GET', '/internal/prospecting/city-metrics', 'prospecting:metrics:read'),

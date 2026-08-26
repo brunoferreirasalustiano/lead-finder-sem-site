@@ -27,6 +27,7 @@ describe('Daily-6 Gmail read-only preflight workflow', () => {
     expect(workflow).toContain('GMAIL_RUNTIME_AUTH=');
     expect(workflow).toContain('GMAIL_SENT_SEARCH=');
     expect(workflow).toContain('ERROR_CLASS=');
+    expect(workflow).toContain('.gmailAuth == "PASS" and .sentSearch == "PASS" then "NONE"');
     expect(workflow).toContain('STATUS=GMAIL_PREFLIGHT_FAIL');
     expect(workflow).toContain('STATUS=GMAIL_PREFLIGHT_PASS');
     expect(workflow).not.toContain('cat "$response_file"');

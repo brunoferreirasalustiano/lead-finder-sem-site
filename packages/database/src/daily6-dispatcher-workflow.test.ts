@@ -97,8 +97,12 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
-    expect(workflow).toContain("MAX_SCHEDULE_LATENESS_SECONDS: '3600'");
-    expect(workflow).toContain('test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"');
+    expect(workflow).toContain("'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'");
+    expect(workflow).toContain("'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'");
+    expect(workflow).toContain("'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'");
+    expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
+    expect(workflow).toContain('group: daily6-dispatcher');
+    expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');
     expect(workflow).not.toContain('workflow_dispatch:');
     expect(workflow).not.toContain('inputs.');
     expect(workflow).toContain('Campinas');
@@ -138,7 +142,10 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(collectStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
     expect(collectStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
     expect(collectStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
+    expect(collectStep).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(collectStep).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
     expect(collectStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(collectStep.indexOf('-X POST "$HML_API_URL/collect"'));
+    expect(collectStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(collectStep.indexOf('-X POST "$HML_API_URL/collect"'));
 
     const runSlotStepStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
     const runSlotStep = workflow.slice(runSlotStepStart);
@@ -146,7 +153,10 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(runSlotStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
     expect(runSlotStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
     expect(runSlotStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
+    expect(runSlotStep).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(runSlotStep).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
     expect(runSlotStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
+    expect(runSlotStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
   });
 
   it('reports aggregate rejection reasons without exposing candidate data', () => {

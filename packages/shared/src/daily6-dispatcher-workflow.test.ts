@@ -36,8 +36,16 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
-    expect(workflow).toContain("MAX_SCHEDULE_LATENESS_SECONDS: '3600'");
-    expect(workflow).toContain('test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"');
+    expect(workflow).toContain("'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'");
+    expect(workflow).toContain("'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'");
+    expect(workflow).toContain("'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'");
+    expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $scheduled_local" +%s');
+    expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $deadline_local" +%s');
+    expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
+    expect(workflow).toContain('echo "deadline_epoch=$deadline_epoch"');
+    expect(workflow).toContain('group: daily6-dispatcher');
+    expect(workflow).not.toContain('group: daily6-dispatcher-${{');
+    expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');
     expect(workflow).not.toContain('workflow_dispatch:');
     expect(workflow).not.toContain('inputs.');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
@@ -54,6 +62,25 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(gate).not.toContain('echo "$OPERATIONAL_AUTH_EXPIRES_AT"');
     expect(workflow).not.toContain('set -x');
     expect(workflow).not.toContain('echo "$HML_DAILY6_TOKEN"');
+  });
+
+  it('rechecks the slot deadline immediately before discovery and send POSTs', () => {
+    const collectStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const runSlotStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    const collect = workflow.slice(collectStart, workerStart);
+    const runSlot = workflow.slice(runSlotStart);
+
+    expect(collect).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(collect).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
+    expect(collect.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      collect.indexOf('-X POST "$HML_API_URL/collect"'),
+    );
+    expect(runSlot).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(runSlot).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
+    expect(runSlot.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      runSlot.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'),
+    );
   });
 
   it('reports only sanitized run-slot HTTP failures without fail-with-body output', () => {

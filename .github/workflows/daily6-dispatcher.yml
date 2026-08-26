@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: b44c1c8d45c0fd3233b8a353ceb13d04fbea4214
+  EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1
   HML_BRANCH: hml/render-supabase-plan-b
 
 jobs:

@@ -325,6 +325,7 @@ export function buildApp(db: Database, options: {
   manualEmailFingerprintKey?: string;
   daily6PilotEnabled?: boolean;
   discoveryAuthRequired?: boolean;
+  discoveryAuthExpiresAt?: Date;
   daily6AuthRequired?: boolean;
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
@@ -552,6 +553,22 @@ export function buildApp(db: Database, options: {
         errorClass: 'OPERATIONAL_SHA_MISMATCH',
       });
     }
+    if (!options.discoveryAuthRequired || !options.discoveryAuthExpiresAt) {
+      return reply.status(503).send({
+        runtimeConfigured: true,
+        operationalShaMatch: true,
+        daily6RuntimeReady: false,
+        errorClass: 'DISCOVERY_AUTH_NOT_READY',
+      });
+    }
+    if (options.discoveryAuthExpiresAt.getTime() <= Date.now()) {
+      return reply.status(503).send({
+        runtimeConfigured: true,
+        operationalShaMatch: true,
+        daily6RuntimeReady: false,
+        errorClass: 'DISCOVERY_AUTH_EXPIRED',
+      });
+    }
     const daily6RuntimeReady = options.daily6PilotEnabled === true
       && runtime.enabled
       && runtime.realSendEnabled
@@ -570,6 +587,19 @@ export function buildApp(db: Database, options: {
       runtimeConfigured: true,
       operationalShaMatch: true,
       daily6RuntimeReady: true,
+    };
+  });
+  app.get('/internal/discovery/preflight', async (request, reply) => {
+    reply.header('cache-control', 'no-store').header('pragma', 'no-cache');
+    if (!options.discoveryAuthRequired) {
+      return reply.status(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+    }
+    if (request.principal?.authenticationSource !== 'HML_DISCOVERY_BEARER_TOKEN') {
+      return reply.status(403).send({ error: 'Access denied', code: 'FORBIDDEN' });
+    }
+    return {
+      discoveryAuth: 'PASS',
+      collectionPermission: 'PASS',
     };
   });
   app.get('/internal/daily6/whatsapp-opportunities', async (request, reply) => {

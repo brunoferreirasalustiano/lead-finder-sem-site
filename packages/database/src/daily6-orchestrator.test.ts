@@ -233,6 +233,29 @@ describe('Daily-6 city contract', () => {
     )).rejects.toThrow('DAILY6_DISCOVERY_NOT_TERMINAL');
   });
 
+  it('terminalizes a batch when pre-send selection fails without starting a send', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ job_exists: true, status: 'COMPLETED', error: null, attempt_count: 1 }])
+      .mockRejectedValueOnce(new Error('CANDIDATE_QUERY_FAILED'))
+      .mockResolvedValueOnce([{ updated: true, reason: 'RUN_SLOT_FAILURE' }]);
+
+    await expect(runDaily6Slot(
+      { execute } as never,
+      {
+        date: '2026-08-13',
+        slot: '16',
+        city: 'Campinas',
+        policyVersion: 'daily6-v1',
+        expectedOperationalSha: 'a'.repeat(40),
+      },
+      authorization,
+      runtime,
+    )).rejects.toThrow('CANDIDATE_QUERY_FAILED');
+
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+
   it('rejects a non-Campinas city before touching persistence', async () => {
     const execute = vi.fn();
     await expect(runDaily6Slot(

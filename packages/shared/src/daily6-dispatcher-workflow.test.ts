@@ -36,13 +36,21 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
-    expect(workflow).toContain("MAX_SCHEDULE_LATENESS_SECONDS: '3600'");
-    expect(workflow).toContain('test "$lateness_seconds" -le "$MAX_SCHEDULE_LATENESS_SECONDS"');
-    expect(workflow).toContain("format('{0}|{1}', inputs.date, inputs.slot)");
+    expect(workflow).toContain("'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'");
+    expect(workflow).toContain("'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'");
+    expect(workflow).toContain("'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'");
+    expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $scheduled_local" +%s');
+    expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $deadline_local" +%s');
+    expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
+    expect(workflow).toContain('echo "deadline_epoch=$deadline_epoch"');
+    expect(workflow).toContain('group: daily6-dispatcher');
+    expect(workflow).not.toContain('group: daily6-dispatcher-${{');
+    expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');
+    expect(workflow).not.toContain('workflow_dispatch:');
+    expect(workflow).not.toContain('inputs.');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
-    expect(workflow).toContain('default: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892');
+    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: b44c1c8d45c0fd3233b8a353ceb13d04fbea4214');
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).not.toContain('backfill');
@@ -54,6 +62,25 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(gate).not.toContain('echo "$OPERATIONAL_AUTH_EXPIRES_AT"');
     expect(workflow).not.toContain('set -x');
     expect(workflow).not.toContain('echo "$HML_DAILY6_TOKEN"');
+  });
+
+  it('rechecks the slot deadline immediately before discovery and send POSTs', () => {
+    const collectStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const runSlotStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    const collect = workflow.slice(collectStart, workerStart);
+    const runSlot = workflow.slice(runSlotStart);
+
+    expect(collect).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(collect).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
+    expect(collect.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      collect.indexOf('-X POST "$HML_API_URL/collect"'),
+    );
+    expect(runSlot).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
+    expect(runSlot).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
+    expect(runSlot.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      runSlot.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'),
+    );
   });
 
   it('reports only sanitized run-slot HTTP failures without fail-with-body output', () => {
@@ -71,13 +98,16 @@ describe('native Daily-6 scheduler authorization gate', () => {
   it('proves the loaded runtime contract once before checking identity or enqueueing', () => {
     const readinessStart = workflow.indexOf('- name: Verify HML readiness');
     const preflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
+    const discoveryPreflightStart = workflow.indexOf('- name: Verify dedicated discovery authentication');
     const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
-    const preflight = workflow.slice(preflightStart, identityStart);
+    const preflight = workflow.slice(preflightStart, discoveryPreflightStart);
+    const discoveryPreflight = workflow.slice(discoveryPreflightStart, identityStart);
 
     expect(readinessStart).toBeGreaterThanOrEqual(0);
     expect(preflightStart).toBeGreaterThan(readinessStart);
-    expect(identityStart).toBeGreaterThan(preflightStart);
+    expect(discoveryPreflightStart).toBeGreaterThan(preflightStart);
+    expect(identityStart).toBeGreaterThan(discoveryPreflightStart);
     expect(enqueueStart).toBeGreaterThan(identityStart);
     expect(preflight).toContain('/internal/daily6/runtime-preflight');
     expect(preflight).toContain('--get');
@@ -93,7 +123,23 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(preflight).not.toContain('--fail-with-body');
     expect(preflight).not.toContain('cat "$response_file"');
     expect(preflight).toContain('or .errorClass == "RUNTIME_NOT_READY"');
+    expect(preflight).toContain('or .errorClass == "DISCOVERY_AUTH_NOT_READY"');
+    expect(preflight).toContain('or .errorClass == "DISCOVERY_AUTH_EXPIRED"');
     expect(preflight).toContain('else "INVALID_RESPONSE"');
+
+    expect(discoveryPreflight).toContain('/internal/discovery/preflight');
+    expect(discoveryPreflight).toContain('--get');
+    expect(discoveryPreflight).toContain('--max-time 30');
+    expect(discoveryPreflight).toContain('Authorization: Bearer $HML_COLLECTION_TOKEN');
+    expect(discoveryPreflight).toContain("401) failure_class='AUTH_INVALID_OR_EXPIRED'");
+    expect(discoveryPreflight).toContain("403) failure_class='PERMISSION_OR_SOURCE_DENIED'");
+    expect(discoveryPreflight).toContain('.discoveryAuth == "PASS"');
+    expect(discoveryPreflight).toContain('.collectionPermission == "PASS"');
+    expect(discoveryPreflight.match(/curl /g)).toHaveLength(1);
+    expect(discoveryPreflight).not.toContain('/collect');
+    expect(discoveryPreflight).not.toContain('/internal/daily6/run-slot');
+    expect(discoveryPreflight).not.toContain('--fail-with-body');
+    expect(discoveryPreflight).not.toContain('cat "$response_file"');
   });
 });
 
@@ -110,7 +156,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
     expect(hosted).toContain(
-      'EXPECTED_OPERATIONAL_SHA: bab3a610e9c9588ecb8b95f0ecbc7114f1e0a892',
+      'EXPECTED_OPERATIONAL_SHA: b44c1c8d45c0fd3233b8a353ceb13d04fbea4214',
     );
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
@@ -123,6 +169,36 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('artifact');
     expect(hosted).not.toContain('set -x');
     expect(hosted).not.toContain('cat "$response_file"');
+    expect(hosted).toContain('or .errorClass == "DISCOVERY_AUTH_NOT_READY"');
+    expect(hosted).toContain('or .errorClass == "DISCOVERY_AUTH_EXPIRED"');
     expect(hosted).toContain('else "INVALID_RESPONSE"');
+  });
+});
+
+describe('Daily-6 hosted discovery authentication preflight workflow', () => {
+  it('is manual-only, read-only, single-request and output-sanitized', async () => {
+    const hosted = await readFile(
+      new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),
+      'utf8',
+    );
+
+    expect(hosted).toContain('workflow_dispatch:');
+    expect(hosted).not.toContain('schedule:');
+    expect(hosted).not.toContain('push:');
+    expect(hosted).not.toContain('pull_request:');
+    expect(hosted).toContain('contents: read');
+    expect(hosted).toContain('/internal/discovery/preflight');
+    expect(hosted.match(/curl /g)).toHaveLength(1);
+    expect(hosted).toContain('--get');
+    expect(hosted).toContain('Authorization: Bearer $HML_COLLECTION_TOKEN');
+    expect(hosted).not.toContain('/collect');
+    expect(hosted).not.toContain('/internal/daily6/run-slot');
+    expect(hosted).not.toContain('provider');
+    expect(hosted).not.toContain('gmail');
+    expect(hosted).not.toContain('artifact');
+    expect(hosted).not.toContain('set -x');
+    expect(hosted).not.toContain('cat "$response_file"');
+    expect(hosted).toContain("401) error_class='AUTH_INVALID_OR_EXPIRED'");
+    expect(hosted).toContain('STATUS=DISCOVERY_AUTH_PREFLIGHT_PASS');
   });
 });

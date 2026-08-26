@@ -1,0 +1,72 @@
+name: Daily-6 discovery authentication read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discovery-preflight:
+    name: Daily-6 discovery authentication read-only preflight
+    runs-on: ubuntu-latest
+    environment: hml-discovery
+    timeout-minutes: 1
+    env:
+      HML_API_URL: ${{ vars.HML_API_URL }}
+      HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
+    steps:
+      - name: Execute exactly one authenticated read-only request
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$HML_API_URL"
+          test -n "$HML_COLLECTION_TOKEN"
+          response_file="$(mktemp)"
+          status_file="$(mktemp)"
+          cleanup() { rm -f "$response_file" "$status_file"; }
+          trap cleanup EXIT
+          if ! curl --silent --show-error --max-time 30 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --get "$HML_API_URL/internal/discovery/preflight" \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            -H 'Cache-Control: no-cache' \
+            >"$status_file"; then
+            echo 'HTTP_STATUS=000'
+            echo 'DISCOVERY_AUTH=NOT_PROVEN'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            echo 'ERROR_CLASS=NETWORK_OR_TIMEOUT'
+            exit 1
+          fi
+          http_status="$(<"$status_file")"
+          if [ "$http_status" != '200' ]; then
+            case "$http_status" in
+              401) error_class='AUTH_INVALID_OR_EXPIRED' ;;
+              403) error_class='PERMISSION_OR_SOURCE_DENIED' ;;
+              404) error_class='PREFLIGHT_DISABLED' ;;
+              5??) error_class='RUNTIME_UNAVAILABLE' ;;
+              *) error_class='INVALID_RESPONSE' ;;
+            esac
+            printf 'HTTP_STATUS=%s\n' "$http_status"
+            echo 'DISCOVERY_AUTH=FAIL'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            printf 'ERROR_CLASS=%s\n' "$error_class"
+            exit 1
+          fi
+          if ! jq -e \
+            '.discoveryAuth == "PASS"
+             and .collectionPermission == "PASS"
+             and (keys | sort) == ["collectionPermission", "discoveryAuth"]' \
+            "$response_file" >/dev/null; then
+            printf 'HTTP_STATUS=%s\n' "$http_status"
+            echo 'DISCOVERY_AUTH=FAIL'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            echo 'ERROR_CLASS=INVALID_RESPONSE'
+            exit 1
+          fi
+          printf 'HTTP_STATUS=%s\n' "$http_status"
+          echo 'DISCOVERY_AUTH=PASS'
+          echo 'COLLECTION_PERMISSION=PASS'
+          echo 'ERROR_CLASS=NONE'
+          echo 'STATUS=DISCOVERY_AUTH_PREFLIGHT_PASS'

@@ -169,6 +169,13 @@ export const emptyDaily6ProviderTelemetry = (): Daily6ProviderTelemetry => ({
   reasons: Object.fromEntries(DAILY6_PROVIDER_REASONS.map((value) => [value, 0])) as Record<Daily6ProviderReason, number>,
 });
 
+const safeDaily6FailureReason = (): 'RUN_SLOT_FAILURE' => {
+  // Error details are intentionally not persisted.  The DB function accepts
+  // this fixed reason only, preventing arbitrary data from entering the
+  // terminal batch audit field.
+  return 'RUN_SLOT_FAILURE';
+};
+
 export const recordDaily6ProviderTelemetry = (
   telemetry: Daily6ProviderTelemetry,
   outcome: Daily6ProviderOutcome,
@@ -379,6 +386,8 @@ export async function runDaily6Slot(
       ? 'DAILY6_DISCOVERY_FAILED'
       : 'DAILY6_DISCOVERY_NOT_TERMINAL');
   }
+  let sendStarted = false;
+  try {
   const rows = await db.execute<CandidateRow>(sql`
     select * from lead_finder_internal.list_daily6_candidates(
       ${queryCity},${input.category ?? null},${DAILY6_PROGRESSIVE_LIMITS.maxDiscoveredPerSlot}
@@ -439,10 +448,11 @@ export async function runDaily6Slot(
     providerCalls: 0,
   };
 
-  // Search/approval is complete before any send gate is entered.  This keeps
-  // candidate discovery progressive while preserving SEND_RETRY=0 and making
-  // an ambiguous send terminal without enriching another candidate.
-  for (const candidate of selection.approvedCandidates.slice(0, DAILY6_PROGRESSIVE_LIMITS.maxSendsPerSlot)) {
+    // Search/approval is complete before any send gate is entered.  This keeps
+    // candidate discovery progressive while preserving SEND_RETRY=0 and making
+    // an ambiguous send terminal without enriching another candidate.
+    for (const candidate of selection.approvedCandidates.slice(0, DAILY6_PROGRESSIVE_LIMITS.maxSendsPerSlot)) {
+      sendStarted = true;
     let context: { pilot_run_id: string; replayed: boolean } | undefined;
     try {
       const contextRows = await db.execute<{ pilot_run_id: string; replayed: boolean }>(sql`
@@ -508,14 +518,14 @@ export async function runDaily6Slot(
       `);
       throw error;
     }
-  }
+    }
 
-  await db.execute(sql`
+    await db.execute(sql`
     select lead_finder_internal.bump_daily6_batch_metrics(
       ${batchId},${report.discovered},${report.enriched},${report.autoApproved},${report.rejected},${report.ready}
     )
   `);
-  const terminalRows = await db.execute<{
+    const terminalRows = await db.execute<{
     status: 'COMPLETED' | 'BLOCKED';
     terminal_reason: string;
   }>(sql`
@@ -524,13 +534,29 @@ export async function runDaily6Slot(
       ${report.sent},${report.delivered},${report.failed},${report.ambiguous},${report.batchTerminalReason}
     )
   `);
-  const terminal = terminalRows[0];
-  if (!terminal) throw new Error('DAILY6_BATCH_TERMINALIZATION_MISSING');
-  report.batchStatus = terminal.status;
-  report.batchTerminalReason = terminal.terminal_reason;
-  return {
-    ...report,
-    providerOutcomeCounts: telemetry.outcomes,
-    providerReasonCounts: telemetry.reasons,
-  };
+    const terminal = terminalRows[0];
+    if (!terminal) throw new Error('DAILY6_BATCH_TERMINALIZATION_MISSING');
+    report.batchStatus = terminal.status;
+    report.batchTerminalReason = terminal.terminal_reason;
+    return {
+      ...report,
+      providerOutcomeCounts: telemetry.outcomes,
+      providerReasonCounts: telemetry.reasons,
+    };
+  } catch (error) {
+    if (!sendStarted) {
+      try {
+        await db.execute(sql`
+          select * from lead_finder_internal.terminalize_daily6_without_send(
+            ${batchId}, ${safeDaily6FailureReason()}, 0
+          )
+        `);
+      } catch {
+        // Preserve the original failure.  If the guarded terminalization is
+        // unavailable or refuses due to evidence, the caller must fail closed
+        // and an operator can inspect the still-pending identity.
+      }
+    }
+    throw error;
+  }
 }

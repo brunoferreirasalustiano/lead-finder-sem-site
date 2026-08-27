@@ -1,6 +1,6 @@
 # Lead Finder Brasil — Current Autonomous State
 
-Last reconciled: 2026-08-13T03:14Z.
+Last reconciled: 2026-08-13T12:52Z.
 
 This file is the resume point after model capacity errors, disconnects, context compaction or agent handoff. Current external state always wins over this file; update this file after every completed gate.
 
@@ -10,37 +10,28 @@ This file is the resume point after model capacity errors, disconnects, context 
 PROJECT=Lead Finder Brasil
 REPO=brunoferreirasalustiano/lead-finder-sem-site
 HML_BRANCH=hml/render-supabase-plan-b
-HML_SHA=131f1333a3f0595baad2f7903c1e85240f681f73
+HML_SHA=3ac05d56610cd860d0560a7e26fc9554011ed95a
 MAIN_SHA=8181c3e007ef8dee7117f81fc7f07ca16a05d002
-LAST_MERGED_PR=268
-PR262_HEAD=f8203dac4b25ca67755e1f76f5feec6620aac0dc
-PR262_MERGE=d7c4181fa1a661cf9323e455642598fddcf96a27
-PR263_HEAD=2313198cd465acb7fd47d27e67bc422de2c85f01
-PR263_MERGE=56d9a468f67b6187988bf555d4606f79af94ade8
-PR264_HEAD=b997bc5d9227549f5c9aecd0ecf2db3f71c3aee5
-PR264_MERGE=f23bb6962c0435cd97c0f13ffdca5c6e40cf038e
-PR265_HEAD=b9fca0b30383e863ac945feffe60f1e1d3e62b38
-PR265_MERGE=894c136dba8e869d8a27433efd256f40d5062331
-PR266_HEAD=9de93fc17b8a4d0b8c3e129d0f583d9d1bf93815
-PR266_MERGE=6fa783adb2bf3a4a405a563ef20659a8dfaf4cd7
-PR267_HEAD=20d0da8a6a211616387151047fd2c53424233942
-PR267_MERGE=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
-PR268_HEAD=b404397425f43cdc190ae7d391ad697887bcd6d8
-PR268_MERGE=131f1333a3f0595baad2f7903c1e85240f681f73
-EXACT_SHA_CI_RUN=31662976816
-EXACT_SHA_CI=PASS
-PR266_EXACT_HEAD_CI_RUN=31660764607
-PR266_EXACT_HEAD_CI=PASS
-PR267_EXACT_HEAD_CI_RUN=31661750246
-PR267_EXACT_HEAD_CI=PASS
-PR268_EXACT_HEAD_CI_RUN=31662690454
-PR268_EXACT_HEAD_CI=PASS
-PR262_CI_RUN=31649854222
-DEPLOYMENT_SMOKE_RUN=31649840784
-POSTMERGE_DEPLOYMENT_SMOKE_RUN=31652985173
+LAST_MERGED_PR=275
+PR270_MERGE=b98ac833de4a9e582659861e13ed5ed1fb164655
+PR272_MERGE=ea228eb49c1c54c7bed7c43a6fb91a2cc2f865f1
+PR273_MERGE=5b178489303e7c95fe81a81584e877a7f2f3436e
+PR274_MERGE=4d9ac303324fc89db482883b0d26670ca0ce9dfc
+PR275_HEAD=1cbdeea17151f7f41f50d7b9f5b353ffc961dca5
+PR275_MERGE=3ac05d56610cd860d0560a7e26fc9554011ed95a
+PR275_EXACT_HEAD_CI_RUN=31701150328
+PR275_EXACT_HEAD_CI=PASS
+PR275_POSTMERGE_CI_RUN=31701587730
+PR275_POSTMERGE_CI=PASS
+PR272_POSTMERGE_CI_RUN=31696445463
+PR272_POSTMERGE_CI=PASS
+PR273_POSTMERGE_CI_RUN=31698068105
+PR273_POSTMERGE_CI=PASS
+PR274_POSTMERGE_CI_RUN=31699364698
+PR274_POSTMERGE_CI=PASS
 ```
 
-PR #260's normalization P1 was fixed by PR #262. PR #262 was merged only after its exact-head checks passed and exact merged-SHA CI run 31650521308 completed successfully. PR #264 is documentation-only; its merge SHA f23bb696 was revalidated by exact-SHA CI run 31652985214 and deployment smoke run 31652985173, both successful. PR #265 reconciled this file to HML merge SHA 894c136 and exact merged-SHA CI run 31659193151, which passed. PR #266 merged the recovery gate at 6fa783a; merged-SHA CI run 31661064775 passed. PR #267 reconciled this stop condition at merge SHA f65cc94; merged-SHA CI run 31662046244 passed. PR #268 finalized the state at merge SHA 131f133; merged-SHA CI run 31662976816 passed.
+PR #270 added PII-safe startup diagnostics that report only the startup stage and invalid configuration field names. PR #272 made expired dedicated HML discovery/Daily-6 credentials request-denied without taking public health/readiness down. PR #273 separated provider health probing from full discovery and added PII-safe provider accounting. PR #274 restored hosted readiness plus authenticated no-enqueue `/collect` preflight before G6. PR #275 added conservative worker-only CNPJ.ws operational pacing after the single G6 identified the provider-specific rate limit.
 
 ## Supabase HML
 
@@ -54,7 +45,7 @@ MIGRATION_0059=APPLIED_NATIVE_REGISTRY (20260812232902)
 PUBLIC_SCHEMA_MIGRATION_HISTORY=HISTORICALLY_DIVERGENT_DO_NOT_FABRICATE
 ```
 
-Hosted ACL facts for `lead_finder_api_runtime` remain least-privilege:
+Hosted least-privilege boundaries previously validated for `lead_finder_api_runtime` remain the intended contract:
 
 ```text
 DAILY6_BATCHES_SELECT=false
@@ -68,9 +59,7 @@ ANON_EXECUTE=false
 AUTHENTICATED_EXECUTE=false
 ```
 
-Discovery runtime role has been validated with TLS, RLS, narrow direct discovery-table access and no Daily-6 ledger access.
-
-Migration 0059 was validated on HML with a reversible transaction covering uppercase NFC normalization, decomposed NFD normalization, replay idempotency and city-mismatch rejection. The transaction rolled back and synthetic_jobs_remaining=0, synthetic_batches_remaining=0. Direct table privileges remain false; RLS remains true.
+The discovery runtime role uses the narrow hosted discovery path and no Daily-6 ledger access. No failed collection row is to be requeued or edited for recovery.
 
 ## Render HML
 
@@ -79,81 +68,123 @@ SERVICE=lead-finder-api-hml
 SERVICE_ID=srv-d9fbpp6rnols73bko9f0
 WORKSPACE=Bruno's workspace
 WORKSPACE_ID=tea-d72o44oule4c73cut1l0
-RENDER_LAST_LIVE_SHA=d7c4181fa1a661cf9323e455642598fddcf96a27
-RENDER_ATTEMPTED_SHA=f65cc948bad0fbcdeaf0f5d4d355ea3f40792afd
-RENDER_DEPLOY_ID=dep-d9uir57qj5pc73fn1m20
-RENDER_STATUS=UPDATE_FAILED_STARTUP_INVALID_CONFIGURATION
-RENDER_HEALTH=NOT RUN (deploy dep-d9uir57qj5pc73fn1m20 exited status 1 at 2026-08-13T02:36:54Z)
-RENDER_READINESS=NOT RUN (startup emitted INVALID_CONFIGURATION; last prior 200 logged 2026-08-12T23:48Z)
+RENDER_LIVE_SHA=4d9ac303324fc89db482883b0d26670ca0ce9dfc
+RENDER_DEPLOY_ID=dep-d9urekfqj5pc738atu10
+RENDER_STATUS=LIVE
+RENDER_HEALTH=200
+RENDER_READINESS=200
 ```
 
-Discovery-only hosted profile remains the intended state until canary authorization gates are satisfied.
+The API intentionally remains on `4d9ac303...`: PR #275 changed only worker operational pacing, not the Render API runtime. Do not redeploy the API merely to make its SHA equal the worker-only HML head.
+
+Expired dedicated HML authentication no longer causes a startup outage. Expired credentials remain unusable for their protected routes.
+
+## Provider health evidence
+
+A provider-only probe was separated from collection credentials and database credentials before G6.
+
+```text
+PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS
+TAVILY_USAGE_SCOPE=account_plan
+TAVILY_PLAN_USAGE_OBSERVED=10
+TAVILY_PLAN_LIMIT_OBSERVED=1000
+CNPJ_WS_HEALTH_HTTP=200
+PROVIDER_PROBE_DISCOVERY_DISPATCHED=false
+PROVIDER_PROBE_COLLECTION_JOB_CREATED=false
+```
+
+The one-time provider probe workflow was removed after evidence capture.
 
 ## Discovery workflow history
 
-Historical controlled discovery runs:
+Historical runs before provider-identifiable telemetry:
 
 ```text
-RUN_1=31614291037  # failed: HML_DATABASE_URL absent
-RUN_2=31615733632  # failed: HML_DATABASE_URL absent
-RUN_3=31617067686  # failed: API runtime direct daily6_batches privilege boundary
-RUN_4=31651324092  # exact SHA/secrets/readiness/auth/build/enqueue PASS; worker FAILED SOURCE_RATE_LIMITED
+RUN_1=31614291037  # failed before provider call: HML_DATABASE_URL absent
+RUN_2=31615733632  # failed before provider call: HML_DATABASE_URL absent
+RUN_3=31617067686  # failed before provider call: API runtime privilege boundary
+RUN_4=31651324092  # one historical dispatch; FAILED SOURCE_RATE_LIMITED
 ```
 
-Runs 1-3 made no provider discovery calls. Run 4 reached the external enrichment provider but sent no email/WhatsApp.
+Historical terminal row remains untouched:
 
-`HML_DATABASE_URL` is present in the GitHub Environment `hml-discovery`.
+```text
+REQUEST_IDENTITY=2026-08-12|16|campinas-sp|daily6-v1
+STATUS=FAILED
+ATTEMPT_COUNT=1
+ERROR=SOURCE_RATE_LIMITED
+REQUEUE=false
+```
 
-Run 31651324092 was the single authorized dispatch. The collection job reached `FAILED` with `attempt_count=1` and `SOURCE_RATE_LIMITED` during enrichment. Hosted aggregate evidence since dispatch: 30 leads collected, 1 enriched, 0 verified evidence rows, 0 valid email contacts, 0 campaign outbox rows and 0 Daily-6 send-ledger rows. This is provider-unavailable/UNKNOWN evidence, never evidence of absence.
+### Current G6 sequence
 
-The failed request identity `2026-08-12|16|campinas-sp|daily6-v1` is terminal and remains untouched: `FAILED`, `attempt_count=1`, `error=SOURCE_RATE_LIMITED`. Recovery always creates a fresh request identity; it never requeues or edits this row.
+Run `31700024125` revalidated provider health, exact SHA, readiness and collection auth/egress. It failed in the local `psql` precheck before the POST `/collect` because the SQL client did not interpolate the variable inside the command form used. Supabase authoritatively confirmed that the fresh identity did not exist after this run. Therefore this run was a pre-dispatch script failure, not a discovery dispatch.
 
-## Fixed blockers
+Run `31700292036` corrected only that deterministic SQL-client issue and performed the single fresh controlled G6 dispatch.
 
-PR #259 fixed the direct-table least-privilege incompatibility by adding the narrow `lead_finder_internal.enqueue_collection_job(text,jsonb)` function.
+```text
+G6_ACTUAL_DISPATCH_RUN=31700292036
+REQUEST_IDENTITY=2026-08-13|09|campinas-sp|daily6-v1
+STATUS=FAILED
+ATTEMPT_COUNT=1
+ERROR=CNPJ_WS_RATE_LIMITED
+FAILED_JOB_REQUEUE=false
+```
 
-PR #260 / migration 0058 closed the original nullable-JSON fail-open and most normalization drift by adding explicit null-safe authorization checks and an incremental function replacement.
+Provider accounting from that worker is complete and PII-safe:
 
-## Resolved enqueue blocker — migration 0059
+```text
+TAVILY_ATTEMPTED_CALLS=5
+TAVILY_SUCCESSFUL_CALLS=5
+TAVILY_RATE_LIMITED_429_CALLS=0
+CNPJ_WS_ATTEMPTED_CALLS=4
+CNPJ_WS_SUCCESSFUL_CALLS=3
+CNPJ_WS_RATE_LIMITED_429_CALLS=1
+CNPJ_WS_RETRY_AFTER_SECONDS=60
+RATE_LIMIT_PROVIDER_IDENTIFIABLE=PASS
+PROVIDER_CALL_ACCOUNTING=PASS
+CURRENT_PROVIDER=CNPJ_WS
+```
 
-The historical migration 0058 defect affected uppercase accented cities such as `Águas de Lindóia`: its translation occurred before lowercasing, diverging from canonical TypeScript normalization.
+The one-time G6 push workflow was removed immediately after the terminal stop. Its removal created no replacement workflow run. No second real G6 dispatch is authorized by this state.
 
-Migration 0059 is now applied and the original P1 is resolved. Applied migrations 0057/0058 are byte-unchanged. The exact merged SHA CI, hosted ACL/RLS checks, reversible normalization/replay/negative transaction and Render live/readiness checks all passed.
+## CNPJ.ws pacing hardening
 
-## Current blocker — discovery provider rate limit
+The public-provider contract used by this project recognizes a documented ceiling of 3 requests/minute. Hosted G6 evidence showed that the fourth request under the previous nominal 3-RPM pacing still received HTTP 429 with `Retry-After=60`. The project does not infer the provider's internal rate-limit window model from that observation.
 
-The single controlled discovery dispatch passed all preflight and enqueue checks, but its bounded worker failed closed with `SOURCE_RATE_LIMITED`. The enrichment provider returned no usable evidence; no send path was reached. The exact provider remains UNKNOWN until provider-specific telemetry from a fresh bounded run proves it; historical provider call counts are UNKNOWN and are not inferred from aggregate rows.
+PR #275 adds a worker-only conservative operational policy:
 
-Recovery is executable and fail-closed:
+```text
+CNPJ_WS_DOCUMENTED_PUBLIC_MAX_RPM=3
+CNPJ_WS_OPERATIONAL_SAFE_RPM=2
+HTTP_429_RETRY=false
+```
 
-1. recover the reviewed HML runtime configuration or obtain authorized configuration evidence; do not change secrets ad hoc;
-2. revalidate health/readiness on the deployed merge SHA;
-3. validate the provider health/usage probes;
-4. dispatch exactly one fresh Campinas/SP identity after checking it does not already exist;
-5. require complete PII-safe accounting and terminal `COMPLETED`; never requeue the failed identity.
+The policy preserves any stricter configured limit. It has unit coverage, exact-head CI and successful merged-SHA CI. It does not authorize a new provider call or a new discovery dispatch.
 
-Pacing evidence used by the bounded policy: Tavily search is paced at least 1 second between calls, with retry-after honored only up to the explicit 10-second discovery cap; CNPJ.ws public API is capped at 3 requests/minute. These limits are not reused for Gmail or commercial email.
-
-## Immediate next gate
+## Current gates
 
 ```text
 NEXT_PHASE=B
-NEXT_TASK=RECOVER_HML_INVALID_CONFIGURATION_THEN_HEALTH_PROBE_AND_ONE_FRESH_DISCOVERY
-BASE_SHA=131f1333a3f0595baad2f7903c1e85240f681f73
-DISCOVERY_E2E=FAIL_PROVIDER_RATE_LIMITED
-ACCURACY=NOT_RUN_PROVIDER_UNKNOWN
+BASE_SHA=3ac05d56610cd860d0560a7e26fc9554011ed95a
+DISCOVERY_E2E=FAIL_CNPJ_WS_RATE_LIMITED
+RATE_LIMIT_PROVIDER_IDENTIFIABLE=PASS
+PROVIDER_CALL_ACCOUNTING=PASS
+PROVIDER_HEALTH_OR_USAGE_EVIDENCE=PASS
+ACCURACY=NOT_RUN
 AUTOMATED_COMPLIANCE=NOT_RUN
 QUOTAS_AND_IDEMPOTENCY=NOT_RUN
+CANARY=NOT_RUN
+DAILY6_SCHEDULER=DISABLED
+REPLY_ROUTING=NOT_RUN
 REAL_OUTREACH_BLOCKED=true
 PROJECT_BLOCKED=true
-CURRENT_PROVIDER=UNKNOWN_UNTIL_PROOF
-PROVIDER_CALL_COUNTS=UNKNOWN_UNTIL_FRESH_PII_SAFE_ACCOUNTING
-RATE_LIMIT_PROVIDER_IDENTIFIABLE=NOT RUN
-PROVIDER_CALL_ACCOUNTING=NOT RUN
-PROVIDER_HEALTH_OR_USAGE_EVIDENCE=NOT RUN
 FAILED_JOB_REQUEUE=false
-STOP_CONDITION=RENDER_STARTUP_INVALID_CONFIGURATION_MISSING_AUTHORIZED_CONFIG
+STOP_CONDITION=CNPJ_WS_RATE_LIMITED_AFTER_SINGLE_G6
+NEXT_TASK=HOLD_G6_NO_RETRY_UNTIL_NEW_EXPLICIT_AUTHORIZATION_AND_FRESH_PROVIDER_WINDOW
 ```
+
+A failed G6 does not unlock later gates. `NOT_RUN` never means `PASS`. Do not start Accuracy, Automated Compliance, quota/idempotency hosted execution, canary, scheduler or reply routing while G6 remains failed.
 
 ## Commercial/operation invariants
 
@@ -183,13 +214,16 @@ DAILY6_SCHEDULER=DISABLED
 REPLY_ROUTING=NOT_RUN
 ```
 
+No Gmail send, WhatsApp send, commercial canary, scheduler activation or reply-routing activation occurred during the recovery/G6 sequence.
+
 ## Resume instruction
 
 An autonomous coordinator resuming work must:
 
-1. revalidate HML/Main/Render/Supabase/GitHub state;
-2. update this file if facts changed;
-3. keep the single-dispatch invariant; do not retry run 31651324092 or requeue its terminal job;
-4. require provider-identifiable telemetry, complete PII-safe accounting and health/usage evidence before the one authorized fresh identity;
-5. if HML startup is invalid, recover only through a reviewed configuration/deploy change and revalidate health/readiness;
-6. never enable real outreach, Daily-6 or reply routing while any recovery or provider gate is not PASS.
+1. revalidate HML/Main/Render/Supabase/GitHub state; current external state wins over this document;
+2. preserve both terminal failed collection rows and their `attempt_count=1`; never requeue or edit them for recovery;
+3. treat run `31700292036` as the single actual G6 dispatch in this sequence; do not create another discovery identity without new explicit authorization after the Stop Condition;
+4. preserve `RATE_LIMIT_PROVIDER_IDENTIFIABLE=PASS`, `PROVIDER_CALL_ACCOUNTING=PASS` and the exact observed provider counters as evidence, not as authorization to retry;
+5. keep the CNPJ.ws operational worker pace at or below the reviewed safe policy unless a new reviewed change supersedes it;
+6. do not advance G7/G8/G9, canary, Daily-6, Gmail, WhatsApp or reply routing while `DISCOVERY_E2E` is failed;
+7. never expose secrets, raw provider response bodies, email addresses or other PII in state/recovery logs.

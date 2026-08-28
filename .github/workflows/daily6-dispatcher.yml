@@ -12,8 +12,20 @@ on:
     - cron: '7 12 * * *' # 09:07 America/Sao_Paulo (UTC-3), logical slot 09
     - cron: '7 16 * * *' # 13:07 America/Sao_Paulo (UTC-3), logical slot 13
     - cron: '7 19 * * *' # 16:07 America/Sao_Paulo (UTC-3), logical slot 16
-  # Deliberately schedule-only: manual dispatch could bypass the natural-slot
-  # lateness gate and turn a failed slot into an unsafe catch-up attempt.
+  workflow_dispatch:
+    inputs:
+      scheduled_at:
+        description: Canonical UTC timestamp of the natural Daily-6 slot
+        required: true
+        type: string
+      correlation_id:
+        description: Non-PII UUID for cross-system audit correlation
+        required: true
+        type: string
+      dispatch_nonce:
+        description: One-time UUID claimed atomically before commercial work
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1
+  EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9
   HML_BRANCH: hml/render-supabase-plan-b
 
 jobs:
@@ -37,6 +49,9 @@ jobs:
       HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
       HML_DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      SUPABASE_SCHEDULER_ENABLED: ${{ vars.DAILY6_SUPABASE_SCHEDULER_ENABLED }}
+      GITHUB_SCHEDULE_ENABLED: ${{ vars.DAILY6_GITHUB_SCHEDULE_ENABLED }}
+      SUPABASE_DISPATCH_ACTOR: ${{ vars.DAILY6_SUPABASE_DISPATCH_ACTOR }}
     steps:
       - name: Checkout default branch control plane
         uses: actions/checkout@v4
@@ -46,18 +61,52 @@ jobs:
         shell: bash
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_SCHEDULED_AT: ${{ inputs.scheduled_at }}
+          INPUT_CORRELATION_ID: ${{ inputs.correlation_id }}
+          INPUT_DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}
         run: |
           set -Eeuo pipefail
-          test "$GITHUB_EVENT_NAME" = 'schedule'
           test "${GITHUB_RUN_ATTEMPT:-1}" = '1'
           today="$(TZ=America/Sao_Paulo date +%F)"
-          case "$EVENT_SCHEDULE" in
-            '7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00' ;;
-            '7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00' ;;
-            '7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00' ;;
-            *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
-          esac
-          date="$today"
+          dispatch_nonce=''
+          correlation_id=''
+          if [ "$GITHUB_EVENT_NAME" = 'schedule' ]; then
+            test "${GITHUB_SCHEDULE_ENABLED:-true}" = 'true'
+            test "${SUPABASE_SCHEDULER_ENABLED:-false}" != 'true'
+            case "$EVENT_SCHEDULE" in
+              '7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00' ;;
+              '7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00' ;;
+              '7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00' ;;
+              *) echo 'UNEXPECTED_SCHEDULE' >&2; exit 1 ;;
+            esac
+            date="$today"
+            dispatch_source='github_schedule'
+          elif [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            test "${SUPABASE_SCHEDULER_ENABLED:-false}" = 'true'
+            test "${GITHUB_SCHEDULE_ENABLED:-true}" != 'true'
+            test -n "$SUPABASE_DISPATCH_ACTOR"
+            test "$GITHUB_ACTOR" = "$SUPABASE_DISPATCH_ACTOR"
+            test "$GITHUB_REF" = 'refs/heads/main'
+            [[ "$INPUT_SCHEDULED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T(12|16|19):07:00Z$ ]]
+            [[ "$INPUT_CORRELATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+            [[ "$INPUT_DISPATCH_NONCE" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+            scheduled_epoch="$(date -u -d "$INPUT_SCHEDULED_AT" +%s)"
+            test "$(date -u -d "@$scheduled_epoch" +%Y-%m-%dT%H:%M:%SZ)" = "$INPUT_SCHEDULED_AT"
+            date="$(TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%F)"
+            scheduled_local="$(TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%T)"
+            case "$(TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%H:%M)" in
+              '09:07') slot='09'; deadline_local='13:00:00' ;;
+              '13:07') slot='13'; deadline_local='15:00:00' ;;
+              '16:07') slot='16'; deadline_local='20:00:00' ;;
+              *) echo 'UNEXPECTED_DISPATCH_SLOT' >&2; exit 1 ;;
+            esac
+            dispatch_nonce="$INPUT_DISPATCH_NONCE"
+            correlation_id="$INPUT_CORRELATION_ID"
+            dispatch_source='supabase_cron'
+          else
+            echo 'UNEXPECTED_EVENT' >&2
+            exit 1
+          fi
           test "$date" = "$today"
           sha="$EXPECTED_OPERATIONAL_SHA"
           scheduled_epoch="$(TZ=America/Sao_Paulo date -d "$date $scheduled_local" +%s)"
@@ -78,6 +127,9 @@ jobs:
             echo "lateness_seconds=$lateness_seconds"
             echo "deadline_local=$deadline_local"
             echo "deadline_epoch=$deadline_epoch"
+            echo "dispatch_source=$dispatch_source"
+            echo "dispatch_nonce=$dispatch_nonce"
+            echo "correlation_id=$correlation_id"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify HML branch remains pinned to approved SHA
@@ -237,6 +289,20 @@ jobs:
           test "$existing_batch_count" = 'f'
           echo "request_identity=$request_identity" >> "$GITHUB_OUTPUT"
           echo 'CONTROL_PLANE_PASS=true'
+
+      - name: Claim one Supabase scheduler dispatch
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
+          DISPATCH_NONCE: ${{ steps.slot.outputs.dispatch_nonce }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$DISPATCH_NONCE" =~ ^[0-9a-fA-F-]{36}$ ]]
+          claim_result="$(psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select lead_finder_internal.claim_daily6_scheduler_dispatch('$REQUEST_IDENTITY', '$DISPATCH_NONCE'::uuid)")"
+          test "$claim_result" = 't'
+          echo 'SUPABASE_DISPATCH_CLAIM=PASS'
 
       - uses: actions/setup-node@v4
         with:
@@ -467,3 +533,21 @@ jobs:
              and (.providerCalls >= 0)' >/dev/null
           printf '%s' "$response" | jq -r '"DAILY6_REPORT=" + ({discovered,finalistsEvaluated,autoApproved,ready,providerCalls,sent,delivered,failed,ambiguous,stopReason,rejectionReasons,batchStatus,batchTerminalReason} | tojson)'
           echo 'daily6_native_slot=PASS'
+
+      - name: Finalize Supabase scheduler dispatch
+        if: always() && github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          DISPATCH_NONCE: ${{ steps.slot.outputs.dispatch_nonce }}
+          WORKFLOW_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$DISPATCH_NONCE" =~ ^[0-9a-fA-F-]{36}$ ]]
+          case "$WORKFLOW_JOB_STATUS" in
+            success) terminal_status='WORKFLOW_SUCCEEDED' ;;
+            *) terminal_status='WORKFLOW_FAILED' ;;
+          esac
+          finalize_result="$(psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select lead_finder_internal.finalize_daily6_scheduler_dispatch('$DISPATCH_NONCE'::uuid, '$terminal_status')")"
+          test "$finalize_result" = 't'
+          echo "SUPABASE_DISPATCH_FINAL_STATUS=$terminal_status"

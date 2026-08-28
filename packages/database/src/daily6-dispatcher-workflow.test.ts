@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-const workflow = await readFile(new URL('../../../.github/workflows/daily6-dispatcher.yml', import.meta.url), 'utf8');
+const workflow = await readFile(
+  new URL('../../../.github/workflows/daily6-dispatcher.yml', import.meta.url),
+  'utf8',
+);
 
 describe('native Daily-6 scheduler control plane', () => {
   it('runs from the default-branch schedule with an immutable HML pin', () => {
@@ -9,15 +12,21 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain("cron: '7 16 * * *'");
     expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1');
+    expect(workflow).toContain(
+      'EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9',
+    );
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
 
   it('builds the discovery worker from the exact approved HML SHA', () => {
     const checkoutStart = workflow.indexOf('- name: Checkout exact approved HML worker source');
     const buildStart = workflow.indexOf('- name: Build the bounded discovery worker');
-    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
-    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
+    const configStart = workflow.indexOf(
+      '- name: Validate bounded discovery worker configuration before enqueue',
+    );
+    const databaseIdentityStart = workflow.indexOf(
+      '- name: Validate bounded worker database identity before enqueue',
+    );
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
     expect(checkoutStart).toBeGreaterThanOrEqual(0);
@@ -35,8 +44,12 @@ describe('native Daily-6 scheduler control plane', () => {
   });
 
   it('fails before collection enqueue when the exact worker config is invalid', () => {
-    const configStart = workflow.indexOf('- name: Validate bounded discovery worker configuration before enqueue');
-    const databaseIdentityStart = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
+    const configStart = workflow.indexOf(
+      '- name: Validate bounded discovery worker configuration before enqueue',
+    );
+    const databaseIdentityStart = workflow.indexOf(
+      '- name: Validate bounded worker database identity before enqueue',
+    );
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const config = workflow.slice(configStart, databaseIdentityStart);
     expect(configStart).toBeGreaterThanOrEqual(0);
@@ -50,15 +63,19 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(config).not.toContain('psql');
     const databaseIdentity = workflow.slice(databaseIdentityStart, enqueueStart);
     expect(databaseIdentity).toContain('default_transaction_read_only=on');
-    expect(databaseIdentity).toContain("select current_user");
-    expect(databaseIdentity).toContain("lead_finder_discovery_runtime");
+    expect(databaseIdentity).toContain('select current_user');
+    expect(databaseIdentity).toContain('lead_finder_discovery_runtime');
     expect(databaseIdentity).toContain('DISCOVERY_DATABASE_IDENTITY=PASS');
     expect(databaseIdentity).not.toContain('echo "$database_user"');
   });
 
   it('proves dedicated discovery auth with one read-only GET before identity and enqueue', () => {
-    const runtimePreflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
-    const discoveryPreflightStart = workflow.indexOf('- name: Verify dedicated discovery authentication');
+    const runtimePreflightStart = workflow.indexOf(
+      '- name: Verify loaded Daily-6 runtime contract',
+    );
+    const discoveryPreflightStart = workflow.indexOf(
+      '- name: Verify dedicated discovery authentication',
+    );
     const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const discoveryPreflight = workflow.slice(discoveryPreflightStart, identityStart);
@@ -96,15 +113,28 @@ describe('native Daily-6 scheduler control plane', () => {
   it('pins the native scope and hard slot quota without slot replay', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
-    expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
-    expect(workflow).toContain("'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'");
-    expect(workflow).toContain("'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'");
-    expect(workflow).toContain("'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'");
+    expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT:-1}" = \'1\'');
+    expect(workflow).toContain(
+      "'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'",
+    );
+    expect(workflow).toContain(
+      "'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'",
+    );
+    expect(workflow).toContain(
+      "'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'",
+    );
     expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
     expect(workflow).toContain('group: daily6-dispatcher');
     expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');
-    expect(workflow).not.toContain('workflow_dispatch:');
-    expect(workflow).not.toContain('inputs.');
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('INPUT_SCHEDULED_AT: ${{ inputs.scheduled_at }}');
+    expect(workflow).toContain('INPUT_CORRELATION_ID: ${{ inputs.correlation_id }}');
+    expect(workflow).toContain('INPUT_DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}');
+    expect(workflow).toContain('claim_daily6_scheduler_dispatch');
+    expect(workflow).toContain('finalize_daily6_scheduler_dispatch');
+    expect(workflow).toContain('test "$finalize_result" = \'t\'');
+    expect(workflow).not.toContain('inputs.slot');
+    expect(workflow).not.toContain('inputs.request_identity');
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).toContain('HML_COLLECTION_TOKEN');
@@ -136,27 +166,49 @@ describe('native Daily-6 scheduler control plane', () => {
 
   it('revalidates operational authorization immediately before each mutating Daily-6 POST', () => {
     const collectStepStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
-    const workerStepStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const workerStepStart = workflow.indexOf(
+      '- name: Run one bounded discovery and enrichment worker',
+    );
     const collectStep = workflow.slice(collectStepStart, workerStepStart);
-    expect(collectStep).toContain('OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}');
-    expect(collectStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
-    expect(collectStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
+    expect(collectStep).toContain(
+      'OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}',
+    );
+    expect(collectStep).toContain(
+      'OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}',
+    );
+    expect(collectStep).toContain(
+      'test "$OPERATIONAL_AUTHORIZATION" = \'DAILY6_NATIVE_SEND_AUTHORIZED_V1\'',
+    );
     expect(collectStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
     expect(collectStep).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
     expect(collectStep).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
-    expect(collectStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(collectStep.indexOf('-X POST "$HML_API_URL/collect"'));
-    expect(collectStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(collectStep.indexOf('-X POST "$HML_API_URL/collect"'));
+    expect(collectStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(
+      collectStep.indexOf('-X POST "$HML_API_URL/collect"'),
+    );
+    expect(collectStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      collectStep.indexOf('-X POST "$HML_API_URL/collect"'),
+    );
 
     const runSlotStepStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
     const runSlotStep = workflow.slice(runSlotStepStart);
-    expect(runSlotStep).toContain('OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}');
-    expect(runSlotStep).toContain('OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}');
-    expect(runSlotStep).toContain("test \"$OPERATIONAL_AUTHORIZATION\" = 'DAILY6_NATIVE_SEND_AUTHORIZED_V1'");
+    expect(runSlotStep).toContain(
+      'OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}',
+    );
+    expect(runSlotStep).toContain(
+      'OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}',
+    );
+    expect(runSlotStep).toContain(
+      'test "$OPERATIONAL_AUTHORIZATION" = \'DAILY6_NATIVE_SEND_AUTHORIZED_V1\'',
+    );
     expect(runSlotStep).toContain('test "$expires_epoch" -gt "$(date -u +%s)"');
     expect(runSlotStep).toContain('SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}');
     expect(runSlotStep).toContain('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"');
-    expect(runSlotStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
-    expect(runSlotStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'));
+    expect(runSlotStep.indexOf('test "$expires_epoch" -gt "$(date -u +%s)"')).toBeLessThan(
+      runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'),
+    );
+    expect(runSlotStep.indexOf('test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"')).toBeLessThan(
+      runSlotStep.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'),
+    );
   });
 
   it('reports aggregate rejection reasons without exposing candidate data', () => {

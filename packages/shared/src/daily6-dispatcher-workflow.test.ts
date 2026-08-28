@@ -35,10 +35,16 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain("cron: '7 19 * * *'");
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
-    expect(workflow).toContain("test \"${GITHUB_RUN_ATTEMPT:-1}\" = '1'");
-    expect(workflow).toContain("'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'");
-    expect(workflow).toContain("'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'");
-    expect(workflow).toContain("'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'");
+    expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT:-1}" = \'1\'');
+    expect(workflow).toContain(
+      "'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'",
+    );
+    expect(workflow).toContain(
+      "'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'",
+    );
+    expect(workflow).toContain(
+      "'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'",
+    );
     expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $scheduled_local" +%s');
     expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $deadline_local" +%s');
     expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
@@ -46,15 +52,46 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('group: daily6-dispatcher');
     expect(workflow).not.toContain('group: daily6-dispatcher-${{');
     expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');
-    expect(workflow).not.toContain('workflow_dispatch:');
-    expect(workflow).not.toContain('inputs.');
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('scheduled_at:');
+    expect(workflow).toContain('correlation_id:');
+    expect(workflow).toContain('dispatch_nonce:');
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
-    expect(workflow).toContain('EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1');
+    expect(workflow).toContain(
+      'EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1',
+    );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
+  });
+
+  it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
+    expect(workflow).toContain('test "$GITHUB_ACTOR" = "$SUPABASE_DISPATCH_ACTOR"');
+    expect(workflow).toContain('test "$GITHUB_REF" = \'refs/heads/main\'');
+    expect(workflow).toContain('test "${SUPABASE_SCHEDULER_ENABLED:-false}" = \'true\'');
+    expect(workflow).toContain('test "${GITHUB_SCHEDULE_ENABLED:-true}" != \'true\'');
+    expect(workflow).toContain('INPUT_SCHEDULED_AT: ${{ inputs.scheduled_at }}');
+    expect(workflow).toContain('INPUT_CORRELATION_ID: ${{ inputs.correlation_id }}');
+    expect(workflow).toContain('INPUT_DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}');
+    expect(workflow).toContain('TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%H:%M');
+    expect(workflow).not.toContain('INPUT_SLOT');
+    expect(workflow).not.toContain('inputs.slot');
+    expect(workflow).not.toContain('inputs.request_identity');
+  });
+
+  it('atomically claims and terminalizes a Supabase dispatch around all commercial side effects', () => {
+    const claimStart = workflow.indexOf('- name: Claim one Supabase scheduler dispatch');
+    const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const finalizeStart = workflow.indexOf('- name: Finalize Supabase scheduler dispatch');
+    expect(claimStart).toBeGreaterThanOrEqual(0);
+    expect(enqueueStart).toBeGreaterThan(claimStart);
+    expect(finalizeStart).toBeGreaterThan(enqueueStart);
+    expect(workflow).toContain('claim_daily6_scheduler_dispatch');
+    expect(workflow).toContain('test "$claim_result" = \'t\'');
+    expect(workflow).toContain('finalize_daily6_scheduler_dispatch');
+    expect(workflow).toContain("terminal_status='WORKFLOW_FAILED'");
   });
 
   it('does not log authorization or provider credentials', () => {
@@ -89,16 +126,18 @@ describe('native Daily-6 scheduler authorization gate', () => {
     const runSlot = workflow.slice(runSlotStart);
     expect(runSlot).toContain('--output "$response_file"');
     expect(runSlot).toContain("--write-out '%{http_code}'");
-    expect(runSlot).toContain("DAILY6_RUN_SLOT_FAILURE_CLASS=NETWORK_OR_TIMEOUT");
-    expect(runSlot).toContain("DAILY6_RUN_SLOT_ERROR=$error_summary");
-    expect(runSlot).toContain("{code: (.code // null), errorClass: (.errorClass // null)}");
+    expect(runSlot).toContain('DAILY6_RUN_SLOT_FAILURE_CLASS=NETWORK_OR_TIMEOUT');
+    expect(runSlot).toContain('DAILY6_RUN_SLOT_ERROR=$error_summary');
+    expect(runSlot).toContain('{code: (.code // null), errorClass: (.errorClass // null)}');
     expect(runSlot).not.toContain('--fail-with-body');
   });
 
   it('proves the loaded runtime contract once before checking identity or enqueueing', () => {
     const readinessStart = workflow.indexOf('- name: Verify HML readiness');
     const preflightStart = workflow.indexOf('- name: Verify loaded Daily-6 runtime contract');
-    const discoveryPreflightStart = workflow.indexOf('- name: Verify dedicated discovery authentication');
+    const discoveryPreflightStart = workflow.indexOf(
+      '- name: Verify dedicated discovery authentication',
+    );
     const identityStart = workflow.indexOf('- name: Verify fresh Daily-6 identity');
     const enqueueStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
     const preflight = workflow.slice(preflightStart, discoveryPreflightStart);
@@ -155,9 +194,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain(
-      'EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1',
-    );
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: e4a42012131c4666aa2f8990719360623a0931d1');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');

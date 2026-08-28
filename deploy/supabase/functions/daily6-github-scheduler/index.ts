@@ -12,6 +12,7 @@ const GITHUB_REF = 'main';
 const JSON_HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store' };
 
 type DispatchStatus = 'DISPATCH_ACCEPTED' | 'DISPATCH_REJECTED' | 'DISPATCH_AMBIGUOUS';
+type LedgerStatus = DispatchStatus | 'WORKFLOW_CLAIMED' | 'WORKFLOW_SUCCEEDED' | 'WORKFLOW_FAILED';
 
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
@@ -21,6 +22,23 @@ function requiredEnv(name: string): string {
 
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}
+
+function validatedSupabaseBaseUrl(): URL {
+  const baseUrl = new URL(requiredEnv('SUPABASE_URL'));
+  if (
+    baseUrl.protocol !== 'https:' ||
+    baseUrl.hostname !== 'ondvzdvlwntrnieodifi.supabase.co' ||
+    baseUrl.port !== '' ||
+    baseUrl.username !== '' ||
+    baseUrl.password !== '' ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.search !== '' ||
+    baseUrl.hash !== ''
+  ) {
+    throw new Error('SUPABASE_URL_INVALID');
+  }
+  return baseUrl;
 }
 
 async function githubInstallationToken(now: Date): Promise<string> {
@@ -65,10 +83,10 @@ async function claimLedger(
   correlationId: string,
   nonce: string,
 ) {
-  const baseUrl = requiredEnv('SUPABASE_URL');
+  const baseUrl = validatedSupabaseBaseUrl();
   const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
   const response = await fetch(
-    `${baseUrl}/rest/v1/daily6_scheduler_dispatches?on_conflict=request_identity`,
+    new URL('/rest/v1/daily6_scheduler_dispatches?on_conflict=request_identity', baseUrl),
     {
       method: 'POST',
       headers: {
@@ -98,17 +116,20 @@ async function updateLedger(
   githubHttpStatus: number | null,
   errorClass: string | null,
 ): Promise<boolean> {
-  const baseUrl = requiredEnv('SUPABASE_URL');
+  const baseUrl = validatedSupabaseBaseUrl();
   const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
   const response = await fetch(
-    `${baseUrl}/rest/v1/daily6_scheduler_dispatches?dispatch_nonce=eq.${encodeURIComponent(nonce)}&status=eq.CLAIMED`,
+    new URL(
+      `/rest/v1/daily6_scheduler_dispatches?dispatch_nonce=eq.${encodeURIComponent(nonce)}&status=eq.CLAIMED`,
+      baseUrl,
+    ),
     {
       method: 'PATCH',
       headers: {
         apikey: serviceRoleKey,
         authorization: `Bearer ${serviceRoleKey}`,
         'content-type': 'application/json',
-        prefer: 'return=minimal',
+        prefer: 'return=representation',
       },
       body: JSON.stringify({
         status,
@@ -118,10 +139,80 @@ async function updateLedger(
       signal: AbortSignal.timeout(10_000),
     },
   );
+  if (!response.ok) return false;
+  const rows = (await response.json()) as { status?: unknown }[];
+  if (rows.length === 1) return rows[0]?.status === status;
+  if (rows.length !== 0) return false;
+
+  // GitHub can start the workflow before this PATCH reaches PostgREST. In that
+  // legitimate race the workflow has already advanced the same nonce, so read
+  // back the opaque state instead of treating an HTTP 2xx/zero-row response as proof.
+  const currentStatus = await readLedgerStatus(nonce);
+  return ['WORKFLOW_CLAIMED', 'WORKFLOW_SUCCEEDED', 'WORKFLOW_FAILED'].includes(
+    currentStatus ?? '',
+  );
+}
+
+async function readLedgerStatus(nonce: string): Promise<LedgerStatus | null> {
+  const baseUrl = validatedSupabaseBaseUrl();
+  const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const response = await fetch(
+    new URL(
+      `/rest/v1/daily6_scheduler_dispatches?dispatch_nonce=eq.${encodeURIComponent(nonce)}&select=status&limit=2`,
+      baseUrl,
+    ),
+    {
+      headers: {
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+      },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!response.ok) return null;
+  const rows = (await response.json()) as { status?: unknown }[];
+  if (rows.length !== 1 || typeof rows[0]?.status !== 'string') return null;
+  return rows[0].status as LedgerStatus;
+}
+
+function validatedHmlApiUrl(): URL {
+  const hmlApiUrl = new URL(requiredEnv('DAILY6_HML_API_URL'));
+  if (
+    hmlApiUrl.protocol !== 'https:' ||
+    hmlApiUrl.hostname !== 'lead-finder-api-hml.onrender.com' ||
+    hmlApiUrl.port !== '' ||
+    hmlApiUrl.username !== '' ||
+    hmlApiUrl.password !== '' ||
+    hmlApiUrl.pathname !== '/' ||
+    hmlApiUrl.search !== '' ||
+    hmlApiUrl.hash !== ''
+  ) {
+    throw new Error('HML_API_URL_INVALID');
+  }
+  return hmlApiUrl;
+}
+
+async function probeLedgerAccess(): Promise<boolean> {
+  const baseUrl = validatedSupabaseBaseUrl();
+  const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const response = await fetch(
+    new URL('/rest/v1/daily6_scheduler_dispatches?select=id&limit=0', baseUrl),
+    {
+      headers: {
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+      },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
   return response.ok;
 }
 
 async function preflight(now: Date): Promise<Response> {
+  validatedHmlApiUrl();
+  if (!(await probeLedgerAccess())) {
+    return json(503, { status: 'FAIL', errorClass: 'LEDGER_UNAVAILABLE' });
+  }
   const token = await githubInstallationToken(now);
   const workflowResponse = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}`,
@@ -133,6 +224,8 @@ async function preflight(now: Date): Promise<Response> {
     schedulerAuth: 'PASS',
     githubAppAuth: 'PASS',
     workflowAccess: 'PASS',
+    ledgerAccess: 'PASS',
+    hmlConfiguration: 'PASS',
     sideEffects: 0,
   });
 }
@@ -151,26 +244,28 @@ async function dispatch(now: Date): Promise<Response> {
     return json(status, { status: 'FAIL_CLOSED', errorClass });
   }
 
+  let token: string;
   try {
-    const hmlApiUrl = new URL(requiredEnv('DAILY6_HML_API_URL'));
-    if (
-      hmlApiUrl.protocol !== 'https:' ||
-      hmlApiUrl.hostname !== 'lead-finder-api-hml.onrender.com' ||
-      hmlApiUrl.port !== '' ||
-      hmlApiUrl.username !== '' ||
-      hmlApiUrl.password !== '' ||
-      hmlApiUrl.pathname !== '/' ||
-      hmlApiUrl.search !== '' ||
-      hmlApiUrl.hash !== ''
-    ) {
-      throw new Error('HML_API_URL_INVALID');
-    }
+    const hmlApiUrl = validatedHmlApiUrl();
     await fetch(new URL('/health/live', hmlApiUrl), {
       method: 'GET',
       signal: AbortSignal.timeout(12_000),
     }).catch(() => undefined);
+    token = await githubInstallationToken(now);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const errorClass = message.startsWith('HML_')
+      ? 'HML_CONFIGURATION_REJECTED'
+      : message.startsWith('GITHUB_APP_AUTH_5')
+        ? 'GITHUB_UNAVAILABLE'
+        : 'GITHUB_AUTH_REJECTED';
+    if (!(await updateLedger(nonce, 'DISPATCH_REJECTED', null, errorClass).catch(() => false))) {
+      return json(503, { status: 'FAIL_CLOSED', errorClass: 'LEDGER_UPDATE_FAILED' });
+    }
+    return json(503, { status: 'FAIL_CLOSED', errorClass });
+  }
 
-    const token = await githubInstallationToken(now);
+  try {
     const response = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
       {
@@ -203,17 +298,24 @@ async function dispatch(now: Date): Promise<Response> {
   }
 }
 
-Deno.serve(async (request) => {
-  const expectedSecret = requiredEnv('DAILY6_SCHEDULER_INVOKE_SECRET');
-  const actualSecret = request.headers.get('x-internal-scheduler-secret') ?? '';
-  if (!(await secureSecretEquals(actualSecret, expectedSecret))) {
-    return json(401, { status: 'FAIL_CLOSED', errorClass: 'AUTH_INVALID' });
-  }
+export async function handleSchedulerRequest(
+  request: Request,
+  now = new Date(),
+): Promise<Response> {
   try {
-    if (request.method === 'GET') return await preflight(new Date());
-    if (request.method === 'POST') return await dispatch(new Date());
+    const expectedSecret = requiredEnv('DAILY6_SCHEDULER_INVOKE_SECRET');
+    const actualSecret = request.headers.get('x-internal-scheduler-secret') ?? '';
+    if (!(await secureSecretEquals(actualSecret, expectedSecret))) {
+      return json(401, { status: 'FAIL_CLOSED', errorClass: 'AUTH_INVALID' });
+    }
+    if (request.method === 'GET') return await preflight(now);
+    if (request.method === 'POST') return await dispatch(now);
     return json(405, { status: 'FAIL_CLOSED', errorClass: 'METHOD_NOT_ALLOWED' });
   } catch {
     return json(503, { status: 'FAIL_CLOSED', errorClass: 'INTERNAL_UNAVAILABLE' });
   }
-});
+}
+
+if ((import.meta as ImportMeta & { main?: boolean }).main) {
+  Deno.serve((request) => handleSchedulerRequest(request));
+}

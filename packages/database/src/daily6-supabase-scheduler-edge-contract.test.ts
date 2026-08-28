@@ -13,6 +13,7 @@ describe('Daily-6 Supabase Edge Function contract', () => {
     expect(edge).toContain("GITHUB_WORKFLOW = 'daily6-dispatcher.yml'");
     expect(edge).toContain("GITHUB_REF = 'main'");
     expect(edge).toContain("hostname !== 'lead-finder-api-hml.onrender.com'");
+    expect(edge).toContain("hostname !== 'ondvzdvlwntrnieodifi.supabase.co'");
     expect(edge).toContain("hmlApiUrl.pathname !== '/'");
     expect(edge).toContain("hmlApiUrl.username !== ''");
     expect(edge).toContain("hmlApiUrl.password !== ''");
@@ -34,8 +35,19 @@ describe('Daily-6 Supabase Edge Function contract', () => {
 
   it('provides a read-only preflight and never logs secrets or response bodies', () => {
     expect(edge).toContain("if (request.method === 'GET') return await preflight");
+    expect(edge).toContain("ledgerAccess: 'PASS'");
+    expect(edge).toContain("hmlConfiguration: 'PASS'");
+    expect(edge).toContain('daily6_scheduler_dispatches?select=id&limit=0');
     expect(edge).toContain('sideEffects: 0');
     expect(edge).not.toContain('console.');
     expect(edge).not.toContain('Authorization header');
+  });
+
+  it('verifies ledger transitions and distinguishes pre-dispatch rejection from ambiguity', () => {
+    expect(edge).toContain("prefer: 'return=representation'");
+    expect(edge).toContain('currentStatus = await readLedgerStatus(nonce)');
+    expect(edge).toContain("'HML_CONFIGURATION_REJECTED'");
+    expect(edge).toContain("updateLedger(nonce, 'DISPATCH_REJECTED'");
+    expect(edge).toContain("updateLedger(nonce, 'DISPATCH_AMBIGUOUS'");
   });
 });

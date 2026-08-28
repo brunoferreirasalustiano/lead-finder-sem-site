@@ -48,7 +48,7 @@ GitHub Environment `hml-discovery`:
 4. Verificar `PUBLIC`, `anon` e `authenticated` sem acesso; a role de discovery recebe apenas EXECUTE nas funções opacas.
 5. Implantar a Edge Function com `verify_jwt=false`; o bearer dedicado é a fronteira de autenticação.
 6. Provisionar os secrets sem stdout, artifacts ou arquivos.
-7. Executar exatamente um GET autenticado na função. PASS exige `schedulerAuth`, `githubAppAuth` e `workflowAccess`, todos `PASS`, com `sideEffects=0`.
+7. Executar exatamente um GET autenticado na função. PASS exige `schedulerAuth`, `githubAppAuth`, `workflowAccess`, `ledgerAccess` e `hmlConfiguration`, todos `PASS`, com `sideEffects=0`.
 8. Fora de qualquer janela Daily-6 e sem run enfileirado, desligar o GitHub schedule, ligar a fonte Supabase e só então ativar o cron e a configuração interna.
 9. Observar o próximo slot natural. Não usar workflow dispatch humano para criar um slot.
 
@@ -89,7 +89,7 @@ Não apagar o ledger. Não reutilizar nonce, correlation ID ou request identity.
 ## Evidência mínima
 
 - cron e configuração desativados após migration;
-- GET preflight único com zero side effects;
+- GET preflight único com zero side effects, acesso read-only ao ledger e configuração HML válida;
 - um `event=workflow_dispatch` cujo ator seja o GitHub App e cujo nonce seja consumido uma vez;
 - `WORKFLOW_SUCCEEDED` ou `WORKFLOW_FAILED` terminal no ledger;
 - nenhuma duplicidade e nenhum estado ambíguo;

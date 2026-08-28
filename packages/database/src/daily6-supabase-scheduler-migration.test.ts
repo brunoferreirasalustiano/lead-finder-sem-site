@@ -34,6 +34,7 @@ describe('migration 0070 Daily-6 Supabase scheduler', () => {
     expect(migration).toContain('request_identity text NOT NULL UNIQUE');
     expect(migration).toContain('dispatch_nonce uuid NOT NULL UNIQUE');
     expect(migration).toContain("'DISPATCH_AMBIGUOUS'");
+    expect(migration).toContain("'HML_CONFIGURATION_REJECTED'");
     expect(migration).toContain('DAILY6_SCHEDULER_IDENTITY_IMMUTABLE');
     expect(migration).toContain('DAILY6_SCHEDULER_DISPATCH_DELETE_FORBIDDEN');
     expect(migration).toContain("AND status IN ('CLAIMED', 'DISPATCH_ACCEPTED')");

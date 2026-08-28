@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.daily6_scheduler_dispatches (
   )),
   github_http_status integer CHECK (github_http_status IS NULL OR github_http_status BETWEEN 100 AND 599),
   error_class text CHECK (error_class IS NULL OR error_class IN (
+    'HML_CONFIGURATION_REJECTED',
     'GITHUB_AUTH_REJECTED',
     'GITHUB_REQUEST_REJECTED',
     'GITHUB_UNAVAILABLE',

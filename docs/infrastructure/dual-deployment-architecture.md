@@ -9,7 +9,9 @@ flowchart TD
   P --> B[processLeadBatch]
   B --> W[Oracle continuous worker]
   B --> R[Render bounded endpoint]
-  C[Supabase Cron] --> E[Authenticated Edge Function] --> R
+  C[Supabase Cron] --> E[Authenticated Edge Function]
+  E --> G[GitHub pinned Daily-6 workflow]
+  G --> R
 ```
 
 `processor_leadership` is the single database authority. A primary renews a lease; a standby cannot claim work. Expired leadership can be taken over with an incremented generation. Outbox claim tokens/generations prevent stale acknowledgements. `deployment_daily_lead_allocations` uniquely assigns an outbox cycle to a UTC day, while a database check makes 60 an absolute ceiling.

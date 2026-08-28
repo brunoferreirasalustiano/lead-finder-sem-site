@@ -30,6 +30,18 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM lead_finder_discovery_runtime;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM lead_finder_discovery_runtime;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM lead_finder_discovery_runtime;
 
+DO $$
+BEGIN
+  IF to_regprocedure('lead_finder_internal.claim_daily6_scheduler_dispatch(text,uuid)') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA lead_finder_internal TO lead_finder_discovery_runtime;
+    GRANT EXECUTE ON FUNCTION lead_finder_internal.claim_daily6_scheduler_dispatch(text, uuid)
+      TO lead_finder_discovery_runtime;
+    GRANT EXECUTE ON FUNCTION lead_finder_internal.finalize_daily6_scheduler_dispatch(uuid, text)
+      TO lead_finder_discovery_runtime;
+  END IF;
+END
+$$;
+
 -- The worker uses the typed repository for these tables only. It receives no
 -- access to delivery, campaign, suppression-ledger, or Gmail tables.
 GRANT SELECT ON TABLE

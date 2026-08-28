@@ -2,3 +2,6 @@ project_id = "replace-with-project-ref"
 
 [functions.process-lead-batch]
 verify_jwt = false # Function performs dedicated internal bearer and audience validation.
+
+[functions.daily6-github-scheduler]
+verify_jwt = false # Function performs constant-time dedicated bearer validation.

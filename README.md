@@ -211,6 +211,7 @@ Perfil de homologação e Plano B:
 Documentos:
 
 - [Plano B Supabase + Render](docs/infrastructure/supabase-render-plan-b.md)
+- [Scheduler Daily-6 via Supabase](docs/runbooks/daily6-supabase-scheduler.md)
 - [Runbook de implantação](docs/runbooks/supabase-render-deployment.md)
 - [Operação com dois perfis](docs/runbooks/dual-deployment-operations.md)
 - [Segurança da Data API](docs/supabase-data-api-security.md)

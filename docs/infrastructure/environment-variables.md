@@ -32,11 +32,26 @@ Este documento separa variáveis ativas no runtime atual de placeholders reserva
 | `POSTGRES_USER` | sim | não | configuração | usuário do Compose |
 | `POSTGRES_PASSWORD` | sim | não | secret | sem valor padrão real |
 | `SUPABASE_PROJECT_REF` | não | operador | secret operacional | nunca frontend |
-| `SUPABASE_SERVICE_ROLE_KEY` | não | operador | secret | não usada pelo runtime comum; nunca frontend |
-| `SUPABASE_URL` | não | reservado | pública | Data API não é usada atualmente |
+| `SUPABASE_SERVICE_ROLE_KEY` | não | Edge Function | secret | somente no runtime gerenciado da função; nunca frontend |
+| `SUPABASE_URL` | não | Edge Function | pública | usada pela função somente para o ledger RLS/ACL deny-all |
 | `SUPABASE_ANON_KEY` | não | reservado | pública com baixo privilégio | manter vazia enquanto a Data API permanecer deny-all |
 
-A aplicação usa PostgreSQL direto por `DATABASE_URL`. Qualquer uso futuro de `SUPABASE_URL`, `SUPABASE_ANON_KEY`, cliente móvel ou `/rest/v1` exige threat model, policies RLS e testes negativos conforme [Segurança da Data API Supabase](../supabase-data-api-security.md).
+A aplicação comum usa PostgreSQL direto por `DATABASE_URL`. A Edge Function do scheduler usa `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` somente para o ledger `daily6_scheduler_dispatches`; esse uso exige RLS forçado, grants revogados para `PUBLIC`/`anon`/`authenticated` e testes negativos conforme [Segurança da Data API Supabase](../supabase-data-api-security.md).
+
+## Scheduler Daily-6 via Supabase
+
+| Variável | Local | HML | Visibilidade | Regra |
+|---|---:|---:|---|---|
+| `DAILY6_SCHEDULER_INVOKE_SECRET` | não | Edge secret | secret | dedicado, mínimo 32 caracteres |
+| `DAILY6_GITHUB_APP_ID` | não | Edge secret | secret operacional | GitHub App de um único repositório |
+| `DAILY6_GITHUB_APP_INSTALLATION_ID` | não | Edge secret | secret operacional | instalação exata aprovada |
+| `DAILY6_GITHUB_APP_PRIVATE_KEY_PKCS8` | não | Edge secret | secret | PKCS8; nunca log/artifact |
+| `DAILY6_HML_API_URL` | não | Edge secret | configuração | host exato `lead-finder-api-hml.onrender.com` |
+| `DAILY6_GITHUB_SCHEDULE_ENABLED` | não | GitHub var | configuração | `true` antes do cutover |
+| `DAILY6_SUPABASE_SCHEDULER_ENABLED` | não | GitHub var | configuração | `false` antes do cutover |
+| `DAILY6_SUPABASE_DISPATCH_ACTOR` | não | GitHub var | configuração | login exato do GitHub App |
+
+O Vault HML mantém `daily6_scheduler_invoke_secret`, usado apenas pelo `pg_cron` para autenticar a função. O cron, a configuração interna e a nova fonte GitHub nascem desativados. Consulte o [runbook do scheduler](../runbooks/daily6-supabase-scheduler.md).
 
 ## Coleta, batch e processadores
 

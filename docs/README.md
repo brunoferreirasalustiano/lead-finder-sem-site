@@ -52,6 +52,7 @@ Este índice organiza as fontes técnicas e operacionais do projeto. O `README.m
 ## Infraestrutura e implantação
 
 - [Plano B Supabase + Render](infrastructure/supabase-render-plan-b.md) — arquitetura free-tier com processamento limitado e fail-closed.
+- [Scheduler Daily-6 via Supabase](runbooks/daily6-supabase-scheduler.md) — preparação, smoke somente leitura, cutover de fonte única e rollback.
 - [Runbook Supabase + Render](runbooks/supabase-render-deployment.md) — migrations, Render Blueprint, Edge Function opcional, Cron e desligamento.
 - [Compatibilidade dos registros de migrations](migration-registry-compatibility.md) — causa raiz do registro dividido entre o runner local e o Supabase MCP, riscos e caminhos seguros.
 - [Evidências da homologação externa](external-homologation-evidence-runbook.md) — níveis de prova, GitHub Pages, Render, health checks, flags, kill switch e restart.

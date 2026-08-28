@@ -547,6 +547,7 @@ jobs:
             success) terminal_status='WORKFLOW_SUCCEEDED' ;;
             *) terminal_status='WORKFLOW_FAILED' ;;
           esac
-          psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
-            "select lead_finder_internal.finalize_daily6_scheduler_dispatch('$DISPATCH_NONCE'::uuid, '$terminal_status')" >/dev/null
+          finalize_result="$(psql "$HML_DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc \
+            "select lead_finder_internal.finalize_daily6_scheduler_dispatch('$DISPATCH_NONCE'::uuid, '$terminal_status')")"
+          test "$finalize_result" = 't'
           echo "SUPABASE_DISPATCH_FINAL_STATUS=$terminal_status"

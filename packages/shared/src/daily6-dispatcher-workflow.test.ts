@@ -91,6 +91,8 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('claim_daily6_scheduler_dispatch');
     expect(workflow).toContain('test "$claim_result" = \'t\'');
     expect(workflow).toContain('finalize_daily6_scheduler_dispatch');
+    expect(workflow).toContain('finalize_result="$(psql');
+    expect(workflow).toContain('test "$finalize_result" = \'t\'');
     expect(workflow).toContain("terminal_status='WORKFLOW_FAILED'");
   });
 

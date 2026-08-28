@@ -132,6 +132,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('INPUT_DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}');
     expect(workflow).toContain('claim_daily6_scheduler_dispatch');
     expect(workflow).toContain('finalize_daily6_scheduler_dispatch');
+    expect(workflow).toContain('test "$finalize_result" = \'t\'');
     expect(workflow).not.toContain('inputs.slot');
     expect(workflow).not.toContain('inputs.request_identity');
     expect(workflow).toContain('Campinas');

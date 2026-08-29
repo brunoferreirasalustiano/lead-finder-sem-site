@@ -44,12 +44,12 @@ GitHub Environment `hml-discovery`:
 
 1. Merge protegido da migration `0070` e Edge Function na HML, fora de qualquer janela Daily-6.
 2. Capturar o SHA final da HML, atualizar o pin na PR do workflow em `main` e só então fazer seu merge protegido. Durante esse intervalo, qualquer schedule com SHA divergente deve falhar fechado.
-3. Aplicar `0070` duas vezes no PostgreSQL descartável; uma vez no Supabase HML após revisão.
+3. Aplicar `0070` duas vezes no PostgreSQL descartável; uma vez no Supabase HML após revisão. Aplicar depois o adapter hospedado `deploy/supabase/cron/daily6-github-scheduler.sql`, que instala `pg_cron`/`pg_net` e registra o job ainda inativo sem resetar uma configuração existente.
 4. Verificar `PUBLIC`, `anon` e `authenticated` sem acesso; a role de discovery recebe apenas EXECUTE nas funções opacas.
 5. Implantar a Edge Function com `verify_jwt=false`; o bearer dedicado é a fronteira de autenticação.
 6. Provisionar os secrets sem stdout, artifacts ou arquivos.
 7. Executar exatamente um GET autenticado na função. PASS exige `schedulerAuth`, `githubAppAuth`, `workflowAccess`, `ledgerAccess` e `hmlConfiguration`, todos `PASS`, com `sideEffects=0`.
-8. Fora de qualquer janela Daily-6 e sem run enfileirado, desligar o GitHub schedule, ligar a fonte Supabase e só então ativar o cron e a configuração interna.
+8. Fora de qualquer janela Daily-6 e sem run enfileirado, fazer merge do workflow `workflow_dispatch`-only, definir `DAILY6_GITHUB_SCHEDULE_ENABLED=false`, ligar `DAILY6_SUPABASE_SCHEDULER_ENABLED=true` e só então ativar o cron e a configuração interna.
 9. Observar o próximo slot natural. Não usar workflow dispatch humano para criar um slot.
 
 ## Cutover atômico operacional

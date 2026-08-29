@@ -41,6 +41,36 @@ function validatedSupabaseBaseUrl(): URL {
   return baseUrl;
 }
 
+async function githubAppJwt(now: Date): Promise<string> {
+  return await createGithubAppJwt(
+    requiredEnv('DAILY6_GITHUB_APP_ID'),
+    requiredEnv('DAILY6_GITHUB_APP_PRIVATE_KEY_PKCS8'),
+    now,
+  );
+}
+
+async function githubAppDispatchActor(now: Date): Promise<string> {
+  const appJwt = await githubAppJwt(now);
+  const appResponse = await fetch('https://api.github.com/app', {
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${appJwt}`,
+      'x-github-api-version': '2022-11-28',
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!appResponse.ok) throw new Error(`GITHUB_APP_IDENTITY_${appResponse.status}`);
+  const appBody = (await appResponse.json()) as { id?: unknown; slug?: unknown };
+  if (
+    appBody.id !== Number(requiredEnv('DAILY6_GITHUB_APP_ID')) ||
+    typeof appBody.slug !== 'string' ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/u.test(appBody.slug)
+  ) {
+    throw new Error('GITHUB_APP_IDENTITY_INVALID_RESPONSE');
+  }
+  return `${appBody.slug}[bot]`;
+}
+
 async function githubInstallationToken(now: Date): Promise<string> {
   const appJwt = await createGithubAppJwt(
     requiredEnv('DAILY6_GITHUB_APP_ID'),
@@ -213,7 +243,10 @@ async function preflight(now: Date): Promise<Response> {
   if (!(await probeLedgerAccess())) {
     return json(503, { status: 'FAIL', errorClass: 'LEDGER_UNAVAILABLE' });
   }
-  const token = await githubInstallationToken(now);
+  const [dispatchActor, token] = await Promise.all([
+    githubAppDispatchActor(now),
+    githubInstallationToken(now),
+  ]);
   const workflowResponse = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}`,
     { headers: githubHeaders(token), signal: AbortSignal.timeout(10_000) },
@@ -223,6 +256,7 @@ async function preflight(now: Date): Promise<Response> {
   return json(200, {
     schedulerAuth: 'PASS',
     githubAppAuth: 'PASS',
+    dispatchActor,
     workflowAccess: 'PASS',
     ledgerAccess: 'PASS',
     hmlConfiguration: 'PASS',

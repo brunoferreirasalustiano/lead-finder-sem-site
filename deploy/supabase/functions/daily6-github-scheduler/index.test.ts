@@ -92,7 +92,9 @@ describe('Daily-6 Supabase scheduler handler', () => {
       if (url === 'https://api.github.com/app') {
         return Response.json({ id: 12345, slug: 'lfb-daily6-hml-scheduler' });
       }
-      if (url.includes('/app/installations/')) return Response.json({ token: 't'.repeat(20) });
+      if (url.includes('/app/installations/')) {
+        return Response.json({ token: 't'.repeat(20), permissions: { actions: 'write' } });
+      }
       if (url.includes('/actions/workflows/daily6-dispatcher.yml')) return Response.json({ id: 1 });
       throw new Error(`UNEXPECTED_FETCH:${url}`);
     });
@@ -105,6 +107,7 @@ describe('Daily-6 Supabase scheduler handler', () => {
       schedulerAuth: 'PASS',
       githubAppAuth: 'PASS',
       dispatchActor: 'lfb-daily6-hml-scheduler[bot]',
+      workflowDispatchPermission: 'PASS',
       workflowAccess: 'PASS',
       ledgerAccess: 'PASS',
       hmlConfiguration: 'PASS',
@@ -120,7 +123,9 @@ describe('Daily-6 Supabase scheduler handler', () => {
       if (url === 'https://api.github.com/app') {
         return Response.json({ id: 99999, slug: 'different-app' });
       }
-      if (url.includes('/app/installations/')) return Response.json({ token: 't'.repeat(20) });
+      if (url.includes('/app/installations/')) {
+        return Response.json({ token: 't'.repeat(20), permissions: { actions: 'write' } });
+      }
       throw new Error(`UNEXPECTED_FETCH:${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -135,6 +140,34 @@ describe('Daily-6 Supabase scheduler handler', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/dispatches'))).toBe(
       false,
     );
+  });
+
+  it('fails closed when the installation token lacks Actions write permission', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('daily6_scheduler_dispatches?select=id&limit=0')) return Response.json([]);
+      if (url === 'https://api.github.com/app') {
+        return Response.json({ id: 12345, slug: 'lfb-daily6-hml-scheduler' });
+      }
+      if (url.includes('/app/installations/')) {
+        return Response.json({ token: 't'.repeat(20), permissions: { actions: 'read' } });
+      }
+      throw new Error(`UNEXPECTED_FETCH:${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await handleSchedulerRequest(request('GET'), now);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      status: 'FAIL_CLOSED',
+      errorClass: 'INTERNAL_UNAVAILABLE',
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes('/actions/workflows/daily6-dispatcher.yml'),
+      ),
+    ).toBe(false);
   });
 
   it('rejects a non-HML Supabase URL before sending the service-role credential', async () => {
@@ -199,7 +232,9 @@ describe('Daily-6 Supabase scheduler handler', () => {
       const url = String(input);
       if (url.includes('on_conflict=request_identity')) return Response.json([{ id: 'claimed' }]);
       if (url.includes('/health/live')) return new Response(null, { status: 200 });
-      if (url.includes('/app/installations/')) return Response.json({ token: 't'.repeat(20) });
+      if (url.includes('/app/installations/')) {
+        return Response.json({ token: 't'.repeat(20), permissions: { actions: 'write' } });
+      }
       if (url.endsWith('/dispatches')) return new Response(null, { status: 204 });
       if (init?.method === 'PATCH') return Response.json([]);
       if (url.includes('select=status')) return Response.json([{ status: 'WORKFLOW_CLAIMED' }]);
@@ -221,7 +256,9 @@ describe('Daily-6 Supabase scheduler handler', () => {
       const url = String(input);
       if (url.includes('on_conflict=request_identity')) return Response.json([{ id: 'claimed' }]);
       if (url.includes('/health/live')) return new Response(null, { status: 200 });
-      if (url.includes('/app/installations/')) return Response.json({ token: 't'.repeat(20) });
+      if (url.includes('/app/installations/')) {
+        return Response.json({ token: 't'.repeat(20), permissions: { actions: 'write' } });
+      }
       if (url.endsWith('/dispatches')) throw new DOMException('timed out', 'TimeoutError');
       if (init?.method === 'PATCH') return Response.json([{ status: 'DISPATCH_AMBIGUOUS' }]);
       throw new Error(`UNEXPECTED_FETCH:${url}`);

@@ -71,7 +71,14 @@ async function githubAppDispatchActor(now: Date): Promise<string> {
   return `${appBody.slug}[bot]`;
 }
 
-async function githubInstallationToken(now: Date): Promise<string> {
+type GithubInstallationAuthentication = Readonly<{
+  token: string;
+  workflowDispatchPermission: 'PASS';
+}>;
+
+async function githubInstallationAuthentication(
+  now: Date,
+): Promise<GithubInstallationAuthentication> {
   const appJwt = await createGithubAppJwt(
     requiredEnv('DAILY6_GITHUB_APP_ID'),
     requiredEnv('DAILY6_GITHUB_APP_PRIVATE_KEY_PKCS8'),
@@ -92,11 +99,18 @@ async function githubInstallationToken(now: Date): Promise<string> {
     },
   );
   if (!response.ok) throw new Error(`GITHUB_APP_AUTH_${response.status}`);
-  const body = (await response.json()) as { token?: unknown };
-  if (typeof body.token !== 'string' || body.token.length < 20) {
+  const body = (await response.json()) as {
+    token?: unknown;
+    permissions?: { actions?: unknown };
+  };
+  if (
+    typeof body.token !== 'string' ||
+    body.token.length < 20 ||
+    body.permissions?.actions !== 'write'
+  ) {
     throw new Error('GITHUB_APP_AUTH_INVALID_RESPONSE');
   }
-  return body.token;
+  return { token: body.token, workflowDispatchPermission: 'PASS' };
 }
 
 function githubHeaders(token: string): Record<string, string> {
@@ -243,10 +257,11 @@ async function preflight(now: Date): Promise<Response> {
   if (!(await probeLedgerAccess())) {
     return json(503, { status: 'FAIL', errorClass: 'LEDGER_UNAVAILABLE' });
   }
-  const [dispatchActor, token] = await Promise.all([
+  const [dispatchActor, githubAuthentication] = await Promise.all([
     githubAppDispatchActor(now),
-    githubInstallationToken(now),
+    githubInstallationAuthentication(now),
   ]);
+  const { token, workflowDispatchPermission } = githubAuthentication;
   const workflowResponse = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}`,
     { headers: githubHeaders(token), signal: AbortSignal.timeout(10_000) },
@@ -257,6 +272,7 @@ async function preflight(now: Date): Promise<Response> {
     schedulerAuth: 'PASS',
     githubAppAuth: 'PASS',
     dispatchActor,
+    workflowDispatchPermission,
     workflowAccess: 'PASS',
     ledgerAccess: 'PASS',
     hmlConfiguration: 'PASS',
@@ -285,7 +301,7 @@ async function dispatch(now: Date): Promise<Response> {
       method: 'GET',
       signal: AbortSignal.timeout(12_000),
     }).catch(() => undefined);
-    token = await githubInstallationToken(now);
+    ({ token } = await githubInstallationAuthentication(now));
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     const errorClass = message.startsWith('HML_')

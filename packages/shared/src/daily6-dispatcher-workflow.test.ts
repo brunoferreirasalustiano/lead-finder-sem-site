@@ -67,6 +67,27 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).not.toContain('CATCH_UP');
   });
 
+  it('rotates every allowlisted niche instead of repeatedly collecting only salons', () => {
+    const niches = [
+      'oficinas',
+      'autoeletricas',
+      'saloes-de-beleza',
+      'barbearias',
+      'clinicas',
+      'consultorios',
+      'restaurantes',
+      'lanchonetes',
+      'empresas-de-seguranca',
+      'prestadores-de-servicos',
+    ];
+    for (const niche of niches) expect(workflow).toContain(`'${niche}'`);
+    expect(workflow).toContain('echo "category=$category"');
+    expect(workflow).toContain('DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}');
+    expect(workflow).toContain('--arg category "$DISCOVERY_CATEGORY"');
+    expect(workflow).toContain('category: $category');
+    expect(workflow).not.toContain('"category":"saloes-de-beleza"');
+  });
+
   it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
     expect(workflow).toContain('test "$GITHUB_ACTOR" = "$SUPABASE_DISPATCH_ACTOR"');
     expect(workflow).toContain('test "$GITHUB_REF" = \'refs/heads/main\'');

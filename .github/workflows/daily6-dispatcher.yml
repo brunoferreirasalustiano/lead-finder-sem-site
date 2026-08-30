@@ -120,6 +120,31 @@ jobs:
           [[ "$slot" =~ ^(09|13|16)$ ]]
           [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]
           test "$sha" = "$EXPECTED_OPERATIONAL_SHA"
+          categories=(
+            'oficinas'
+            'autoeletricas'
+            'saloes-de-beleza'
+            'barbearias'
+            'clinicas'
+            'consultorios'
+            'restaurantes'
+            'lanchonetes'
+            'empresas-de-seguranca'
+            'prestadores-de-servicos'
+          )
+          case "$slot" in
+            '09') slot_ordinal=0 ;;
+            '13') slot_ordinal=1 ;;
+            '16') slot_ordinal=2 ;;
+            *) echo 'UNEXPECTED_SLOT_FOR_CATEGORY' >&2; exit 1 ;;
+          esac
+          day_index=$(( $(date -u -d "$date" +%s) / 86400 ))
+          rotation_index=$(( (day_index * 3 + slot_ordinal) % ${#categories[@]} ))
+          category="${categories[$rotation_index]}"
+          case "$category" in
+            oficinas|autoeletricas|saloes-de-beleza|barbearias|clinicas|consultorios|restaurantes|lanchonetes|empresas-de-seguranca|prestadores-de-servicos) ;;
+            *) echo 'CATEGORY_NOT_ALLOWLISTED' >&2; exit 1 ;;
+          esac
           {
             echo "date=$date"
             echo "slot=$slot"
@@ -130,6 +155,7 @@ jobs:
             echo "dispatch_source=$dispatch_source"
             echo "dispatch_nonce=$dispatch_nonce"
             echo "correlation_id=$correlation_id"
+            echo "category=$category"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify HML branch remains pinned to approved SHA
@@ -388,6 +414,7 @@ jobs:
         shell: bash
         env:
           REQUEST_IDENTITY: ${{ steps.discovery.outputs.request_identity }}
+          DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}
           SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}
           OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}
           OPERATIONAL_AUTH_EXPIRES_AT: ${{ vars.DAILY6_OPERATIONAL_AUTH_EXPIRES_AT }}
@@ -401,12 +428,14 @@ jobs:
           test "$expires_epoch" -gt "$(date -u +%s)"
           [[ "$SLOT_DEADLINE_EPOCH" =~ ^[0-9]+$ ]]
           test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"
+          payload="$(jq -cn --arg category "$DISCOVERY_CATEGORY" \
+            '{city: "Campinas", state: "SP", country: "Brasil", category: $category, limit: 40}')"
           response="$(curl --fail-with-body --silent --show-error --max-time 30 \
             -X POST "$HML_API_URL/collect" \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
             -H "X-Collection-Identity: $REQUEST_IDENTITY" \
             -H 'Content-Type: application/json' \
-            --data '{"city":"Campinas","state":"SP","country":"Brasil","category":"saloes-de-beleza","limit":40}')"
+            --data "$payload")"
           printf '%s' "$response" | jq -e '.id and (.status == "PENDING" or .status == "PROCESSING" or .status == "COMPLETED")' >/dev/null
           echo 'DISCOVERY_ENQUEUED=true'
 

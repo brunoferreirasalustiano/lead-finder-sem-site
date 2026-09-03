@@ -246,12 +246,7 @@ const candidateCheapFilterReason = (candidate: Daily6CandidateForSelection, requ
     [candidate.do_not_contact, 'DO_NOT_CONTACT'],
     [candidate.nao_contatar, 'NAO_CONTATAR'],
     [candidate.official_site_found, 'OFFICIAL_SITE'],
-    [!candidate.public_business_email_present, 'NO_PUBLIC_EMAIL'],
-    [!candidate.email_business_association_pass, 'EMAIL_ASSOCIATION_UNVERIFIED'],
-    [!candidate.business_identity_confirmed, 'IDENTITY_UNCONFIRMED'],
-    [!candidate.business_active_pass, 'BUSINESS_NOT_ACTIVE'],
     [!candidate.email_channel_allowed, 'EMAIL_CHANNEL_BLOCKED'],
-    [candidate.legacy_status_only, 'LEGACY_STATUS_ONLY'],
     [normalizedText(candidate.city) !== normalizedText(requestedCity), 'CITY_MISMATCH'],
   ];
   return checks.find(([rejected]) => rejected)?.[1];

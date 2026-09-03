@@ -28,6 +28,7 @@ export * from './qualification.js';
 export * from './crm.js';
 export * from './campaign.js';
 export * from './campaign-outbox.js';
+export * from './discovery-enrichment.js';
 export * from './operational-observability.js';
 export * from './pilot.js';
 export * from './manual-messaging.js';

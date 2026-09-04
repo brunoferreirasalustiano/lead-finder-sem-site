@@ -4,12 +4,12 @@ COPY package*.json tsconfig*.json eslint.config.js ./
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
-RUN npm ci && npm run build
+RUN npm ci --no-audit && npm run build
 
 # JavaScript dependencies and compiled output are architecture-independent. Build and
 # validate them on BUILDPLATFORM so multiarch images do not execute Node/npm under QEMU.
 FROM build AS production-deps
-RUN npm prune --omit=dev \
+RUN npm prune --omit=dev --no-audit \
   && test ! -d node_modules/glob \
   && test ! -d node_modules/tsx \
   && test ! -d node_modules/typescript \

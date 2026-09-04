@@ -12,7 +12,7 @@
     "@lead-finder/batch-processor": "*",
     "@lead-finder/database": "*",
     "@lead-finder/shared": "*",
-    "fastify": "^5.4.0",
+    "fastify": "^5.12.1",
     "zod": "^3.25.67"
   }
 }

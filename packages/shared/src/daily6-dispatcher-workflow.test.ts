@@ -59,12 +59,33 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9',
+      'EXPECTED_OPERATIONAL_SHA: 491b6f789b6a761c189e4ddba6e9a8a4f202048b',
     );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
+  });
+
+  it('rotates every allowlisted niche instead of repeatedly collecting only salons', () => {
+    const niches = [
+      'oficinas',
+      'autoeletricas',
+      'saloes-de-beleza',
+      'barbearias',
+      'clinicas',
+      'consultorios',
+      'restaurantes',
+      'lanchonetes',
+      'empresas-de-seguranca',
+      'prestadores-de-servicos',
+    ];
+    for (const niche of niches) expect(workflow).toContain(`'${niche}'`);
+    expect(workflow).toContain('echo "category=$category"');
+    expect(workflow).toContain('DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}');
+    expect(workflow).toContain('--arg category "$DISCOVERY_CATEGORY"');
+    expect(workflow).toContain('category: $category');
+    expect(workflow).not.toContain('"category":"saloes-de-beleza"');
   });
 
   it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
@@ -196,7 +217,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9');
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 491b6f789b6a761c189e4ddba6e9a8a4f202048b');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');

@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm run test:coverage:pii-contracts
   validate:
     runs-on: ubuntu-latest
@@ -37,14 +37,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run test:coverage
       - run: npm run build
+      - name: Install the pinned audit client without implicit auditing
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund npm@11.10.0
       - name: Run bounded high-severity dependency audit
-        run: timeout 180s npx --yes npm@11.10.0 audit --package-lock-only --audit-level=high
+        run: timeout 360s node node_modules/npm/bin/npm-cli.js audit --package-lock-only --audit-level=high
       - run: git diff --check
       - name: Validate Plan B descriptors and Edge Function
         run: |
@@ -190,7 +192,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm run build
       - name: Apply migrations through the pre-consumer baseline
         shell: bash
@@ -277,7 +279,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm run build
       - name: Apply migrations through the pre-consumer baseline
         shell: bash

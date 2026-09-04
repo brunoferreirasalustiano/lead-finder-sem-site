@@ -43,7 +43,7 @@ jobs:
       - run: npm test
       - run: npm run test:coverage
       - run: npm run build
-      - run: npm audit --package-lock-only --audit-level=high
+      - run: npx --yes npm@11.10.0 audit --package-lock-only --audit-level=high
       - run: git diff --check
       - name: Validate Plan B descriptors and Edge Function
         run: |

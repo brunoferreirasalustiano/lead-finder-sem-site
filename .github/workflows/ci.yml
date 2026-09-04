@@ -44,9 +44,29 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
       - name: Install the pinned audit client without implicit auditing
+        if: matrix.profile == 'supabase-render'
         run: npm install --no-save --ignore-scripts --no-audit --no-fund npm@11.10.0
       - name: Run bounded high-severity dependency audit
-        run: timeout 360s node node_modules/npm/bin/npm-cli.js audit --package-lock-only --audit-level=high
+        if: matrix.profile == 'supabase-render'
+        run: |
+          audit_output="$(mktemp)"
+          trap 'rm -f "$audit_output"' EXIT
+          for attempt in 1 2; do
+            set +e
+            timeout 360s node node_modules/npm/bin/npm-cli.js audit --package-lock-only --audit-level=high >"$audit_output" 2>&1
+            audit_status=$?
+            set -e
+            if [ "$audit_status" -eq 0 ]; then
+              cat "$audit_output"
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ] && grep -Eq '503 Service Unavailable|429 Too Many Requests|EAI_AGAIN|ECONNRESET|ETIMEDOUT' "$audit_output"; then
+              sleep 10
+              continue
+            fi
+            cat "$audit_output"
+            exit "$audit_status"
+          done
       - run: git diff --check
       - name: Validate Plan B descriptors and Edge Function
         run: |

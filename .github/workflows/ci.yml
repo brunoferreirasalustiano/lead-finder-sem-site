@@ -43,10 +43,10 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
       - name: Install the pinned audit client without implicit auditing
-        if: matrix.profile == 'supabase-render'
+        if: matrix.deployment-profile == 'supabase-render'
         run: npm install --no-save --ignore-scripts --no-audit --no-fund npm@11.10.0
       - name: Run bounded high-severity dependency audit
-        if: matrix.profile == 'supabase-render'
+        if: matrix.deployment-profile == 'supabase-render'
         run: |
           audit_output="$(mktemp)"
           trap 'rm -f "$audit_output"' EXIT

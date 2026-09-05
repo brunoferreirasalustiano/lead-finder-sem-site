@@ -23,6 +23,16 @@ describe('HML discovery runtime role provisioning', () => {
     expect(executableSql).not.toMatch(/GRANT\s+ALL\s+ON\s+ALL\s+(TABLES|FUNCTIONS)/i);
   });
 
+  it('grants the exact location and collection-finalization capabilities used by the worker', () => {
+    expect(executableSql).toMatch(
+      /GRANT\s+UPDATE\s*\(\s*city\s*,\s*state\s*\)\s+ON TABLE public\.leads\s+TO lead_finder_discovery_runtime/i,
+    );
+    expect(executableSql).toMatch(
+      /GRANT\s+EXECUTE\s+ON FUNCTION lead_finder_internal\.sync_daily6_batch_from_collection\(text\)\s+TO lead_finder_discovery_runtime/i,
+    );
+    expect(executableSql).not.toMatch(/GRANT\s+UPDATE\s+ON\s+(TABLE\s+)?public\.leads/i);
+  });
+
   it('requires RLS and scopes policies to the discovery role only', () => {
     expect(executableSql).toContain('relrowsecurity');
     expect(executableSql).not.toMatch(/DISABLE\s+ROW\s+LEVEL\s+SECURITY/i);

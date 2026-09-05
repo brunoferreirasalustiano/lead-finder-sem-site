@@ -241,6 +241,10 @@ jobs:
         run: npm run test:restore-suppression
       - name: Run deterministic integration — first pass
         run: npm run test:integration
+      - name: Verify discovery ACL upgrade and expired lease recovery twice
+        run: |
+          npx tsx scripts/daily6-discovery-acl-recovery.integration.ts
+          npx tsx scripts/daily6-discovery-acl-recovery.integration.ts
       - name: Run pilot readiness — second isolated pass on the same PostgreSQL
         env:
           PILOT_REPORT_PATH: artifacts/pilot-readiness.json

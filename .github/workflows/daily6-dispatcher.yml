@@ -409,6 +409,11 @@ jobs:
             exit 1
           fi
           echo 'DISCOVERY_DATABASE_IDENTITY=PASS'
+          if ! capabilities="$(PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=15000' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f database/security/check_discovery_worker_capabilities.sql 2>/dev/null)" || [ "$capabilities" != 't' ]; then
+            echo 'DISCOVERY_DATABASE_CAPABILITIES=FAIL' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_CAPABILITIES=PASS'
 
       - name: Enqueue one bounded Daily-6 discovery job
         shell: bash
@@ -476,6 +481,8 @@ jobs:
             worker_failure_class='UNKNOWN'
             if grep -Fq '"event":"worker_startup_blocked"' "$worker_log"; then
               worker_failure_class='INVALID_CONFIGURATION'
+            elif grep -Fq '"failureClass":"DATABASE_PERMISSION_DENIED"' "$worker_log"; then
+              worker_failure_class='DATABASE_PERMISSION_DENIED'
             elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
               worker_failure_class='COLLECTION_SOURCE_FAILURE'
             elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then

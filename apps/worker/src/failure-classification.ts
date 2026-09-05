@@ -1,10 +1,20 @@
-export type WorkerFailureClass = 'COLLECTION_LEASE_LOST' | 'WORKER_UNHANDLED_REJECTION' | 'WORKER_FATAL';
+export type WorkerFailureClass =
+  | 'COLLECTION_LEASE_LOST'
+  | 'DATABASE_PERMISSION_DENIED'
+  | 'WORKER_UNHANDLED_REJECTION'
+  | 'WORKER_FATAL';
 
 const errorCode = (error: unknown): string | undefined => {
-  if (error && typeof error === 'object' && 'code' in error && typeof (error as { code?: unknown }).code === 'string') {
-    return (error as { code: string }).code;
+  const visited = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    if ('code' in current && current.code === '42501') return '42501';
+    if ('code' in current && current.code === 'COLLECTION_LEASE_LOST') return 'COLLECTION_LEASE_LOST';
+    if (current instanceof Error && current.message === 'COLLECTION_LEASE_LOST') return 'COLLECTION_LEASE_LOST';
+    current = 'cause' in current ? current.cause : undefined;
   }
-  if (error instanceof Error) return error.message.split(':', 1)[0]?.trim();
   return undefined;
 };
 
@@ -15,6 +25,7 @@ const errorCode = (error: unknown): string | undefined => {
  */
 export function classifyWorkerFailure(kind: string, error: unknown): WorkerFailureClass {
   if (errorCode(error) === 'COLLECTION_LEASE_LOST') return 'COLLECTION_LEASE_LOST';
+  if (errorCode(error) === '42501') return 'DATABASE_PERMISSION_DENIED';
   if (kind === 'Unhandled rejection') return 'WORKER_UNHANDLED_REJECTION';
   return 'WORKER_FATAL';
 }

@@ -11,6 +11,17 @@ const postStart = workflow.indexOf('- name: Run one authenticated native Daily-6
 const gate = workflow.slice(gateStart, postStart);
 
 describe('native Daily-6 scheduler authorization gate', () => {
+  it('checks database capabilities before enqueue and preserves sanitized permission failures', () => {
+    const start = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
+    const enqueue = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    expect(start).toBeGreaterThan(0);
+    const preflight = workflow.slice(start, enqueue);
+    expect(preflight).toContain('default_transaction_read_only=on');
+    expect(preflight).toContain('check_discovery_worker_capabilities.sql');
+    expect(preflight).toContain('[ "$capabilities" != \'t\' ]');
+    expect(preflight).toContain('exit 1');
+    expect(workflow).toContain("worker_failure_class='DATABASE_PERMISSION_DENIED'");
+  });
   it('blocks a scheduled run without the explicit versioned authorization before POST', () => {
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(postStart).toBeGreaterThan(gateStart);

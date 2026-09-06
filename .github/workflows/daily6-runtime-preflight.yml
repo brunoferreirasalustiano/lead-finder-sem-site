@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 491b6f789b6a761c189e4ddba6e9a8a4f202048b
+  EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767
 
 jobs:
   runtime-preflight:

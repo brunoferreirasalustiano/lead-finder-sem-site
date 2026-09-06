@@ -70,7 +70,7 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: 491b6f789b6a761c189e4ddba6e9a8a4f202048b',
+      'EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767',
     );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
@@ -228,7 +228,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 491b6f789b6a761c189e4ddba6e9a8a4f202048b');
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');
@@ -247,6 +247,23 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
 });
 
 describe('Daily-6 hosted discovery authentication preflight workflow', () => {
+  it('checks actual worker credentials with a bounded read-only SQL query before HTTP', async () => {
+    const hosted = await readFile(
+      new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),
+      'utf8',
+    );
+    const databaseStep = hosted.indexOf('- name: Verify worker database capabilities without enqueue');
+    expect(databaseStep).toBeGreaterThan(0);
+    expect(databaseStep).toBeLessThan(hosted.indexOf('- name: Execute exactly one authenticated'));
+    expect(hosted).toContain('DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}');
+    expect(hosted).toContain('default_transaction_read_only=on');
+    expect(hosted).toContain('statement_timeout=15000');
+    expect(hosted).toContain("PGCONNECT_TIMEOUT: '10'");
+    expect(hosted).toContain('check_discovery_worker_capabilities.sql');
+    expect(hosted).toContain('2>/dev/null');
+    expect(hosted).toContain('[ "$capabilities" != \'t\' ]');
+    expect(hosted).not.toContain('echo "$DATABASE_URL"');
+  });
   it('is manual-only, read-only, single-request and output-sanitized', async () => {
     const hosted = await readFile(
       new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),

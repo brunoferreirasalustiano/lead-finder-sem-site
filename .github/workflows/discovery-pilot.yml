@@ -38,7 +38,7 @@ on:
           - '16'
 
 env:
-  APPROVED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767
+  APPROVED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37
 
 permissions:
   contents: read

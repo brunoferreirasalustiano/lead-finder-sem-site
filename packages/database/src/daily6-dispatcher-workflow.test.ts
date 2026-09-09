@@ -7,13 +7,14 @@ const workflow = await readFile(
 );
 
 describe('native Daily-6 scheduler control plane', () => {
-  it('runs from the default-branch schedule with an immutable HML pin', () => {
-    expect(workflow).toContain("cron: '7 12 * * *'");
-    expect(workflow).toContain("cron: '7 16 * * *'");
-    expect(workflow).toContain("cron: '7 19 * * *'");
+  it('accepts only the canonical Supabase dispatch with an immutable HML pin', () => {
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).not.toContain('schedule:');
+    expect(workflow).not.toContain('github.event.schedule');
+    expect(workflow).toContain('test "$GITHUB_EVENT_NAME" = \'workflow_dispatch\'');
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767',
+      'EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37',
     );
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
@@ -114,15 +115,13 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT:-1}" = \'1\'');
+    expect(workflow).toContain("'09:07') slot='09'; deadline_local='13:00:00'");
+    expect(workflow).toContain("'13:07') slot='13'; deadline_local='15:00:00'");
+    expect(workflow).toContain("'16:07') slot='16'; deadline_local='20:00:00'");
     expect(workflow).toContain(
-      "'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'",
+      'date="$(TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%F)"',
     );
-    expect(workflow).toContain(
-      "'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'",
-    );
-    expect(workflow).toContain(
-      "'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'",
-    );
+    expect(workflow).not.toContain('date="$today"');
     expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
     expect(workflow).toContain('group: daily6-dispatcher');
     expect(workflow).not.toContain('MAX_SCHEDULE_LATENESS_SECONDS');

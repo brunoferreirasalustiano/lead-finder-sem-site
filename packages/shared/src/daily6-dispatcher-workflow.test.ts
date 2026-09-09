@@ -22,7 +22,8 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(preflight).toContain('exit 1');
     expect(workflow).toContain("worker_failure_class='DATABASE_PERMISSION_DENIED'");
   });
-  it('blocks a scheduled run without the explicit versioned authorization before POST', () => {
+
+  it('blocks a canonical scheduler dispatch without explicit authorization before POST', () => {
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(postStart).toBeGreaterThan(gateStart);
     expect(gate).toContain(
@@ -39,23 +40,17 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(gate).not.toContain('/internal/daily6/run-slot');
   });
 
-  it('preserves the legitimate authorized path and existing schedule invariants', () => {
+  it('keeps Supabase as the only scheduler and preserves slot deadlines', () => {
     expect(gate).toContain('DAILY6_NATIVE_SEND_AUTHORIZED_V1');
-    expect(workflow).toContain("cron: '7 12 * * *'");
-    expect(workflow).toContain("cron: '7 16 * * *'");
-    expect(workflow).toContain("cron: '7 19 * * *'");
+    expect(workflow).not.toContain('schedule:');
+    expect(workflow).not.toContain('github.event.schedule');
+    expect(workflow).not.toContain("GITHUB_EVENT_NAME" + '" = \'schedule\'');
     expect(workflow).toContain('test "$date" = "$today"');
     expect(workflow).toContain('[[ "$slot" =~ ^(09|13|16)$ ]]');
     expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT:-1}" = \'1\'');
-    expect(workflow).toContain(
-      "'7 12 * * *') slot='09'; scheduled_local='09:07:00'; deadline_local='13:00:00'",
-    );
-    expect(workflow).toContain(
-      "'7 16 * * *') slot='13'; scheduled_local='13:07:00'; deadline_local='15:00:00'",
-    );
-    expect(workflow).toContain(
-      "'7 19 * * *') slot='16'; scheduled_local='16:07:00'; deadline_local='20:00:00'",
-    );
+    expect(workflow).toContain("'09:07') slot='09'; deadline_local='13:00:00'");
+    expect(workflow).toContain("'13:07') slot='13'; deadline_local='15:00:00'");
+    expect(workflow).toContain("'16:07') slot='16'; deadline_local='20:00:00'");
     expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $scheduled_local" +%s');
     expect(workflow).toContain('TZ=America/Sao_Paulo date -d "$date $deadline_local" +%s');
     expect(workflow).toContain('test "$now_epoch" -le "$deadline_epoch"');
@@ -70,7 +65,7 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767',
+      'EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37',
     );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
@@ -100,6 +95,7 @@ describe('native Daily-6 scheduler authorization gate', () => {
   });
 
   it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
+    expect(workflow).toContain('test "$GITHUB_EVENT_NAME" = \'workflow_dispatch\'');
     expect(workflow).toContain('test "$GITHUB_ACTOR" = "$SUPABASE_DISPATCH_ACTOR"');
     expect(workflow).toContain('test "$GITHUB_REF" = \'refs/heads/main\'');
     expect(workflow).toContain('test "${SUPABASE_SCHEDULER_ENABLED:-false}" = \'true\'');
@@ -111,6 +107,21 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).not.toContain('INPUT_SLOT');
     expect(workflow).not.toContain('inputs.slot');
     expect(workflow).not.toContain('inputs.request_identity');
+  });
+
+  it('derives the Campinas date from the canonical timestamp and rejects a cross-day dispatch', () => {
+    const timestampParse = workflow.indexOf(
+      'scheduled_epoch="$(date -u -d "$INPUT_SCHEDULED_AT" +%s)"',
+    );
+    const canonicalDate = workflow.indexOf(
+      'date="$(TZ=America/Sao_Paulo date -d "@$scheduled_epoch" +%F)"',
+    );
+    const sameDayGate = workflow.indexOf('test "$date" = "$today"');
+
+    expect(timestampParse).toBeGreaterThanOrEqual(0);
+    expect(canonicalDate).toBeGreaterThan(timestampParse);
+    expect(sameDayGate).toBeGreaterThan(canonicalDate);
+    expect(workflow).not.toContain('date="$today"');
   });
 
   it('atomically claims and terminalizes a Supabase dispatch around all commercial side effects', () => {
@@ -228,7 +239,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 707644eabc6a69ba299ba61e688ee5376dccd767');
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');

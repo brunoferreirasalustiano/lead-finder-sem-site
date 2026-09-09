@@ -11,9 +11,7 @@ CREATE TABLE IF NOT EXISTS lead_finder_internal.daily6_scheduler_settings (
 
 INSERT INTO lead_finder_internal.daily6_scheduler_settings(singleton, enabled)
 VALUES (true, false)
-ON CONFLICT (singleton) DO UPDATE
-SET enabled = false,
-    updated_at = clock_timestamp();
+ON CONFLICT (singleton) DO NOTHING;
 
 REVOKE ALL ON TABLE lead_finder_internal.daily6_scheduler_settings FROM PUBLIC, anon, authenticated;
 
@@ -71,16 +69,14 @@ BEGIN
     FROM cron.job
    WHERE jobname = 'lead-finder-daily6-supabase'
    LIMIT 1;
-  IF existing_job_id IS NOT NULL THEN
-    PERFORM cron.unschedule(existing_job_id);
+  IF existing_job_id IS NULL THEN
+    SELECT cron.schedule(
+      'lead-finder-daily6-supabase',
+      '7 12,16,19 * * *',
+      'select lead_finder_internal.invoke_daily6_supabase_scheduler()'
+    ) INTO scheduler_job_id;
+    PERFORM cron.alter_job(job_id := scheduler_job_id, active := false);
   END IF;
-
-  SELECT cron.schedule(
-    'lead-finder-daily6-supabase',
-    '7 12,16,19 * * *',
-    'select lead_finder_internal.invoke_daily6_supabase_scheduler()'
-  ) INTO scheduler_job_id;
-  PERFORM cron.alter_job(job_id := scheduler_job_id, active := false);
 END
 $$;
 

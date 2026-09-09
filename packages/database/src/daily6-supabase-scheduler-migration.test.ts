@@ -24,6 +24,10 @@ describe('migration 0070 Daily-6 Supabase scheduler', () => {
     expect(supabaseAdapter).toContain('enabled boolean NOT NULL DEFAULT false');
     expect(supabaseAdapter).toContain('daily6_scheduler_invoke_secret');
     expect(supabaseAdapter).toContain('vault.decrypted_secrets');
+    expect(supabaseAdapter).toContain('ON CONFLICT (singleton) DO NOTHING');
+    expect(supabaseAdapter).toContain('IF existing_job_id IS NULL THEN');
+    expect(supabaseAdapter).not.toContain('cron.unschedule');
+    expect(supabaseAdapter).not.toContain('ON CONFLICT (singleton) DO UPDATE');
     expect(supabaseAdapter).not.toMatch(/gh[pousr]_[A-Za-z0-9_]+/u);
     expect(supabaseAdapter).not.toContain('PRIVATE KEY');
     expect(migration).not.toContain('pg_cron');

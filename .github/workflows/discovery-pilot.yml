@@ -38,7 +38,7 @@ on:
           - '16'
 
 env:
-  APPROVED_OPERATIONAL_SHA: 9490009217d9c587869eb6b069586ab64fefd33a
+  APPROVED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37
 
 permissions:
   contents: read
@@ -105,21 +105,74 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl --fail-with-body --silent --show-error --max-time 15 \
-            "$HML_API_URL/health/ready" >/dev/null
+          test -n "$HML_API_URL"
+          for readiness_attempt in 1 2 3; do
+            # A free Render instance may be hibernating. Wake it with a
+            # bounded read-only liveness GET before the readiness check;
+            # readiness remains the authoritative gate for database health.
+            curl --fail --silent --show-error --max-time 10 -X GET \
+              "$HML_API_URL/health/live" >/dev/null || true
+            if curl --fail --silent --show-error --max-time 15 -X GET \
+              "$HML_API_URL/health/ready" >/dev/null; then
+              readiness_ok=true
+              break
+            fi
+            if [ "$readiness_attempt" -lt 3 ]; then sleep 5; fi
+          done
+          test "${readiness_ok:-false}" = true
 
-      - name: Verify collection auth and egress without enqueueing
+      - name: Verify collection auth without enqueueing
         shell: bash
         run: |
           set -Eeuo pipefail
-          trap 'rm -f collection-preflight.json' EXIT
-          status="$(curl --silent --show-error --max-time 15 \
-            -o collection-preflight.json -w '%{http_code}' \
-            -X POST "$HML_API_URL/collect" \
+          response_file="$(mktemp)"
+          status_file="$(mktemp)"
+          cleanup() { rm -f "$response_file" "$status_file"; }
+          trap cleanup EXIT
+          if ! curl --silent --show-error --max-time 30 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --get "$HML_API_URL/internal/discovery/preflight" \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data '{}')"
-          test "$status" = '400'
+            -H 'Cache-Control: no-cache' \
+            >"$status_file"; then
+            echo 'HTTP_STATUS=000'
+            echo 'DISCOVERY_AUTH=NOT_PROVEN'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            echo 'ERROR_CLASS=NETWORK_OR_TIMEOUT'
+            exit 1
+          fi
+          status="$(<"$status_file")"
+          if [ "$status" != '200' ]; then
+            case "$status" in
+              401) error_class='AUTH_INVALID_OR_EXPIRED' ;;
+              403) error_class='PERMISSION_OR_SOURCE_DENIED' ;;
+              404) error_class='PREFLIGHT_DISABLED' ;;
+              5??) error_class='RUNTIME_UNAVAILABLE' ;;
+              *) error_class='INVALID_RESPONSE' ;;
+            esac
+            printf 'HTTP_STATUS=%s\n' "$status"
+            echo 'DISCOVERY_AUTH=FAIL'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            printf 'ERROR_CLASS=%s\n' "$error_class"
+            exit 1
+          fi
+          if ! jq -e \
+            '.discoveryAuth == "PASS"
+             and .collectionPermission == "PASS"
+             and (keys | sort) == ["collectionPermission", "discoveryAuth"]' \
+            "$response_file" >/dev/null; then
+            printf 'HTTP_STATUS=%s\n' "$status"
+            echo 'DISCOVERY_AUTH=FAIL'
+            echo 'COLLECTION_PERMISSION=NOT_PROVEN'
+            echo 'ERROR_CLASS=INVALID_RESPONSE'
+            exit 1
+          fi
+          printf 'HTTP_STATUS=%s\n' "$status"
+          echo 'DISCOVERY_AUTH=PASS'
+          echo 'COLLECTION_PERMISSION=PASS'
+          echo 'ERROR_CLASS=NONE'
+          echo 'STATUS=DISCOVERY_AUTH_PREFLIGHT_PASS'
 
       - uses: actions/setup-node@v4
         with:

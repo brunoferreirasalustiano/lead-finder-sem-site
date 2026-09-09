@@ -11,6 +11,18 @@ const postStart = workflow.indexOf('- name: Run one authenticated native Daily-6
 const gate = workflow.slice(gateStart, postStart);
 
 describe('native Daily-6 scheduler authorization gate', () => {
+  it('checks database capabilities before enqueue and preserves sanitized permission failures', () => {
+    const start = workflow.indexOf('- name: Validate bounded worker database identity before enqueue');
+    const enqueue = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    expect(start).toBeGreaterThan(0);
+    const preflight = workflow.slice(start, enqueue);
+    expect(preflight).toContain('default_transaction_read_only=on');
+    expect(preflight).toContain('check_discovery_worker_capabilities.sql');
+    expect(preflight).toContain('[ "$capabilities" != \'t\' ]');
+    expect(preflight).toContain('exit 1');
+    expect(workflow).toContain("worker_failure_class='DATABASE_PERMISSION_DENIED'");
+  });
+
   it('blocks a canonical scheduler dispatch without explicit authorization before POST', () => {
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(postStart).toBeGreaterThan(gateStart);
@@ -53,12 +65,33 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9',
+      'EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37',
     );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
     expect(workflow).not.toContain('backfill');
     expect(workflow).not.toContain('CATCH_UP');
+  });
+
+  it('rotates every allowlisted niche instead of repeatedly collecting only salons', () => {
+    const niches = [
+      'oficinas',
+      'autoeletricas',
+      'saloes-de-beleza',
+      'barbearias',
+      'clinicas',
+      'consultorios',
+      'restaurantes',
+      'lanchonetes',
+      'empresas-de-seguranca',
+      'prestadores-de-servicos',
+    ];
+    for (const niche of niches) expect(workflow).toContain(`'${niche}'`);
+    expect(workflow).toContain('echo "category=$category"');
+    expect(workflow).toContain('DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}');
+    expect(workflow).toContain('--arg category "$DISCOVERY_CATEGORY"');
+    expect(workflow).toContain('category: $category');
+    expect(workflow).not.toContain('"category":"saloes-de-beleza"');
   });
 
   it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
@@ -206,7 +239,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9');
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');
@@ -225,6 +258,23 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
 });
 
 describe('Daily-6 hosted discovery authentication preflight workflow', () => {
+  it('checks actual worker credentials with a bounded read-only SQL query before HTTP', async () => {
+    const hosted = await readFile(
+      new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),
+      'utf8',
+    );
+    const databaseStep = hosted.indexOf('- name: Verify worker database capabilities without enqueue');
+    expect(databaseStep).toBeGreaterThan(0);
+    expect(databaseStep).toBeLessThan(hosted.indexOf('- name: Execute exactly one authenticated'));
+    expect(hosted).toContain('DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}');
+    expect(hosted).toContain('default_transaction_read_only=on');
+    expect(hosted).toContain('statement_timeout=15000');
+    expect(hosted).toContain("PGCONNECT_TIMEOUT: '10'");
+    expect(hosted).toContain('check_discovery_worker_capabilities.sql');
+    expect(hosted).toContain('2>/dev/null');
+    expect(hosted).toContain('[ "$capabilities" != \'t\' ]');
+    expect(hosted).not.toContain('echo "$DATABASE_URL"');
+  });
   it('is manual-only, read-only, single-request and output-sanitized', async () => {
     const hosted = await readFile(
       new URL('../../../.github/workflows/daily6-discovery-preflight.yml', import.meta.url),

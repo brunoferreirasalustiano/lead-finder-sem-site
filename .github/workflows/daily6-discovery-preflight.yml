@@ -11,11 +11,31 @@ jobs:
     name: Daily-6 discovery authentication read-only preflight
     runs-on: ubuntu-latest
     environment: hml-discovery
-    timeout-minutes: 1
+    timeout-minutes: 3
     env:
       HML_API_URL: ${{ vars.HML_API_URL }}
       HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify worker database capabilities without enqueue
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+          PGCONNECT_TIMEOUT: '10'
+          PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=15000'
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$DATABASE_URL" ]; then
+            echo 'DISCOVERY_DATABASE_CAPABILITIES=FAIL'
+            exit 1
+          fi
+          if ! capabilities="$(psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f database/security/check_discovery_worker_capabilities.sql 2>/dev/null)" || [ "$capabilities" != 't' ]; then
+            echo 'DISCOVERY_DATABASE_CAPABILITIES=FAIL'
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_CAPABILITIES=PASS'
       - name: Execute exactly one authenticated read-only request
         shell: bash
         run: |

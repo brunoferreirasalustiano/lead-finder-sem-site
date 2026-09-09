@@ -14,7 +14,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$GITHUB_EVENT_NAME" = \'workflow_dispatch\'');
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: c21d1cf90317f4f3b74d96cf2a19895ecd1beaf9',
+      'EXPECTED_OPERATIONAL_SHA: 1de126194bb1ae29e5b5033735dc07d488138d37',
     );
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });

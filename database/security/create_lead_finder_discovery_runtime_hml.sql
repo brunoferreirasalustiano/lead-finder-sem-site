@@ -63,9 +63,22 @@ TO lead_finder_discovery_runtime;
 GRANT UPDATE (status,website_status,updated_at)
   ON TABLE public.leads
 TO lead_finder_discovery_runtime;
+GRANT UPDATE (city,state)
+  ON TABLE public.leads
+TO lead_finder_discovery_runtime;
 GRANT UPDATE (original_value,source,confidence,verified_at,is_valid,updated_at)
   ON TABLE public.lead_contacts
 TO lead_finder_discovery_runtime;
+
+DO $$
+BEGIN
+  IF to_regprocedure('lead_finder_internal.sync_daily6_batch_from_collection(text)') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA lead_finder_internal TO lead_finder_discovery_runtime;
+    GRANT EXECUTE ON FUNCTION lead_finder_internal.sync_daily6_batch_from_collection(text)
+      TO lead_finder_discovery_runtime;
+  END IF;
+END
+$$;
 
 -- RLS is a required boundary for this role. Fail closed if any repository
 -- table was provisioned without RLS instead of silently widening access.

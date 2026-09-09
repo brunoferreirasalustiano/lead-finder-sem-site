@@ -123,6 +123,27 @@ describe('progressive Daily-6 candidate selection', () => {
     expect(result.approved).toBe(1);
   });
 
+  it('sends incomplete quality evidence to evaluation without weakening safety gates', async () => {
+    const calls: string[] = [];
+    const result = await selectProgressiveDaily6Candidates(
+      [candidate('needs-review', {
+        business_identity_confirmed: false,
+        business_active_pass: false,
+        email_business_association_pass: false,
+      })],
+      'Campinas',
+      (item) => {
+        calls.push(item.lead_id);
+        return { status: 'REJECTED', reason: 'QUALITY_EVIDENCE_INCOMPLETE' };
+      },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(result.cheapFilterRejected).toBe(0);
+    expect(result.approved).toBe(0);
+    expect(result.rejectionReasons.QUALITY_EVIDENCE_INCOMPLETE).toBe(1);
+  });
+
   it('keeps UNKNOWN out of approved and can continue to another candidate', async () => {
     const result = await selectProgressiveDaily6Candidates(
       [candidate('unknown'), candidate('approved')],

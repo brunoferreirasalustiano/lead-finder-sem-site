@@ -496,6 +496,7 @@ jobs:
         env:
           SLOT_DATE: ${{ steps.slot.outputs.date }}
           SLOT: ${{ steps.slot.outputs.slot }}
+          DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}
           EXPECTED_SHA: ${{ steps.slot.outputs.sha }}
           SLOT_DEADLINE_EPOCH: ${{ steps.slot.outputs.deadline_epoch }}
           OPERATIONAL_AUTHORIZATION: ${{ vars.DAILY6_OPERATIONAL_AUTHORIZATION }}
@@ -512,6 +513,16 @@ jobs:
           test "$expires_epoch" -gt "$(date -u +%s)"
           [[ "$SLOT_DEADLINE_EPOCH" =~ ^[0-9]+$ ]]
           test "$(date -u +%s)" -le "$SLOT_DEADLINE_EPOCH"
+          case "$DISCOVERY_CATEGORY" in
+            oficinas|autoeletricas|saloes-de-beleza|barbearias|clinicas|consultorios|restaurantes|lanchonetes|empresas-de-seguranca|prestadores-de-servicos) ;;
+            *) echo 'CATEGORY_NOT_ALLOWLISTED' >&2; exit 1 ;;
+          esac
+          payload="$(jq -cn \
+            --arg date "$SLOT_DATE" \
+            --arg slot "$SLOT" \
+            --arg category "$DISCOVERY_CATEGORY" \
+            --arg expectedOperationalSha "$EXPECTED_SHA" \
+            '{date: $date, slot: $slot, city: "Campinas", category: $category, policyVersion: "daily6-v1", expectedOperationalSha: $expectedOperationalSha}')"
           response_file="$(mktemp)"
           status_file="$(mktemp)"
           cleanup() { rm -f "$response_file" "$status_file"; }
@@ -522,7 +533,7 @@ jobs:
             -X POST "$HML_API_URL/internal/daily6/run-slot" \
             -H "Authorization: Bearer $HML_DAILY6_TOKEN" \
             -H 'Content-Type: application/json' \
-            --data "{\"date\":\"$SLOT_DATE\",\"slot\":\"$SLOT\",\"city\":\"Campinas\",\"policyVersion\":\"daily6-v1\",\"expectedOperationalSha\":\"$EXPECTED_SHA\"}" \
+            --data "$payload" \
             >"$status_file"; then
             echo 'DAILY6_RUN_SLOT_FAILURE_CLASS=NETWORK_OR_TIMEOUT' >&2
             exit 1

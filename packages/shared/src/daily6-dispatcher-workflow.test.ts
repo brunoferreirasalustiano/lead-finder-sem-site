@@ -94,6 +94,25 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).not.toContain('"category":"saloes-de-beleza"');
   });
 
+  it('passes the resolved discovery category to the native run-slot request', () => {
+    const collectStart = workflow.indexOf('- name: Enqueue one bounded Daily-6 discovery job');
+    const workerStart = workflow.indexOf('- name: Run one bounded discovery and enrichment worker');
+    const runSlotStart = workflow.indexOf('- name: Run one authenticated native Daily-6 slot');
+    const collect = workflow.slice(collectStart, workerStart);
+    const runSlot = workflow.slice(runSlotStart);
+
+    expect(collect).toContain('DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}');
+    expect(collect).toContain('--arg category "$DISCOVERY_CATEGORY"');
+    expect(runSlot).toContain('DISCOVERY_CATEGORY: ${{ steps.slot.outputs.category }}');
+    expect(runSlot).toContain('--arg category "$DISCOVERY_CATEGORY"');
+    expect(runSlot).toContain('category: $category');
+    expect(runSlot).toContain("*) echo 'CATEGORY_NOT_ALLOWLISTED' >&2; exit 1 ;;");
+    expect(runSlot).not.toContain('category: null');
+    expect(runSlot.indexOf('category: $category')).toBeLessThan(
+      runSlot.indexOf('-X POST "$HML_API_URL/internal/daily6/run-slot"'),
+    );
+  });
+
   it('accepts only a dedicated Supabase dispatcher on main and never trusts a caller slot', () => {
     expect(workflow).toContain('test "$GITHUB_EVENT_NAME" = \'workflow_dispatch\'');
     expect(workflow).toContain('test "$GITHUB_ACTOR" = "$SUPABASE_DISPATCH_ACTOR"');

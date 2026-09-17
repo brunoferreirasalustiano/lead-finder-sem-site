@@ -83,12 +83,27 @@ Check Runs do GitHub Actions são evidência válida mesmo quando o Commit Statu
 ## Pull requests
 
 - Abrir PR como **Draft** e relacionar a issue com `Relates to #N`, salvo tarefa documental conduzida diretamente pela supervisão.
-- Não marcar Ready for Review.
-- Não fazer merge.
+- Por padrão, não marcar Ready for Review e não fazer merge.
 - Não fechar issues.
 - Parar após push e abertura/atualização da PR.
 - A supervisão externa revisará diff, threads, head SHA, CI, mergeabilidade e pós-merge.
 - O merge autorizado será squash merge protegido pelo head SHA exato.
+
+### Exceção com autorização explícita do proprietário
+
+Um agente pode marcar uma PR como Ready for Review e executar o squash merge somente quando **todos** os requisitos abaixo forem atendidos:
+
+- o proprietário autorizar explicitamente essas ações na tarefa atual, identificando a PR ou o escopo sem ambiguidade;
+- uma revisão independente do diff completo no head SHA exato estiver concluída e registrada na PR;
+- todos os checks obrigatórios do head SHA exato estiverem concluídos com sucesso;
+- a PR estiver mergeável, sem threads não resolvidas e sem findings válidos P0, P1 ou P2;
+- o head SHA permanecer inalterado entre a autorização, a revisão e o merge;
+- o merge usar squash protegido e verificação explícita do head SHA esperado;
+- nenhuma branch protection, aprovação obrigatória ou outro gate do GitHub for contornado ou desabilitado;
+- o agente não registrar autoaprovação: quando o GitHub exigir aprovação, ela deve vir de outro revisor autorizado;
+- o CI pós-merge for acompanhado e qualquer falha for reportada imediatamente, sem deploy ou execução operacional automática não autorizada.
+
+Se qualquer requisito estiver ausente, ambíguo ou mudar antes do merge, manter a PR em Draft e devolver o controle à supervisão externa.
 
 ## Resposta final do agente
 

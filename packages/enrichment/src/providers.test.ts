@@ -49,6 +49,18 @@ describe('registry matching', () => {
     expect(matchRegistryToLead(lead, { ...record, businessName: 'Different Company', tradeName: 'Different Company' }).decision).toBe('REJECTED');
     expect(matchRegistryToLead(lead, { ...record, phone: null, address: null, tradeName: 'All Beauty Campinas' }).decision).toBe('AMBIGUOUS');
   });
+
+  it('keeps generic business wording available for registry identity matching', () => {
+    const genericLead = { ...lead, name: 'Grupo Campinas Servicos' };
+    const genericRecord = {
+      ...record,
+      businessName: 'GRUPO CAMPINAS SERVICOS LTDA',
+      tradeName: null,
+    };
+    const result = matchRegistryToLead(genericLead, genericRecord);
+    expect(result.decision).toBe('CONFIRMED');
+    expect(result.reasons).toEqual(expect.arrayContaining(['NAME_MATCH', 'CITY_MATCH', 'PHONE_MATCH']));
+  });
 });
 
 describe('Tavily adapter', () => {
@@ -93,6 +105,28 @@ describe('Tavily adapter', () => {
     const result = await new TavilyBusinessSearchProvider({
       apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
     }).search({ lead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
+  it('accepts an exact short business-name domain when a second identity signal corroborates it', async () => {
+    const shortLead = { ...lead, name: 'Nina' };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://nina.com.br/', title: 'Nina', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead: shortLead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
+  it('uses the public suffix list for Brazilian professional domains', async () => {
+    const legalLead = { ...lead, name: 'Silva Advocacia' };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://silva.adv.br/', title: 'Silva Advocacia', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead: legalLead });
     expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
   });
 

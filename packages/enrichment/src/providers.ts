@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getDomainWithoutSuffix } from 'tldts';
 import type { NormalizedLead } from '@lead-finder/shared';
 import {
   EnrichmentError,
@@ -139,15 +140,8 @@ const isOfficialCandidate = (locator: string): boolean => {
   return host !== '' && !isThirdPartyHost(host) && !host.includes('tavily.');
 };
 
-const multipartPublicSuffixes = new Set([
-  'com.br', 'net.br', 'org.br', 'ind.br', 'emp.br', 'co.uk', 'org.uk', 'com.au', 'net.au',
-]);
-
 const registrableDomainLabel = (host: string): string => {
-  const labels = host.split('.').filter(Boolean);
-  if (labels.length < 2) return labels[0] ?? '';
-  const suffixLength = multipartPublicSuffixes.has(labels.slice(-2).join('.')) ? 2 : 1;
-  return labels.at(-(suffixLength + 1)) ?? '';
+  return getDomainWithoutSuffix(host, { allowPrivateDomains: true }) ?? '';
 };
 
 const genericNameTokens = new Set([
@@ -155,6 +149,12 @@ const genericNameTokens = new Set([
 ]);
 const nameTokens = (value: string | null | undefined): Set<string> => new Set(
   normalizeText(value).split(' ').filter((token) => token.length > 2 && !genericNameTokens.has(token)),
+);
+const registryLegalNameTokens = new Set([
+  'eireli', 'limitada', 'ltda', 'microempresa', 'sociedade', 'unipessoal',
+]);
+const registryNameTokens = (value: string | null | undefined): Set<string> => new Set(
+  normalizeText(value).split(' ').filter((token) => token.length > 2 && !registryLegalNameTokens.has(token)),
 );
 const overlap = (left: Set<string>, right: Set<string>): number => {
   if (left.size === 0 || right.size === 0) return 0;
@@ -182,7 +182,9 @@ const isStrongOfficialWebsiteMatch = (
   const businessTokens = nameTokens(lead.name);
   if (businessTokens.size === 0) return false;
   const domainLabel = normalizeText(registrableDomainLabel(hostOf(locator))).replaceAll(' ', '');
-  const hostNameMatch = [...businessTokens].some((token) => token.length >= 5 && domainLabel.includes(token));
+  const hostNameMatch = [...businessTokens].some((token) => (
+    token.length >= 3 && (domainLabel === token || (token.length >= 5 && domainLabel.includes(token)))
+  ));
   if (!hostNameMatch) return false;
 
   const combined = `${title}\n${content}`;
@@ -507,7 +509,7 @@ export function matchRegistryToLead(lead: NormalizedLead, record: BusinessRegist
   const leadState = normalizeText(lead.state);
   const recordState = normalizeText(record.state);
   const nameScore = normalizeText(lead.name) === normalizeText(record.tradeName ?? record.businessName) && normalizeText(lead.name) !== ''
-    ? 4 : overlap(nameTokens(lead.name), nameTokens(record.tradeName ?? record.businessName)) >= 0.6 ? 3 : 0;
+    ? 4 : overlap(registryNameTokens(lead.name), registryNameTokens(record.tradeName ?? record.businessName)) >= 0.6 ? 3 : 0;
   const cityMatch = leadCity !== '' && leadCity === recordCity;
   let score = nameScore + (cityMatch ? 3 : 0) + (leadState !== '' && leadState === recordState ? 1 : 0);
   const reasons: string[] = [];

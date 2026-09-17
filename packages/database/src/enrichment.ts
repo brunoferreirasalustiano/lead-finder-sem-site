@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   classifyWebsite,
   isPublicSourceLocator,
@@ -13,6 +13,8 @@ import type { Database } from './index.js';
 import { leadContacts, leadEvidence, leads } from './schema.js';
 
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const LEGACY_WEBSITE_SOURCE = 'TAVILY_SEARCH';
+const LEGACY_RECHECK_MARKER_SOURCE = 'TAVILY_RECHECK_ATTEMPT_V2';
 
 const evidenceRows = (leadId: string, result: BusinessEnrichmentResult) => [
   {
@@ -64,6 +66,48 @@ const evidenceRows = (leadId: string, result: BusinessEnrichmentResult) => [
     fingerprint: fingerprint(['BUSINESS_EMAIL', email.value.trim().toLowerCase(), email.sourceLocator, email.businessAssociation, email.inferred]),
   })),
 ];
+
+/**
+ * Claims the one supported reclassification attempt for a legacy Tavily
+ * website decision. The marker is committed before any provider call so a
+ * provider failure cannot amplify into another paid/external attempt later.
+ */
+export async function claimLegacyWebsiteRecheck(db: Database, leadId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const current = (await tx.select({ id: leads.id })
+      .from(leads)
+      .where(eq(leads.id, leadId))
+      .for('update')
+      .limit(1))[0];
+    if (!current) return false;
+
+    const latest = (await tx.select({ source: leadEvidence.source })
+      .from(leadEvidence)
+      .where(and(
+        eq(leadEvidence.leadId, leadId),
+        eq(leadEvidence.evidenceType, 'WEBSITE'),
+      ))
+      .orderBy(desc(leadEvidence.observedAt), desc(leadEvidence.createdAt), desc(leadEvidence.id))
+      .limit(1))[0];
+    if (latest?.source !== LEGACY_WEBSITE_SOURCE) return false;
+
+    const inserted = await tx.insert(leadEvidence).values({
+      leadId,
+      source: LEGACY_RECHECK_MARKER_SOURCE,
+      reference: null,
+      evidenceType: 'WEBSITE',
+      verificationStatus: 'UNVERIFIED',
+      result: 'UNKNOWN',
+      confidence: '0',
+      observedAt: new Date(),
+      notes: 'One-time legacy website reclassification claimed before provider call.',
+      fingerprint: fingerprint(['WEBSITE', LEGACY_RECHECK_MARKER_SOURCE]),
+    }).onConflictDoNothing({
+      target: [leadEvidence.leadId, leadEvidence.fingerprint],
+    }).returning({ id: leadEvidence.id });
+    return inserted.length === 1;
+  });
+}
 
 export async function recordLeadEnrichment(
   db: Database,

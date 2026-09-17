@@ -49,6 +49,18 @@ describe('registry matching', () => {
     expect(matchRegistryToLead(lead, { ...record, businessName: 'Different Company', tradeName: 'Different Company' }).decision).toBe('REJECTED');
     expect(matchRegistryToLead(lead, { ...record, phone: null, address: null, tradeName: 'All Beauty Campinas' }).decision).toBe('AMBIGUOUS');
   });
+
+  it('keeps generic business wording available for registry identity matching', () => {
+    const genericLead = { ...lead, name: 'Grupo Campinas Servicos' };
+    const genericRecord = {
+      ...record,
+      businessName: 'GRUPO CAMPINAS SERVICOS LTDA',
+      tradeName: null,
+    };
+    const result = matchRegistryToLead(genericLead, genericRecord);
+    expect(result.decision).toBe('CONFIRMED');
+    expect(result.reasons).toEqual(expect.arrayContaining(['NAME_MATCH', 'CITY_MATCH', 'PHONE_MATCH']));
+  });
 });
 
 describe('Tavily adapter', () => {
@@ -65,6 +77,69 @@ describe('Tavily adapter', () => {
     expect(result.queryCount).toBe(6);
     expect(result.officialSiteFound).toBe(false);
     expect(result.cnpjCandidates).toEqual(['12345678000195']);
+  });
+
+  it('does not promote business directories or unrelated domains to official sites', async () => {
+    const directoryFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [
+      { url: 'https://www.econodata.com.br/consulta/all-beauty', title: 'All Beauty Campinas', content: 'Cadastro empresarial' },
+      { url: 'https://br.linkedin.com/company/all-beauty', title: 'All Beauty', content: 'Campinas' },
+    ] }), { status: 200 }));
+    const directoryResult = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn: directoryFetch,
+    }).search({ lead });
+    expect(directoryResult).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 0 });
+
+    const unrelatedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [
+      { url: 'https://example.org/lista-de-empresas', title: 'Empresas de Campinas', content: 'All Beauty' },
+    ] }), { status: 200 }));
+    const unrelatedResult = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn: unrelatedFetch,
+    }).search({ lead });
+    expect(unrelatedResult).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 1 });
+  });
+
+  it('requires a name-bound first-party domain plus corroborating identity text', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://allbeauty.com.br/', title: 'All Beauty', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
+  it('accepts an exact short business-name domain when a second identity signal corroborates it', async () => {
+    const shortLead = { ...lead, name: 'Nina' };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://nina.com.br/', title: 'Nina', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead: shortLead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
+  it('uses the public suffix list for Brazilian professional domains', async () => {
+    const legalLead = { ...lead, name: 'Silva Advocacia' };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://silva.adv.br/', title: 'Silva Advocacia', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead: legalLead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
+  it('does not treat a matching directory subdomain as the business registrable domain', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://allbeauty.diretorio-nao-listado.example/empresa',
+      title: 'All Beauty',
+      content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead });
+    expect(result).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 1 });
   });
 
   it('extracts valid alphanumeric CNPJ candidates and ignores invalid candidates', async () => {
@@ -195,6 +270,19 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.officialSiteFound).toBe(false);
     expect(result.website.confidence).toBeGreaterThanOrEqual(0.85);
     expect(result.emails[0]).toMatchObject({ businessAssociation: 'PASS', inferred: false });
+  });
+
+  it('accepts a current ACTIVE registry status without requiring a dated web result', async () => {
+    const searchProvider = { name: 'search', search: vi.fn().mockResolvedValue({ ...searchEvidence, recentActivitySources: [] }) };
+    const registryProvider = { name: 'registry', lookup: vi.fn().mockResolvedValue(record) };
+    const result = await new CompositeBusinessEnrichmentProvider({ searchProvider, registryProvider }).enrich({ lead });
+
+    expect(result.activity).toMatchObject({
+      status: 'ACTIVE',
+      sourceType: 'CNPJ_WS_REGISTRY',
+      sourceLocator: record.sourceLocator,
+      confidence: 0.95,
+    });
   });
 
   it('accepts a free-provider registry email only with public commercial evidence', async () => {

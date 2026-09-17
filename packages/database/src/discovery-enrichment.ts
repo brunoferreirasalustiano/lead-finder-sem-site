@@ -51,7 +51,7 @@ export async function listLeadEnrichmentStates(
       FROM public.lead_evidence e
       WHERE e.lead_id = ${leads.id}
         AND e.evidence_type = 'WEBSITE'
-      ORDER BY e.created_at DESC, e.id DESC
+      ORDER BY e.observed_at DESC, e.created_at DESC, e.id DESC
       LIMIT 1
     )`,
     })

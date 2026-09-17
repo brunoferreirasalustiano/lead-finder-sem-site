@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import type { NormalizedLead } from '@lead-finder/shared';
 import { applyCollectionAreaDefaults, selectEnrichmentCandidates } from './process-job.js';
 import type { LeadEnrichmentState } from '@lead-finder/database';
@@ -110,9 +111,10 @@ describe('Daily-6 collection opportunity funnel', () => {
   });
 
   it('rechecks only official-site decisions made by the legacy search classifier', () => {
-    const candidates = [lead('legacy'), lead('current'), lead('registry')];
+    const candidates = [lead('legacy'), lead('claimed'), lead('current'), lead('registry')];
     const states = [
       state('legacy', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'TAVILY_SEARCH' }),
+      state('claimed', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'TAVILY_RECHECK_ATTEMPT_V2' }),
       state('current', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'TAVILY_SEARCH_V2' }),
       state('registry', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'CNPJ_WS_REGISTRY' }),
     ];
@@ -120,5 +122,12 @@ describe('Daily-6 collection opportunity funnel', () => {
     expect(selectEnrichmentCandidates(candidates, states, 10).map((item) => item.osmId)).toEqual([
       'legacy',
     ]);
+  });
+
+  it('claims the legacy recheck durably before calling the provider', async () => {
+    const source = await readFile(new URL('./process-job.ts', import.meta.url), 'utf8');
+    expect(source.indexOf('claimLegacyWebsiteRecheck(db, persisted.id)')).toBeGreaterThan(-1);
+    expect(source.indexOf('claimLegacyWebsiteRecheck(db, persisted.id)'))
+      .toBeLessThan(source.indexOf('enrichmentProvider.enrich({ lead })'));
   });
 });

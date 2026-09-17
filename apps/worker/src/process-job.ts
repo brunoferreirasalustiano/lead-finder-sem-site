@@ -1,5 +1,6 @@
 import {
   claimCollection,
+  claimLegacyWebsiteRecheck,
   finishCollection,
   fillMissingLeadCollectionLocation,
   getLeadByOsmIdentity,
@@ -87,10 +88,16 @@ export async function processNextJob(
     if (enrichmentProvider) {
       const states = await listLeadEnrichmentStates(db, normalized);
       const enrichmentCandidates = selectEnrichmentCandidates(normalized, states, maxEnrichmentCandidates);
+      const legacyRecheckIdentities = new Set(states
+        .filter((state) => state.websiteStatus === 'OFFICIAL_SITE_FOUND'
+          && state.latestWebsiteEvidenceSource === 'TAVILY_SEARCH')
+        .map(identityKey));
       for (const lead of enrichmentCandidates) {
         if (!(await renewCollectionLease(db, job.id, job.leaseToken))) throw new Error('COLLECTION_LEASE_LOST');
         const persisted = await getLeadByOsmIdentity(db, lead.osmType, lead.osmId);
         if (!persisted) continue;
+        if (legacyRecheckIdentities.has(identityKey(lead))
+          && !(await claimLegacyWebsiteRecheck(db, persisted.id))) continue;
         providerCallInFlight = true;
         const result = await enrichmentProvider.enrich({ lead });
         providerCallInFlight = false;

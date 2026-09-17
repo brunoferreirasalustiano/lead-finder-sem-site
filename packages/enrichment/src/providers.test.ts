@@ -96,6 +96,18 @@ describe('Tavily adapter', () => {
     expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
   });
 
+  it('does not treat a matching directory subdomain as the business registrable domain', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://allbeauty.diretorio-nao-listado.example/empresa',
+      title: 'All Beauty',
+      content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead });
+    expect(result).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 1 });
+  });
+
   it('extracts valid alphanumeric CNPJ candidates and ignores invalid candidates', async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
       url: 'https://instagram.com/allbeauty', title: 'All Beauty Campinas',

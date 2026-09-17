@@ -139,6 +139,17 @@ const isOfficialCandidate = (locator: string): boolean => {
   return host !== '' && !isThirdPartyHost(host) && !host.includes('tavily.');
 };
 
+const multipartPublicSuffixes = new Set([
+  'com.br', 'net.br', 'org.br', 'ind.br', 'emp.br', 'co.uk', 'org.uk', 'com.au', 'net.au',
+]);
+
+const registrableDomainLabel = (host: string): string => {
+  const labels = host.split('.').filter(Boolean);
+  if (labels.length < 2) return labels[0] ?? '';
+  const suffixLength = multipartPublicSuffixes.has(labels.slice(-2).join('.')) ? 2 : 1;
+  return labels.at(-(suffixLength + 1)) ?? '';
+};
+
 const genericNameTokens = new Set([
   'brasil', 'campinas', 'comercio', 'empresa', 'empresas', 'grupo', 'ltda', 'servico', 'servicos',
 ]);
@@ -170,8 +181,8 @@ const isStrongOfficialWebsiteMatch = (
   if (!isOfficialCandidate(locator)) return false;
   const businessTokens = nameTokens(lead.name);
   if (businessTokens.size === 0) return false;
-  const hostKey = normalizeText(hostOf(locator)).replaceAll(' ', '');
-  const hostNameMatch = [...businessTokens].some((token) => token.length >= 5 && hostKey.includes(token));
+  const domainLabel = normalizeText(registrableDomainLabel(hostOf(locator))).replaceAll(' ', '');
+  const hostNameMatch = [...businessTokens].some((token) => token.length >= 5 && domainLabel.includes(token));
   if (!hostNameMatch) return false;
 
   const combined = `${title}\n${content}`;

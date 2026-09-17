@@ -36,6 +36,7 @@ const state = (
   isClosed: false,
   crmStage: 'NOVO',
   lastEnrichedAt: null,
+  latestWebsiteEvidenceSource: null,
   ...overrides,
 });
 
@@ -105,6 +106,19 @@ describe('Daily-6 collection opportunity funnel', () => {
 
     expect(selectEnrichmentCandidates(candidates, states, 10).map((item) => item.osmId)).toEqual([
       'valid',
+    ]);
+  });
+
+  it('rechecks only official-site decisions made by the legacy search classifier', () => {
+    const candidates = [lead('legacy'), lead('current'), lead('registry')];
+    const states = [
+      state('legacy', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'TAVILY_SEARCH' }),
+      state('current', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'TAVILY_SEARCH_V2' }),
+      state('registry', { websiteStatus: 'OFFICIAL_SITE_FOUND', latestWebsiteEvidenceSource: 'CNPJ_WS_REGISTRY' }),
+    ];
+
+    expect(selectEnrichmentCandidates(candidates, states, 10).map((item) => item.osmId)).toEqual([
+      'legacy',
     ]);
   });
 });

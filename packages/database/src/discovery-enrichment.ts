@@ -12,6 +12,7 @@ export interface LeadEnrichmentState {
   isClosed: boolean;
   crmStage: string | null;
   lastEnrichedAt: Date | null;
+  latestWebsiteEvidenceSource: string | null;
 }
 
 const osmIdentityPredicate = (identities: readonly Pick<NormalizedLead, 'osmType' | 'osmId'>[]) => {
@@ -44,6 +45,14 @@ export async function listLeadEnrichmentStates(
       FROM public.lead_evidence e
       WHERE e.lead_id = ${leads.id}
         AND e.evidence_type IN ('BUSINESS_IDENTITY','BUSINESS_ACTIVITY','WEBSITE','BUSINESS_EMAIL')
+    )`,
+      latestWebsiteEvidenceSource: sql<string | null>`(
+      SELECT e.source
+      FROM public.lead_evidence e
+      WHERE e.lead_id = ${leads.id}
+        AND e.evidence_type = 'WEBSITE'
+      ORDER BY e.created_at DESC, e.id DESC
+      LIMIT 1
     )`,
     })
     .from(leads)

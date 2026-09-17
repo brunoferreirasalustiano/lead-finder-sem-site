@@ -45,6 +45,8 @@ export function selectEnrichmentCandidates(
   return [...uniqueCandidates.values()]
     .filter((candidate) => {
       const state = byIdentity.get(identityKey(candidate));
+      const legacySearchSiteClassification = state?.websiteStatus === 'OFFICIAL_SITE_FOUND'
+        && state.latestWebsiteEvidenceSource === 'TAVILY_SEARCH';
       return state !== undefined
         && !candidate.isClosed
         && candidate.websiteStatus !== 'OFFICIAL_SITE_FOUND'
@@ -52,7 +54,7 @@ export function selectEnrichmentCandidates(
         && !state.doNotContact
         && !state.isClosed
         && state.crmStage !== 'NAO_CONTATAR'
-        && state.websiteStatus !== 'OFFICIAL_SITE_FOUND';
+        && (state.websiteStatus !== 'OFFICIAL_SITE_FOUND' || legacySearchSiteClassification);
     })
     .sort((left, right) => {
       const leftAt = byIdentity.get(identityKey(left))?.lastEnrichedAt?.valueOf() ?? Number.NEGATIVE_INFINITY;

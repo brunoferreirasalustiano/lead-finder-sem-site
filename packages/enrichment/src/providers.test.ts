@@ -67,6 +67,35 @@ describe('Tavily adapter', () => {
     expect(result.cnpjCandidates).toEqual(['12345678000195']);
   });
 
+  it('does not promote business directories or unrelated domains to official sites', async () => {
+    const directoryFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [
+      { url: 'https://www.econodata.com.br/consulta/all-beauty', title: 'All Beauty Campinas', content: 'Cadastro empresarial' },
+      { url: 'https://br.linkedin.com/company/all-beauty', title: 'All Beauty', content: 'Campinas' },
+    ] }), { status: 200 }));
+    const directoryResult = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn: directoryFetch,
+    }).search({ lead });
+    expect(directoryResult).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 0 });
+
+    const unrelatedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [
+      { url: 'https://example.org/lista-de-empresas', title: 'Empresas de Campinas', content: 'All Beauty' },
+    ] }), { status: 200 }));
+    const unrelatedResult = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn: unrelatedFetch,
+    }).search({ lead });
+    expect(unrelatedResult).toMatchObject({ officialSiteFound: false, ambiguousDomainMatches: 1 });
+  });
+
+  it('requires a name-bound first-party domain plus corroborating identity text', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
+      url: 'https://allbeauty.com.br/', title: 'All Beauty', content: 'Atendimento em Campinas',
+    }] }), { status: 200 }));
+    const result = await new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, fetchFn,
+    }).search({ lead });
+    expect(result).toMatchObject({ officialSiteFound: true, ambiguousDomainMatches: 0 });
+  });
+
   it('extracts valid alphanumeric CNPJ candidates and ignores invalid candidates', async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{
       url: 'https://instagram.com/allbeauty', title: 'All Beauty Campinas',
@@ -195,6 +224,19 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.officialSiteFound).toBe(false);
     expect(result.website.confidence).toBeGreaterThanOrEqual(0.85);
     expect(result.emails[0]).toMatchObject({ businessAssociation: 'PASS', inferred: false });
+  });
+
+  it('accepts a current ACTIVE registry status without requiring a dated web result', async () => {
+    const searchProvider = { name: 'search', search: vi.fn().mockResolvedValue({ ...searchEvidence, recentActivitySources: [] }) };
+    const registryProvider = { name: 'registry', lookup: vi.fn().mockResolvedValue(record) };
+    const result = await new CompositeBusinessEnrichmentProvider({ searchProvider, registryProvider }).enrich({ lead });
+
+    expect(result.activity).toMatchObject({
+      status: 'ACTIVE',
+      sourceType: 'CNPJ_WS_REGISTRY',
+      sourceLocator: record.sourceLocator,
+      confidence: 0.95,
+    });
   });
 
   it('accepts a free-provider registry email only with public commercial evidence', async () => {

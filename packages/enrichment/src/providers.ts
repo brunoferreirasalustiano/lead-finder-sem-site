@@ -13,6 +13,7 @@ import {
 
 const TAVILY_ENDPOINT = 'https://api.tavily.com/search';
 const CNPJ_WS_ENDPOINT = 'https://publica.cnpj.ws/cnpj';
+const TAVILY_SEARCH_SOURCE_V2 = 'TAVILY_SEARCH_V2';
 const MAX_CNPJ_CANDIDATES = 5;
 const MAX_QUERY_LENGTH = 180;
 const ACTIVITY_WINDOW_MS = 180 * 24 * 60 * 60 * 1_000;
@@ -123,6 +124,10 @@ const thirdPartyHosts = new Set([
   'yelp.com', 'tripadvisor.com', 'ifood.com.br', 'fresha.com', 'booksy.com', 'cnpj.ws',
   'publica.cnpj.ws', 'cnpj.biz', 'casadosdados.com.br', 'empresasdobrasil.com', 'guiamais.com.br',
   'telelistas.net', 'apontador.com.br', 'tudogostoso.com.br', 'tiktok.com', 'youtube.com',
+  'linkedin.com', 'wikipedia.org', 'indeed.com', 'econodata.com.br', 'serasaexperian.com.br',
+  'doctoralia.com.br', 'catalogo.med.br', 'waze.com', 'campinasfacil.com.br', 'listamais.com.br',
+  'agendarconsulta.com', 'casamentos.com.br', 'magicpin.com', '99app.com', 'regrid.com',
+  'cadastroempresa.com.br', 'campinasguialocal.com.br', 'acheioprofissional.com.br',
 ]);
 
 const hostOf = (locator: string): string => {
@@ -132,6 +137,51 @@ const isThirdPartyHost = (host: string): boolean => [...thirdPartyHosts].some((k
 const isOfficialCandidate = (locator: string): boolean => {
   const host = hostOf(locator);
   return host !== '' && !isThirdPartyHost(host) && !host.includes('tavily.');
+};
+
+const genericNameTokens = new Set([
+  'brasil', 'campinas', 'comercio', 'empresa', 'empresas', 'grupo', 'ltda', 'servico', 'servicos',
+]);
+const nameTokens = (value: string | null | undefined): Set<string> => new Set(
+  normalizeText(value).split(' ').filter((token) => token.length > 2 && !genericNameTokens.has(token)),
+);
+const overlap = (left: Set<string>, right: Set<string>): number => {
+  if (left.size === 0 || right.size === 0) return 0;
+  let common = 0;
+  for (const token of left) if (right.has(token)) common += 1;
+  return common / Math.max(left.size, right.size);
+};
+const phoneKey = (value: string | null | undefined): string => normalizeDigits(value).slice(-8);
+const postalKey = (value: string | null | undefined): string => normalizeDigits(value).slice(0, 8);
+
+/**
+ * Search results are not ownership evidence by themselves.  A first-party
+ * domain is treated as an official website only when its host is tied to the
+ * business name and the result also carries a second identity signal.  Weak
+ * first-party-looking results remain ambiguous and therefore cannot prove
+ * either that a site exists or that no site exists.
+ */
+const isStrongOfficialWebsiteMatch = (
+  locator: string,
+  title: string,
+  content: string,
+  lead: NormalizedLead,
+): boolean => {
+  if (!isOfficialCandidate(locator)) return false;
+  const businessTokens = nameTokens(lead.name);
+  if (businessTokens.size === 0) return false;
+  const hostKey = normalizeText(hostOf(locator)).replaceAll(' ', '');
+  const hostNameMatch = [...businessTokens].some((token) => token.length >= 5 && hostKey.includes(token));
+  if (!hostNameMatch) return false;
+
+  const combined = `${title}\n${content}`;
+  const titleMatch = overlap(businessTokens, nameTokens(title)) >= 0.5;
+  const city = normalizeText(lead.city);
+  const cityMatch = city !== '' && normalizeText(combined).includes(city);
+  const phone = phoneKey(lead.phone);
+  const phoneMatch = phone !== '' && normalizeDigits(combined).includes(phone);
+  const addressMatch = overlap(nameTokens(lead.address), nameTokens(combined)) >= 0.5;
+  return titleMatch || cityMatch || phoneMatch || addressMatch;
 };
 
 const buildQueries = (lead: NormalizedLead): string[] => {
@@ -172,12 +222,12 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
     const queries = buildQueries(request.lead).slice(0, Math.min(this.options.maxQueries ?? 6, 6));
     const publicResultLocators: string[] = [];
     const officialSiteLocators: string[] = [];
+    const ambiguousFirstPartyDomains = new Set<string>();
     const cnpjCandidates = new Set<string>();
     const emailCandidates = new Map<string, { value: string; sourceLocator: string; confidence: number }>();
     const recentActivitySources: Array<{ sourceLocator: string; observedAt: Date; confidence: number }> = [];
     let resultCount = 0;
     let completedQueries = 0;
-    let ambiguousDomainMatches = 0;
     for (const query of queries) {
       const payload = await this.request(query);
       completedQueries += 1;
@@ -194,7 +244,11 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
           const value = email.toLowerCase();
           emailCandidates.set(value, { value, sourceLocator: locator, confidence: 0.65 });
         }
-        if (isOfficialCandidate(locator)) officialSiteLocators.push(locator);
+        if (isStrongOfficialWebsiteMatch(locator, title, content, request.lead)) {
+          officialSiteLocators.push(locator);
+        } else if (isOfficialCandidate(locator)) {
+          ambiguousFirstPartyDomains.add(hostOf(locator));
+        }
         const published = safeText(result.published_date);
         const observedAt = published ? new Date(published) : null;
         if (observedAt && !Number.isNaN(observedAt.valueOf()) && this.now().valueOf() - observedAt.valueOf() <= ACTIVITY_WINDOW_MS && observedAt.valueOf() <= this.now().valueOf() + 86_400_000) {
@@ -202,9 +256,10 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
         }
       }
     }
+    let ambiguousDomainMatches = ambiguousFirstPartyDomains.size;
     if (officialSiteLocators.length > 1) {
       const domains = new Set(officialSiteLocators.map(hostOf));
-      ambiguousDomainMatches = domains.size > 1 ? domains.size : 0;
+      if (domains.size > 1) ambiguousDomainMatches += domains.size;
     }
     return {
       queryCount: completedQueries,
@@ -429,16 +484,6 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
   }
 }
 
-const nameTokens = (value: string | null | undefined): Set<string> => new Set(normalizeText(value).split(' ').filter((token) => token.length > 2));
-const overlap = (left: Set<string>, right: Set<string>): number => {
-  if (left.size === 0 || right.size === 0) return 0;
-  let common = 0;
-  for (const token of left) if (right.has(token)) common += 1;
-  return common / Math.max(left.size, right.size);
-};
-const phoneKey = (value: string | null | undefined): string => normalizeDigits(value).slice(-8);
-const postalKey = (value: string | null | undefined): string => normalizeDigits(value).slice(0, 8);
-
 export interface RegistryMatch {
   decision: RegistryMatchDecision;
   score: number;
@@ -496,15 +541,19 @@ export class CompositeBusinessEnrichmentProvider implements BusinessContactEnric
     const identityConfirmed = registry !== null;
     const officialSiteFound = Boolean(registry?.website && isPublicSourceLocator(registry.website)) || search.officialSiteFound;
     const websiteConfidence = identityConfirmed && !officialSiteFound && search.queryCount >= 6 && search.ambiguousDomainMatches === 0 && search.publicResultLocators.length > 0 ? 0.95 : officialSiteFound ? 0.95 : 0.4;
-    const activityStatus = !registry ? 'UNCERTAIN' : registry.registrationStatus === 'INACTIVE' ? 'INACTIVE' : registry.registrationStatus === 'ACTIVE' && search.recentActivitySources.length > 0 ? 'ACTIVE' : 'UNCERTAIN';
-    const activitySource = search.recentActivitySources[0] ?? { sourceLocator: search.sourceLocator, observedAt: registry?.observedAt ?? new Date(), confidence: 0.4 };
+    const activityStatus = !registry || registry.registrationStatus === 'UNKNOWN'
+      ? 'UNCERTAIN'
+      : registry.registrationStatus;
+    const activitySource = registry
+      ? { sourceType: 'CNPJ_WS_REGISTRY', sourceLocator: registry.sourceLocator, observedAt: registry.observedAt, confidence: registry.registrationStatus === 'UNKNOWN' ? 0.4 : 0.95 }
+      : { sourceType: TAVILY_SEARCH_SOURCE_V2, ...(search.recentActivitySources[0] ?? { sourceLocator: search.sourceLocator, observedAt: new Date(), confidence: 0.4 }) };
     const emails = registry?.email && isPublicSourceLocator(registry.sourceLocator)
       ? [{ value: registry.email, sourceType: 'CNPJ_WS_REGISTRY', sourceLocator: registry.sourceLocator, observedAt: registry.observedAt, businessAssociation: isBusinessEmailAddress(registry.email) ? 'PASS' as const : 'UNKNOWN' as const, inferred: false, confidence: 0.95 }]
       : search.emailCandidates.map((email) => ({ ...email, sourceType: 'TAVILY_SEARCH', observedAt: new Date(), businessAssociation: 'UNKNOWN' as const, inferred: false }));
     return {
       identity: { confirmed: identityConfirmed, sourceType: registry ? 'CNPJ_WS_REGISTRY' : 'TAVILY_SEARCH', sourceLocator: registry?.sourceLocator ?? search.sourceLocator, observedAt: registry?.observedAt ?? new Date(), confidence: identityConfirmed ? 0.95 : 0.3 },
-      activity: { status: activityStatus, sourceType: registry ? 'TAVILY_SEARCH' : 'TAVILY_SEARCH', sourceLocator: activitySource.sourceLocator, observedAt: activitySource.observedAt, confidence: activityStatus === 'ACTIVE' ? activitySource.confidence : 0.4 },
-      website: { officialSiteFound, sourceType: registry?.website ? 'CNPJ_WS_REGISTRY' : 'TAVILY_SEARCH', sourceLocator: registry?.website ?? search.sourceLocator, observedAt: registry?.observedAt ?? new Date(), confidence: websiteConfidence },
+      activity: { status: activityStatus, sourceType: activitySource.sourceType, sourceLocator: activitySource.sourceLocator, observedAt: activitySource.observedAt, confidence: activitySource.confidence },
+      website: { officialSiteFound, sourceType: registry?.website ? 'CNPJ_WS_REGISTRY' : TAVILY_SEARCH_SOURCE_V2, sourceLocator: registry?.website ?? search.sourceLocator, observedAt: registry?.observedAt ?? new Date(), confidence: websiteConfidence },
       emails,
     };
   }

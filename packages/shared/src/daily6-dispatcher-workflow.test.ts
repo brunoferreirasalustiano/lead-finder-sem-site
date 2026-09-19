@@ -65,7 +65,7 @@ describe('native Daily-6 scheduler authorization gate', () => {
     expect(workflow).toContain('test "$sha" = "$EXPECTED_OPERATIONAL_SHA"');
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: 8d8c2c7333bab3e95422644e1173e927a79136c7',
+      'EXPECTED_OPERATIONAL_SHA: 85bb21228e258fb3b10fcd4dc0c75208c708e094',
     );
     expect(workflow).toContain('Campinas');
     expect(workflow).toContain('.sent <= 2');
@@ -258,7 +258,7 @@ describe('Daily-6 hosted runtime preflight workflow', () => {
     expect(hosted).not.toContain('push:');
     expect(hosted).not.toContain('pull_request:');
     expect(hosted).toContain('contents: read');
-    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 8d8c2c7333bab3e95422644e1173e927a79136c7');
+    expect(hosted).toContain('EXPECTED_OPERATIONAL_SHA: 85bb21228e258fb3b10fcd4dc0c75208c708e094');
     expect(hosted).toContain('/internal/daily6/runtime-preflight');
     expect(hosted.match(/curl /g)).toHaveLength(1);
     expect(hosted).toContain('--get');

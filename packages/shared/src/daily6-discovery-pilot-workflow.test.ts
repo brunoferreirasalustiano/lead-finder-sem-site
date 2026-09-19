@@ -26,7 +26,7 @@ describe('bounded discovery pilot workflow', () => {
 
   it('pins the approved HML SHA and uses the read-only discovery preflight before enqueue', () => {
     expect(workflow).toContain(
-      'APPROVED_OPERATIONAL_SHA: 8d8c2c7333bab3e95422644e1173e927a79136c7',
+      'APPROVED_OPERATIONAL_SHA: 85bb21228e258fb3b10fcd4dc0c75208c708e094',
     );
 
     const preflightStart = workflow.indexOf('- name: Verify collection auth without enqueueing');

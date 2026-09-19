@@ -24,6 +24,7 @@ const categoryFilters: Record<Category, readonly string[]> = {
   'prestadores-de-servicos': ['["office"="company"]', '["craft"]'],
 };
 const websiteKeys = ['website', 'contact:website', 'url'] as const;
+const missingWebsiteFilter = websiteKeys.map((key) => `[!"${key}"]`).join('');
 const get = (tags: Record<string, string>, ...keys: string[]) =>
   keys.map((key) => tags[key]?.trim()).find(Boolean) ?? null;
 export const hasRegisteredWebsite = (tags: Record<string, string>): boolean =>
@@ -68,7 +69,7 @@ export function buildOverpassQuery(input: CollectInput): string {
   const area = `${escapeArea(input.city)}, ${escapeArea(input.state)}, ${escapeArea(input.country)}`;
   const selectors = categoryFilters[input.category]
     .flatMap((filter) =>
-      ['node', 'way', 'relation'].map((type) => `${type}${filter}(area.searchArea);`),
+      ['node', 'way', 'relation'].map((type) => `${type}${filter}${missingWebsiteFilter}(area.searchArea);`),
     )
     .join('');
   return `[out:json][timeout:25];area["name"="${escapeArea(input.city)}"]->.searchArea;(${selectors});out center tags ${input.limit};/* ${area} */`;

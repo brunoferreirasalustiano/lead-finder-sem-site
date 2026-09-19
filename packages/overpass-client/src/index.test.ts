@@ -36,17 +36,19 @@ describe('normalization', () =>
       address: 'Rua A, 10',
       latitude: -22.9,
     })));
-describe('query', () =>
-  it('uses allowlisted category and no client query', () =>
-    expect(
-      buildOverpassQuery({
+describe('query', () => {
+  it('filters registered sites before the server-side result limit', () => {
+    const query = buildOverpassQuery({
         city: 'Campinas',
         state: 'SP',
         country: 'Brasil',
         category: 'restaurantes',
         limit: 50,
-      }),
-    ).toContain('amenity')));
+      });
+    expect(query).toContain('["amenity"="restaurant"][!"website"][!"contact:website"][!"url"]');
+    expect(query.indexOf('[!"website"]')).toBeLessThan(query.indexOf('out center tags 50'));
+  });
+});
 describe('retry', () =>
   it('retries 429 then succeeds', async () => {
     const fetchFn = vi

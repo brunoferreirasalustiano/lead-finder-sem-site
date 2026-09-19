@@ -22,6 +22,7 @@ const ACTIVITY_WINDOW_MS = 180 * 24 * 60 * 60 * 1_000;
 export type RegistryMatchDecision = 'CONFIRMED' | 'AMBIGUOUS' | 'REJECTED';
 
 export interface SearchEvidence {
+  plannedQueryCount: number;
   queryCount: number;
   resultCount: number;
   sourceLocator: string;
@@ -275,6 +276,7 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
       if (domains.size > 1) ambiguousDomainMatches += domains.size;
     }
     return {
+      plannedQueryCount: queries.length,
       queryCount: completedQueries,
       resultCount,
       sourceLocator: publicResultLocators[0] ?? sourceFallback,
@@ -553,7 +555,8 @@ export class CompositeBusinessEnrichmentProvider implements BusinessContactEnric
     const registry = records.length === 1 && !ambiguousMatch ? records[0]!.record : null;
     const identityConfirmed = registry !== null;
     const officialSiteFound = Boolean(registry?.website && isPublicSourceLocator(registry.website)) || search.officialSiteFound;
-    const websiteConfidence = identityConfirmed && !officialSiteFound && search.queryCount >= 6 && search.ambiguousDomainMatches === 0 && search.publicResultLocators.length > 0 ? 0.95 : officialSiteFound ? 0.95 : 0.4;
+    const completeSearchCoverage = search.plannedQueryCount >= 5 && search.queryCount === search.plannedQueryCount;
+    const websiteConfidence = identityConfirmed && !officialSiteFound && completeSearchCoverage && search.ambiguousDomainMatches === 0 && search.publicResultLocators.length > 0 ? 0.95 : officialSiteFound ? 0.95 : 0.4;
     const activityStatus = !registry || registry.registrationStatus === 'UNKNOWN'
       ? 'UNCERTAIN'
       : registry.registrationStatus;

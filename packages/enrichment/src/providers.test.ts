@@ -28,7 +28,7 @@ const record: BusinessRegistryRecord = {
 };
 
 const searchEvidence: SearchEvidence = {
-  queryCount: 6, resultCount: 6, sourceLocator: 'https://instagram.com/allbeauty',
+  plannedQueryCount: 6, queryCount: 6, resultCount: 6, sourceLocator: 'https://instagram.com/allbeauty',
   publicResultLocators: ['https://instagram.com/allbeauty'], officialSiteFound: false, officialSiteLocators: [],
   ambiguousDomainMatches: 0, cnpjCandidates: ['12345678000195'], emailCandidates: [],
   recentActivitySources: [{ sourceLocator: 'https://instagram.com/allbeauty', observedAt: new Date('2026-08-01T00:00:00Z'), confidence: 0.9 }],
@@ -74,6 +74,7 @@ describe('Tavily adapter', () => {
     const provider = new TavilyBusinessSearchProvider({ apiKey: 'test', timeoutMs: 50, maxQueries: 99, maxResultsPerQuery: 99, fetchFn, sleepFn: () => Promise.resolve(), now: () => new Date('2026-08-10T00:00:00Z') });
     const result = await provider.search({ lead });
     expect(fetchFn).toHaveBeenCalledTimes(6);
+    expect(result.plannedQueryCount).toBe(6);
     expect(result.queryCount).toBe(6);
     expect(result.officialSiteFound).toBe(false);
     expect(result.cnpjCandidates).toEqual(['12345678000195']);
@@ -270,6 +271,25 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.officialSiteFound).toBe(false);
     expect(result.website.confidence).toBeGreaterThanOrEqual(0.85);
     expect(result.emails[0]).toMatchObject({ businessAssociation: 'PASS', inferred: false });
+  });
+
+  it('accepts complete five-query coverage when one optional identity query does not exist', async () => {
+    const searchProvider = { name: 'search', search: vi.fn().mockResolvedValue({ ...searchEvidence, plannedQueryCount: 5, queryCount: 5 }) };
+    const registryProvider = { name: 'registry', lookup: vi.fn().mockResolvedValue(record) };
+    const result = await new CompositeBusinessEnrichmentProvider({ searchProvider, registryProvider }).enrich({ lead: { ...lead, address: null } });
+    expect(result.website).toMatchObject({ officialSiteFound: false, confidence: 0.95 });
+  });
+
+  it('keeps no-site evidence unverified for insufficient or incomplete search coverage', async () => {
+    const registryProvider = { name: 'registry', lookup: vi.fn().mockResolvedValue(record) };
+    for (const search of [
+      { ...searchEvidence, plannedQueryCount: 4, queryCount: 4 },
+      { ...searchEvidence, plannedQueryCount: 5, queryCount: 4 },
+    ]) {
+      const searchProvider = { name: 'search', search: vi.fn().mockResolvedValue(search) };
+      const result = await new CompositeBusinessEnrichmentProvider({ searchProvider, registryProvider }).enrich({ lead });
+      expect(result.website).toMatchObject({ officialSiteFound: false, confidence: 0.4 });
+    }
   });
 
   it('accepts a current ACTIVE registry status without requiring a dated web result', async () => {

@@ -37,4 +37,17 @@ describe('migration 0073 Daily-6 pre-claim failure terminalization', () => {
       'GRANT SELECT ON TABLE public.daily6_scheduler_dispatches TO lead_finder_discovery_runtime',
     );
   });
+
+  it('reconciles only the audited incident identities without a broad backfill', () => {
+    expect(migration).toContain("request_identity = '2026-09-19|13|campinas-sp|daily6-v1'");
+    expect(migration).toContain("request_identity = '2026-09-19|16|campinas-sp|daily6-v1'");
+    expect(migration).toContain(
+      "dispatch_nonce = '4359c702-0cc4-43ce-8e2d-6b5fdb609de7'::uuid",
+    );
+    expect(migration).toContain(
+      "dispatch_nonce = '0615c18f-cf49-4196-89b8-3acff42680d1'::uuid",
+    );
+    expect(migration).toContain("status = 'DISPATCH_ACCEPTED'");
+    expect(migration).not.toContain("WHERE status = 'DISPATCH_ACCEPTED'");
+  });
 });

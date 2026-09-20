@@ -49,10 +49,38 @@ async function statusFor(dispatchNonce: string) {
   return rows[0]?.status;
 }
 
+const incidentDispatches = [
+  {
+    identity: '2026-09-19|13|campinas-sp|daily6-v1',
+    nonce: '4359c702-0cc4-43ce-8e2d-6b5fdb609de7',
+    scheduledAt: '2026-09-19T16:07:00.000Z',
+  },
+  {
+    identity: '2026-09-19|16|campinas-sp|daily6-v1',
+    nonce: '0615c18f-cf49-4196-89b8-3acff42680d1',
+    scheduledAt: '2026-09-19T19:07:00.000Z',
+  },
+] as const;
+
 try {
+  for (const incident of incidentDispatches) {
+    await primary`
+      INSERT INTO public.daily6_scheduler_dispatches
+        (request_identity, correlation_id, dispatch_nonce, scheduled_at, status, github_http_status)
+      VALUES
+        (${incident.identity}, ${crypto.randomUUID()}::uuid, ${incident.nonce}::uuid,
+         ${incident.scheduledAt}::timestamptz, 'DISPATCH_ACCEPTED', 204)
+      ON CONFLICT (request_identity) DO NOTHING
+    `;
+  }
+
   // The migration must remain replay-safe after the complete historical chain.
   await primary.unsafe(migration);
   await primary.unsafe(migration);
+
+  for (const incident of incidentDispatches) {
+    assert.equal(await statusFor(incident.nonce), 'WORKFLOW_FAILED');
+  }
 
   const rejectedSuccessNonce = await insertAccepted('09');
   const preclaimSuccess = await primary<{ finalized: boolean }[]>`

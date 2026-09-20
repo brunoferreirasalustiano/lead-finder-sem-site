@@ -76,4 +76,23 @@ BEGIN
 END
 $$;
 
+-- Reconcile only the two incident dispatches whose GitHub workflows failed at
+-- immutable pre-claim gates on 2026-09-19.  A read-only incident audit found
+-- no collection job, batch, or send-ledger row for either identity.  Binding
+-- every immutable field prevents this migration from becoming a generic
+-- catch-up or retry mechanism.
+UPDATE public.daily6_scheduler_dispatches
+   SET status = 'WORKFLOW_FAILED'
+ WHERE request_identity = '2026-09-19|13|campinas-sp|daily6-v1'
+   AND dispatch_nonce = '4359c702-0cc4-43ce-8e2d-6b5fdb609de7'::uuid
+   AND scheduled_at = '2026-09-19T16:07:00Z'::timestamptz
+   AND status = 'DISPATCH_ACCEPTED';
+
+UPDATE public.daily6_scheduler_dispatches
+   SET status = 'WORKFLOW_FAILED'
+ WHERE request_identity = '2026-09-19|16|campinas-sp|daily6-v1'
+   AND dispatch_nonce = '0615c18f-cf49-4196-89b8-3acff42680d1'::uuid
+   AND scheduled_at = '2026-09-19T19:07:00Z'::timestamptz
+   AND status = 'DISPATCH_ACCEPTED';
+
 COMMIT;

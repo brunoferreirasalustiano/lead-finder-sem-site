@@ -143,6 +143,7 @@ export class EnrichmentError extends Error {
       | 'CNPJ_WS_RATE_LIMITED'
       | 'SOURCE_RATE_LIMITED'
       | 'REGISTRY_NOT_FOUND'
+      | 'REGISTRY_CANDIDATE_REJECTED'
       | 'INVALID_SOURCE_RESPONSE',
     retryAfterSeconds?: number,
   ) {

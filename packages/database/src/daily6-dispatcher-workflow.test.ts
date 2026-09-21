@@ -14,7 +14,7 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(workflow).toContain('test "$GITHUB_EVENT_NAME" = \'workflow_dispatch\'');
     expect(workflow).toContain('HML_BRANCH: hml/render-supabase-plan-b');
     expect(workflow).toContain(
-      'EXPECTED_OPERATIONAL_SHA: 684e6c6fd9dffe06ae2acfe5ecbf6b1660dfcb9d',
+      'EXPECTED_OPERATIONAL_SHA: 5dcd58f33d47768259e95e5c289e2e1a8a72697d',
     );
     expect(workflow).toContain('test "$remote_sha" = "$EXPECTED_SHA"');
   });
@@ -103,6 +103,10 @@ describe('native Daily-6 scheduler control plane', () => {
     expect(worker).toContain("worker_failure_class='UNKNOWN'");
     expect(worker).toContain('worker_startup_blocked');
     expect(worker).toContain('collection_source_failure');
+    expect(worker).toContain('DISCOVERY_SOURCE_FAILURE_CODE=');
+    expect(worker).toContain('DISCOVERY_SOURCE_FAILURE_PROVIDER=');
+    expect(worker).toContain('DISCOVERY_SOURCE_FAILURE_RETRY_AFTER_SECONDS=');
+    expect(worker).toContain('jq -r');
     expect(worker).toContain('worker_fatal');
     expect(worker).toContain('COLLECTION_LEASE_LOST');
     expect(worker).toContain('NO_COLLECTION_JOB_CLAIMED');

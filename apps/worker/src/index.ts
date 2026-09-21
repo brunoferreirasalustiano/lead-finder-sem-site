@@ -68,11 +68,12 @@ const processCollection = createCollectionProcessor(db, {
   enrichmentProvider,
   config.MAX_ENRICHMENT_PER_JOB,
   config.MAX_CANDIDATES_PER_JOB,
-  (failure) => console.error('collection_source_failure', {
+  (failure) => console.error(JSON.stringify({
+    event: 'collection_source_failure',
     code: failure.code,
     ...(failure.provider === undefined ? {} : { provider: failure.provider }),
     ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
-  }),
+  })),
   identity,
 ));
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;

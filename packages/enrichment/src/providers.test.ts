@@ -321,11 +321,24 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.confidence).toBeLessThan(0.85);
   });
 
-  it('continues to fail closed for a real source error while ignoring not-found candidates', async () => {
+  it('isolates unusable registry candidates without accepting their identity evidence', async () => {
     const notFound = { name: 'registry', lookup: vi.fn().mockRejectedValue(new EnrichmentError('not found', 'REGISTRY_NOT_FOUND')) };
     await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: notFound }).enrich({ lead })).resolves.toMatchObject({ identity: { confirmed: false } });
 
     const sourceFailure = { name: 'registry', lookup: vi.fn().mockRejectedValue(new EnrichmentError('bad source', 'INVALID_SOURCE_RESPONSE')) };
-    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: sourceFailure }).enrich({ lead })).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: sourceFailure }).enrich({ lead })).resolves.toMatchObject({
+      identity: { confirmed: false },
+      activity: { status: 'UNCERTAIN' },
+      website: { confidence: 0.4 },
+    });
+  });
+
+  it('still fails closed when the search provider response is invalid', async () => {
+    const invalidSearch = { name: 'search', search: vi.fn().mockRejectedValue(new EnrichmentError('bad source', 'INVALID_SOURCE_RESPONSE')) };
+    const registryProvider = { name: 'registry', lookup: vi.fn() };
+
+    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: invalidSearch, registryProvider }).enrich({ lead }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    expect(registryProvider.lookup).not.toHaveBeenCalled();
   });
 });

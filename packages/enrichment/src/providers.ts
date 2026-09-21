@@ -545,7 +545,10 @@ export class CompositeBusinessEnrichmentProvider implements BusinessContactEnric
       try {
         record = await this.options.registryProvider.lookup(cnpj);
       } catch (error) {
-        if (error instanceof EnrichmentError && error.code === 'REGISTRY_NOT_FOUND') continue;
+        if (
+          error instanceof EnrichmentError
+          && ['REGISTRY_NOT_FOUND', 'INVALID_SOURCE_RESPONSE'].includes(error.code)
+        ) continue;
         throw error;
       }
       const match = matchRegistryToLead(request.lead, record);

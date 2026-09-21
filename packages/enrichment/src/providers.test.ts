@@ -190,8 +190,8 @@ describe('CNPJ.ws adapter and composite', () => {
   it('rejects invalid check digits before making a registry request', async () => {
     const fetchFn = vi.fn();
     const provider = new CnpjWsBusinessRegistryProvider({ timeoutMs: 50, maxRpm: 60, fetchFn, sleepFn: () => Promise.resolve() });
-    await expect(provider.lookup('12.345.678/0001-96')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
-    await expect(provider.lookup('12ABC34501DE36')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(provider.lookup('12.345.678/0001-96')).rejects.toMatchObject({ code: 'REGISTRY_CANDIDATE_REJECTED' });
+    await expect(provider.lookup('12ABC34501DE36')).rejects.toMatchObject({ code: 'REGISTRY_CANDIDATE_REJECTED' });
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -240,7 +240,12 @@ describe('CNPJ.ws adapter and composite', () => {
     await expect(missing.lookup('12345678000195')).rejects.toMatchObject({ code: 'REGISTRY_NOT_FOUND' });
   });
 
-  it('fails closed for malformed JSON, incompatible schemas and identifier mismatches', async () => {
+  it('isolates candidate-specific incomplete records but fails closed for malformed provider responses', async () => {
+    const rejected = new CnpjWsBusinessRegistryProvider({
+      timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 400 })), sleepFn: () => Promise.resolve(),
+    });
+    await expect(rejected.lookup('12345678000195')).rejects.toMatchObject({ code: 'REGISTRY_CANDIDATE_REJECTED' });
+
     const malformed = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('{', { status: 200 })), sleepFn: () => Promise.resolve(),
     });
@@ -251,7 +256,12 @@ describe('CNPJ.ws adapter and composite', () => {
       fetchFn: vi.fn().mockResolvedValue(new Response(JSON.stringify({ razao_social: 'ALL BEAUTY LTDA', estabelecimento: { cnpj: '12345678000195' } }), { status: 200 })),
       sleepFn: () => Promise.resolve(),
     });
-    await expect(incompatible.lookup('12345678000195')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(incompatible.lookup('12345678000195')).rejects.toMatchObject({ code: 'REGISTRY_CANDIDATE_REJECTED' });
+
+    const unauthorized = new CnpjWsBusinessRegistryProvider({
+      timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 401 })), sleepFn: () => Promise.resolve(),
+    });
+    await expect(unauthorized.lookup('12345678000195')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
 
     const mismatch = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60,
@@ -321,11 +331,31 @@ describe('CNPJ.ws adapter and composite', () => {
     expect(result.website.confidence).toBeLessThan(0.85);
   });
 
-  it('continues to fail closed for a real source error while ignoring not-found candidates', async () => {
+  it('isolates unusable registry candidates without accepting their identity evidence', async () => {
     const notFound = { name: 'registry', lookup: vi.fn().mockRejectedValue(new EnrichmentError('not found', 'REGISTRY_NOT_FOUND')) };
     await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: notFound }).enrich({ lead })).resolves.toMatchObject({ identity: { confirmed: false } });
 
+    const rejectedCandidate = { name: 'registry', lookup: vi.fn().mockRejectedValue(new EnrichmentError('bad candidate', 'REGISTRY_CANDIDATE_REJECTED')) };
+    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: rejectedCandidate }).enrich({ lead })).resolves.toMatchObject({
+      identity: { confirmed: false },
+      activity: { status: 'UNCERTAIN' },
+      website: { confidence: 0.4 },
+    });
+  });
+
+  it('still fails closed when the registry provider response is invalid', async () => {
     const sourceFailure = { name: 'registry', lookup: vi.fn().mockRejectedValue(new EnrichmentError('bad source', 'INVALID_SOURCE_RESPONSE')) };
-    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: sourceFailure }).enrich({ lead })).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+
+    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: { name: 'search', search: vi.fn().mockResolvedValue(searchEvidence) }, registryProvider: sourceFailure }).enrich({ lead }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+  });
+
+  it('still fails closed when the search provider response is invalid', async () => {
+    const invalidSearch = { name: 'search', search: vi.fn().mockRejectedValue(new EnrichmentError('bad source', 'INVALID_SOURCE_RESPONSE')) };
+    const registryProvider = { name: 'registry', lookup: vi.fn() };
+
+    await expect(new CompositeBusinessEnrichmentProvider({ searchProvider: invalidSearch, registryProvider }).enrich({ lead }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    expect(registryProvider.lookup).not.toHaveBeenCalled();
   });
 });

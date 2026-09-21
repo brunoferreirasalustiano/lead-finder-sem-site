@@ -388,8 +388,11 @@ const parseRegistryPayload = (payload: unknown, cnpj: string, sourceLocator: str
   const responseCnpj = normalizeCnpj(nestedText(establishment, 'cnpj') ?? nestedText(root, 'cnpj') ?? '');
   const businessName = nestedText(root, 'razao_social') ?? nestedText(establishment, 'razao_social') ?? '';
   const status = normalizeText(nestedText(establishment, 'situacao_cadastral') ?? nestedText(root, 'situacao_cadastral'));
-  if (!isValidCnpj(responseCnpj) || responseCnpj !== cnpj || businessName === '' || status === '') {
+  if (!isValidCnpj(responseCnpj) || responseCnpj !== cnpj) {
     throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+  }
+  if (businessName === '' || status === '') {
+    throw new EnrichmentError('CNPJ.ws record lacks required business evidence', 'REGISTRY_CANDIDATE_REJECTED');
   }
   const address = [
     nestedText(establishment, 'tipo_logradouro'), nestedText(establishment, 'logradouro'), nestedText(establishment, 'numero'),
@@ -433,7 +436,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
 
   async lookup(value: string): Promise<BusinessRegistryRecord> {
     const cnpj = normalizeCnpj(value);
-    if (!isValidCnpj(cnpj)) throw new EnrichmentError('Invalid CNPJ candidate', 'INVALID_SOURCE_RESPONSE');
+    if (!isValidCnpj(cnpj)) throw new EnrichmentError('Invalid CNPJ candidate', 'REGISTRY_CANDIDATE_REJECTED');
     const locator = `${CNPJ_WS_ENDPOINT}/${cnpj}`;
     let lastError: unknown;
     const maxRetries = Math.min(this.options.maxRetries ?? 1, 2);
@@ -464,6 +467,10 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError('CNPJ.ws record was not found', 'REGISTRY_NOT_FOUND');
         }
+        if (response.status === 400) {
+          recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
+          throw new EnrichmentError('CNPJ.ws rejected the registry candidate', 'REGISTRY_CANDIDATE_REJECTED');
+        }
         if ([502, 503, 504].includes(response.status)) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
@@ -489,7 +496,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
       } catch (error) {
         if (!resultRecorded) recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
         lastError = error;
-        if (error instanceof EnrichmentError && ['CNPJ_WS_RATE_LIMITED', 'REGISTRY_NOT_FOUND', 'INVALID_SOURCE_RESPONSE'].includes(error.code)) throw error;
+        if (error instanceof EnrichmentError && ['CNPJ_WS_RATE_LIMITED', 'REGISTRY_NOT_FOUND', 'REGISTRY_CANDIDATE_REJECTED', 'INVALID_SOURCE_RESPONSE'].includes(error.code)) throw error;
       } finally {
         clearTimeout(timer);
       }
@@ -545,7 +552,10 @@ export class CompositeBusinessEnrichmentProvider implements BusinessContactEnric
       try {
         record = await this.options.registryProvider.lookup(cnpj);
       } catch (error) {
-        if (error instanceof EnrichmentError && error.code === 'REGISTRY_NOT_FOUND') continue;
+        if (
+          error instanceof EnrichmentError
+          && ['REGISTRY_NOT_FOUND', 'REGISTRY_CANDIDATE_REJECTED'].includes(error.code)
+        ) continue;
         throw error;
       }
       const match = matchRegistryToLead(request.lead, record);

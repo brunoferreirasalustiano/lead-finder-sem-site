@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EXPECTED_OPERATIONAL_SHA: 684e6c6fd9dffe06ae2acfe5ecbf6b1660dfcb9d
+  EXPECTED_OPERATIONAL_SHA: 5dcd58f33d47768259e95e5c289e2e1a8a72697d
   HML_BRANCH: hml/render-supabase-plan-b
 
 jobs:
@@ -460,6 +460,10 @@ jobs:
               worker_failure_class='DATABASE_PERMISSION_DENIED'
             elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
               worker_failure_class='COLLECTION_SOURCE_FAILURE'
+              source_failure_line="$(grep -F '"event":"collection_source_failure"' "$worker_log" | tail -n 1)"
+              source_failure_code="$(printf '%s' "$source_failure_line" | jq -r 'if type == "object" and (.code | IN("ENRICHMENT_EGRESS_DISABLED", "ENRICHMENT_PROVIDER_DISABLED", "SOURCE_TEMPORARILY_UNAVAILABLE", "TAVILY_RATE_LIMITED", "CNPJ_WS_RATE_LIMITED", "SOURCE_RATE_LIMITED", "REGISTRY_NOT_FOUND", "REGISTRY_CANDIDATE_REJECTED", "INVALID_SOURCE_RESPONSE")) then .code else "UNKNOWN" end' 2>/dev/null || printf 'UNKNOWN')"
+              source_failure_provider="$(printf '%s' "$source_failure_line" | jq -r 'if type == "object" and (.provider | IN("TAVILY", "CNPJ_WS", "ENRICHMENT_HTTP", "COMPOSITE")) then .provider else "UNKNOWN" end' 2>/dev/null || printf 'UNKNOWN')"
+              source_failure_retry_after="$(printf '%s' "$source_failure_line" | jq -r 'if type == "object" and (.retryAfterSeconds | type) == "number" and .retryAfterSeconds >= 0 and .retryAfterSeconds <= 3600 then .retryAfterSeconds elif type == "object" and (.retryAfterSeconds == null) then "NONE" else "UNKNOWN" end' 2>/dev/null || printf 'UNKNOWN')"
             elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
               worker_failure_class='COLLECTION_NOT_CLAIMED'
             elif grep -Fq '"failureClass":"COLLECTION_LEASE_LOST"' "$worker_log"; then
@@ -470,6 +474,11 @@ jobs:
             echo 'DISCOVERY_WORKER=FAILED' >&2
             echo "DISCOVERY_WORKER_EXIT_CODE=$worker_exit_code" >&2
             echo "DISCOVERY_WORKER_FAILURE_CLASS=$worker_failure_class" >&2
+            if [ "$worker_failure_class" = 'COLLECTION_SOURCE_FAILURE' ]; then
+              echo "DISCOVERY_SOURCE_FAILURE_CODE=$source_failure_code" >&2
+              echo "DISCOVERY_SOURCE_FAILURE_PROVIDER=$source_failure_provider" >&2
+              echo "DISCOVERY_SOURCE_FAILURE_RETRY_AFTER_SECONDS=$source_failure_retry_after" >&2
+            fi
             exit 1
           fi
           # The worker's persisted collection status is the authoritative

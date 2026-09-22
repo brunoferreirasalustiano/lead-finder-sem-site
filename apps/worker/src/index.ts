@@ -11,11 +11,11 @@ import {
   TavilyBusinessSearchProvider,
   type BusinessContactEnrichmentProvider,
 } from '@lead-finder/enrichment';
-import { processNextJob } from './process-job.js';
+import { processNextJob, type CollectionFailureTelemetry } from './process-job.js';
 import { hostname } from 'node:os';
 import { createGracefulStop } from './graceful-stop.js';
 import { createConsoleOperationalLogger } from './operational-observability.js';
-import { runOneShot } from './oneshot.js';
+import { classifyOneShotOutcome, runOneShot } from './oneshot.js';
 import { safeCnpjWsPublicRpm } from './provider-policy.js';
 import { formatWorkerFailure } from './failure-classification.js';
 const config = parseWorkerConfig(process.env);
@@ -56,6 +56,7 @@ const enrichmentProvider: BusinessContactEnrichmentProvider | undefined = config
         onCall: (event) => providerCallAccounting.record(event),
       })
   : undefined;
+let collectionSourceFailure: CollectionFailureTelemetry | undefined;
 const processCollection = createCollectionProcessor(db, {
   enabled: config.COLLECTION_EGRESS_ENABLED && !config.PILOT_KILL_SWITCH_ENABLED,
   endpoint: config.OVERPASS_API_URL,
@@ -68,12 +69,15 @@ const processCollection = createCollectionProcessor(db, {
   enrichmentProvider,
   config.MAX_ENRICHMENT_PER_JOB,
   config.MAX_CANDIDATES_PER_JOB,
-  (failure) => console.error(JSON.stringify({
-    event: 'collection_source_failure',
-    code: failure.code,
-    ...(failure.provider === undefined ? {} : { provider: failure.provider }),
-    ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
-  })),
+  (failure) => {
+    collectionSourceFailure = failure;
+    console.error(JSON.stringify({
+      event: 'collection_source_failure',
+      code: failure.code,
+      ...(failure.provider === undefined ? {} : { provider: failure.provider }),
+      ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
+    }));
+  },
   identity,
 ));
 const workerId = config.WORKER_ID ?? `${hostname()}:${process.pid}`;
@@ -116,9 +120,18 @@ process.on('unhandledRejection', (error) => fatal('Unhandled rejection', error))
 process.on('uncaughtException', (error) => fatal('Uncaught exception', error));
 while (gracefulStop.running) {
   if (config.WORKER_MODE === 'oneshot') {
-    const processed = await runOneShot(processCollection, config.MAX_JOBS_PER_RUN, () => gracefulStop.running);
+    const processed = await runOneShot(
+      processCollection,
+      config.MAX_JOBS_PER_RUN,
+      () => gracefulStop.running && collectionSourceFailure === undefined,
+    );
     reportProviderCallAccounting();
-    if (processed === 0 && gracefulStop.running) {
+    const outcome = classifyOneShotOutcome(processed, gracefulStop.running, collectionSourceFailure !== undefined);
+    if (outcome === 'COLLECTION_SOURCE_FAILURE') {
+      await shutdown(1);
+      break;
+    }
+    if (outcome === 'NO_JOB_CLAIMED') {
       console.error(JSON.stringify({
         event: 'worker_fatal',
         failureClass: 'NO_COLLECTION_JOB_CLAIMED',

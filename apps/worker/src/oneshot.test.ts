@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runOneShot } from './oneshot.js';
+import { classifyOneShotOutcome, runOneShot } from './oneshot.js';
 
 describe('bounded one-shot worker', () => {
   it('processes at most the configured number of jobs and exits', async () => {
@@ -24,5 +24,25 @@ describe('bounded one-shot worker', () => {
     let running = true;
     const processJob = vi.fn().mockImplementation(() => { running = false; return Promise.resolve(true); });
     await expect(runOneShot(processJob, 10, () => running)).resolves.toBe(1);
+  });
+
+  it('fails a claimed one-shot job when the collection persisted a source failure', () => {
+    expect(classifyOneShotOutcome(1, true, true)).toBe('COLLECTION_SOURCE_FAILURE');
+  });
+
+  it('does not claim another job after the current collection records a source failure', async () => {
+    let sourceFailure = false;
+    const processJob = vi.fn().mockImplementation(() => {
+      sourceFailure = true;
+      return Promise.resolve(true);
+    });
+
+    await expect(runOneShot(processJob, 10, () => !sourceFailure)).resolves.toBe(1);
+    expect(processJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes a missing claim from a successful claimed job', () => {
+    expect(classifyOneShotOutcome(0, true, false)).toBe('NO_JOB_CLAIMED');
+    expect(classifyOneShotOutcome(1, true, false)).toBe('SUCCESS');
   });
 });

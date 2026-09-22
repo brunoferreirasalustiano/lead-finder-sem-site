@@ -232,7 +232,7 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
   }
 
   async search(request: BusinessEnrichmentRequest): Promise<SearchEvidence> {
-    if (!this.options.apiKey?.trim()) throw new EnrichmentError('Tavily credential is unavailable', 'ENRICHMENT_PROVIDER_DISABLED');
+    if (!this.options.apiKey?.trim()) throw new EnrichmentError('Tavily credential is unavailable', 'ENRICHMENT_PROVIDER_DISABLED', undefined, 'TAVILY');
     const queries = buildQueries(request.lead).slice(0, Math.min(this.options.maxQueries ?? 6, 6));
     const publicResultLocators: string[] = [];
     const officialSiteLocators: string[] = [];
@@ -316,20 +316,20 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
         if (response.status === 429) {
           const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
           recordResult({ provider: 'TAVILY', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
-          throw new EnrichmentError('Tavily rate limit reached', 'TAVILY_RATE_LIMITED', retryAfterSeconds);
+          throw new EnrichmentError('Tavily rate limit reached', 'TAVILY_RATE_LIMITED', retryAfterSeconds, 'TAVILY');
         }
         if ([502, 503, 504].includes(response.status)) {
           recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
-          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
+          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'TAVILY');
         }
         if (!response.ok) {
           recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
-          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+          throw new EnrichmentError(`Tavily responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE', undefined, 'TAVILY');
         }
         const payload = await response.json() as { results?: unknown };
         if (!Array.isArray(payload.results)) {
           recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
-          throw new EnrichmentError('Tavily response is malformed', 'INVALID_SOURCE_RESPONSE');
+          throw new EnrichmentError('Tavily response is malformed', 'INVALID_SOURCE_RESPONSE', undefined, 'TAVILY');
         }
         recordResult({ provider: 'TAVILY', outcome: 'SUCCESS' });
         return payload.results as TavilyResult[];
@@ -350,7 +350,7 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
       }
       if (attempt < maxRetries) await this.sleepFn(Math.min(500 * 2 ** attempt, 4_000));
     }
-    throw lastError instanceof EnrichmentError ? lastError : new EnrichmentError('Tavily is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE');
+    throw lastError instanceof EnrichmentError ? lastError : new EnrichmentError('Tavily is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'TAVILY');
   }
 }
 
@@ -382,17 +382,17 @@ const registryPayloadSchema = z.object({
 
 const parseRegistryPayload = (payload: unknown, cnpj: string, sourceLocator: string, observedAt: Date): BusinessRegistryRecord => {
   const parsed = registryPayloadSchema.safeParse(payload);
-  if (!parsed.success) throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+  if (!parsed.success) throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS');
   const root = parsed.data;
   const establishment = root.estabelecimento ?? root;
   const responseCnpj = normalizeCnpj(nestedText(establishment, 'cnpj') ?? nestedText(root, 'cnpj') ?? '');
   const businessName = nestedText(root, 'razao_social') ?? nestedText(establishment, 'razao_social') ?? '';
   const status = normalizeText(nestedText(establishment, 'situacao_cadastral') ?? nestedText(root, 'situacao_cadastral'));
   if (!isValidCnpj(responseCnpj) || responseCnpj !== cnpj) {
-    throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE');
+    throw new EnrichmentError('CNPJ.ws response is incompatible with the registry schema', 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS');
   }
   if (businessName === '' || status === '') {
-    throw new EnrichmentError('CNPJ.ws record lacks required business evidence', 'REGISTRY_CANDIDATE_REJECTED');
+    throw new EnrichmentError('CNPJ.ws record lacks required business evidence', 'REGISTRY_CANDIDATE_REJECTED', undefined, 'CNPJ_WS');
   }
   const address = [
     nestedText(establishment, 'tipo_logradouro'), nestedText(establishment, 'logradouro'), nestedText(establishment, 'numero'),
@@ -436,7 +436,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
 
   async lookup(value: string): Promise<BusinessRegistryRecord> {
     const cnpj = normalizeCnpj(value);
-    if (!isValidCnpj(cnpj)) throw new EnrichmentError('Invalid CNPJ candidate', 'REGISTRY_CANDIDATE_REJECTED');
+    if (!isValidCnpj(cnpj)) throw new EnrichmentError('Invalid CNPJ candidate', 'REGISTRY_CANDIDATE_REJECTED', undefined, 'CNPJ_WS');
     const locator = `${CNPJ_WS_ENDPOINT}/${cnpj}`;
     let lastError: unknown;
     const maxRetries = Math.min(this.options.maxRetries ?? 1, 2);
@@ -461,35 +461,35 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
         if (response.status === 429) {
           const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
           recordResult({ provider: 'CNPJ_WS', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
-          throw new EnrichmentError('CNPJ.ws rate limit reached', 'CNPJ_WS_RATE_LIMITED', retryAfterSeconds);
+          throw new EnrichmentError('CNPJ.ws rate limit reached', 'CNPJ_WS_RATE_LIMITED', retryAfterSeconds, 'CNPJ_WS');
         }
         if (response.status === 404) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError('CNPJ.ws record was not found', 'REGISTRY_NOT_FOUND');
+          throw new EnrichmentError('CNPJ.ws record was not found', 'REGISTRY_NOT_FOUND', undefined, 'CNPJ_WS');
         }
         if (response.status === 400) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError('CNPJ.ws rejected the registry candidate', 'REGISTRY_CANDIDATE_REJECTED');
+          throw new EnrichmentError('CNPJ.ws rejected the registry candidate', 'REGISTRY_CANDIDATE_REJECTED', undefined, 'CNPJ_WS');
         }
         if ([502, 503, 504].includes(response.status)) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE');
+          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'CNPJ_WS');
         }
         if (!response.ok) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE');
+          throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS');
         }
         let payload: unknown;
         try {
           payload = await response.json();
         } catch {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError('CNPJ.ws response is not valid JSON', 'INVALID_SOURCE_RESPONSE');
+          throw new EnrichmentError('CNPJ.ws response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS');
         }
         const record = parseRegistryPayload(payload, cnpj, locator, this.now());
         if (record.cnpj !== cnpj) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
-          throw new EnrichmentError('CNPJ.ws returned a different company identifier', 'INVALID_SOURCE_RESPONSE');
+          throw new EnrichmentError('CNPJ.ws returned a different company identifier', 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS');
         }
         recordResult({ provider: 'CNPJ_WS', outcome: 'SUCCESS' });
         return record;
@@ -502,7 +502,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
       }
       if (attempt < maxRetries) await this.sleepFn(Math.min(500 * 2 ** attempt, 4_000));
     }
-    throw lastError instanceof EnrichmentError ? lastError : new EnrichmentError('CNPJ.ws is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE');
+    throw lastError instanceof EnrichmentError ? lastError : new EnrichmentError('CNPJ.ws is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'CNPJ_WS');
   }
 }
 

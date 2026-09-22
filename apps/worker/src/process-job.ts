@@ -114,7 +114,11 @@ export async function processNextJob(
     const retryAfterSeconds = error instanceof EnrichmentError ? error.retryAfterSeconds : undefined;
     onFailure?.({
       code,
-      ...(enrichmentProvider === undefined || !providerCallInFlight ? {} : { provider: enrichmentProvider.name }),
+      ...(error instanceof EnrichmentError && error.provider !== undefined
+        ? { provider: error.provider }
+        : enrichmentProvider === undefined || !providerCallInFlight
+          ? {}
+          : { provider: enrichmentProvider.name }),
       ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
     });
     if (code === 'COLLECTION_LEASE_LOST') throw error;

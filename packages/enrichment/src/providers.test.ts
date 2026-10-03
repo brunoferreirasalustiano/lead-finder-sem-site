@@ -232,7 +232,11 @@ describe('CNPJ.ws adapter and composite', () => {
       fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '60' } })),
       sleepFn: () => Promise.resolve(), onCall: (event) => accounting.record(event),
     });
-    await expect(rateLimited.lookup('12345678000195')).rejects.toMatchObject({ code: 'CNPJ_WS_RATE_LIMITED', retryAfterSeconds: 60 });
+    await expect(rateLimited.lookup('12345678000195')).rejects.toMatchObject({
+      code: 'CNPJ_WS_RATE_LIMITED',
+      provider: 'CNPJ_WS',
+      retryAfterSeconds: 60,
+    });
     expect(accounting.snapshot()).toEqual(expect.arrayContaining([
       { provider: 'CNPJ_WS', attemptedCalls: 1, successfulCalls: 0, rateLimited429Calls: 1, retryAfterSeconds: 60 },
     ]));
@@ -249,7 +253,10 @@ describe('CNPJ.ws adapter and composite', () => {
     const malformed = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('{', { status: 200 })), sleepFn: () => Promise.resolve(),
     });
-    await expect(malformed.lookup('12345678000195')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(malformed.lookup('12345678000195')).rejects.toMatchObject({
+      code: 'INVALID_SOURCE_RESPONSE',
+      provider: 'CNPJ_WS',
+    });
 
     const incompatible = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60,
@@ -261,7 +268,10 @@ describe('CNPJ.ws adapter and composite', () => {
     const unauthorized = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60, fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 401 })), sleepFn: () => Promise.resolve(),
     });
-    await expect(unauthorized.lookup('12345678000195')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(unauthorized.lookup('12345678000195')).rejects.toMatchObject({
+      code: 'INVALID_SOURCE_RESPONSE',
+      provider: 'CNPJ_WS',
+    });
 
     const mismatch = new CnpjWsBusinessRegistryProvider({
       timeoutMs: 50, maxRpm: 60,

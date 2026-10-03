@@ -15,6 +15,18 @@ ALTER TABLE public.collection_jobs
   ALTER COLUMN request_mode SET DEFAULT 'COMMERCIAL',
   ALTER COLUMN request_mode SET NOT NULL;
 
+-- Migration 0053 limited every non-null identity to the commercial Daily-6
+-- namespace. Replace that historical guard before adding the mode-aware guard
+-- so diagnostic jobs cannot be rejected by an obsolete constraint.
+ALTER TABLE public.collection_jobs
+  DROP CONSTRAINT IF EXISTS collection_jobs_request_identity_check;
+ALTER TABLE public.collection_jobs
+  ADD CONSTRAINT collection_jobs_request_identity_check CHECK (
+    request_identity IS NULL
+    OR request_identity ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[|](09|13|16)[|][a-z0-9]+(-[a-z0-9]+)*[|]daily6-v1$'
+    OR request_identity ~ '^diagnostic[|][0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[|][a-z0-9]+(-[a-z0-9]+)*[|]discovery-v1$'
+  );
+
 ALTER TABLE public.collection_jobs
   DROP CONSTRAINT IF EXISTS collection_jobs_request_mode_check;
 ALTER TABLE public.collection_jobs

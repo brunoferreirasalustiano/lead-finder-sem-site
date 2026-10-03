@@ -9,6 +9,7 @@ describe('diagnostic collection persistence boundary', () => {
     expect(migration).toContain('enqueue_diagnostic_collection_job');
     expect(migration).toContain('COLLECTION_EXECUTION_IDENTITY_IMMUTABLE');
     expect(migration).toContain('DIAGNOSTIC_COLLECTION_IDEMPOTENCY_CONFLICT');
+    expect(migration).toMatch(/DROP CONSTRAINT IF EXISTS collection_jobs_request_identity_check[\s\S]*?ADD CONSTRAINT collection_jobs_request_identity_check/u);
     expect(migration).not.toMatch(/enqueue_diagnostic_collection_job[\s\S]*?INSERT INTO public\.daily6_batches/u);
   });
 

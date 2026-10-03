@@ -76,6 +76,7 @@ export type NewLead = typeof leads.$inferInsert;
 export const collectionJobs = pgTable('collection_jobs', {
   id: uuid('id').defaultRandom().primaryKey(),
   requestIdentity: text('request_identity'),
+  requestMode: text('request_mode').$type<'LEGACY' | 'COMMERCIAL' | 'DIAGNOSTIC'>().notNull().default('COMMERCIAL'),
   payload: jsonb('payload').notNull(),
   status: text('status').notNull().default('PENDING'),
   error: text('error'),

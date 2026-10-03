@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import postgres from 'postgres';
-import { claimCollection, createDatabase, enqueueCollection, uniqueByOsm } from './index.js';
+import { claimCollection, createDatabase, enqueueCollection, enqueueDiagnosticCollection, uniqueByOsm } from './index.js';
 import type { Database } from './index.js';
 
 vi.mock('postgres', () => ({ default: vi.fn() }));
@@ -34,6 +34,18 @@ describe('collection persistence authorization', () => {
       '2026-08-12|09|campinas-sp|daily6-v1',
     )).resolves.toEqual({ id: 'synthetic-job', status: 'PENDING', replayed: false });
   });
+
+  it('uses the dedicated diagnostic enqueue function with a namespaced identity', async () => {
+    const execute = vi.fn().mockResolvedValue([{ id: 'diagnostic-job', status: 'PENDING', replayed: false }]);
+    const db = { execute } as unknown as Database;
+    await expect(enqueueDiagnosticCollection(
+      db,
+      { city: 'Campinas', state: 'SP', country: 'Brasil', category: 'barbearias', limit: 5 },
+      { enabled: true, configurationVersion: 1 },
+      'diagnostic|123e4567-e89b-42d3-a456-426614174000|campinas-sp|discovery-v1',
+    )).resolves.toEqual({ id: 'diagnostic-job', status: 'PENDING', replayed: false });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('collection terminal reconciliation boundary', () => {
@@ -41,6 +53,7 @@ describe('collection terminal reconciliation boundary', () => {
     const source = String(claimCollection);
     expect(source).toContain('expiredTerminalJobs');
     expect(source).toMatch(/expiredJob\.status === ["']FAILED["']/u);
+    expect(source).toMatch(/expiredJob\.requestMode === ["']COMMERCIAL["']/u);
     expect(source).toContain('sync_daily6_batch_from_collection');
   });
 });

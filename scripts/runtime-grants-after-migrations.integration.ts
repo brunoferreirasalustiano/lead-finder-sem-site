@@ -44,6 +44,7 @@ const daily6Functions = [
   'bump_daily6_batch_metrics',
   'sync_daily6_batch_from_collection',
   'enqueue_collection_job',
+  'enqueue_diagnostic_collection_job',
   'get_daily6_collection_status',
   'finalize_daily6_batch',
 ] as const;
@@ -146,11 +147,13 @@ try {
   // Migrations 0055-0056 grant the existing internal functions when the
   // least-privilege role already exists. Migration 0057 deliberately leaves
   // the new enqueue boundary closed until the HML supplement is applied.
+  const isEnqueueBoundary = (identity: string) => identity.startsWith('lead_finder_internal.enqueue_collection_job')
+    || identity.startsWith('lead_finder_internal.enqueue_diagnostic_collection_job');
   assert.equal(daily6Before
-    .filter((row) => !row.identity.startsWith('lead_finder_internal.enqueue_collection_job'))
+    .filter((row) => !isEnqueueBoundary(row.identity))
     .every((row) => row.executable), true);
   assert.equal(daily6Before
-    .filter((row) => row.identity.startsWith('lead_finder_internal.enqueue_collection_job'))
+    .filter((row) => isEnqueueBoundary(row.identity))
     .every((row) => !row.executable), true);
   await assertRestrictedTablesDenied();
   await assertEnqueueBoundaryDenied();

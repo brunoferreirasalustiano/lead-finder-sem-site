@@ -187,12 +187,5 @@ FOR EACH ROW EXECUTE FUNCTION lead_finder_internal.reject_diagnostic_commercial_
 REVOKE ALL ON FUNCTION lead_finder_internal.enqueue_diagnostic_collection_job(text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lead_finder_internal.prevent_collection_execution_identity_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION lead_finder_internal.reject_diagnostic_commercial_side_effect() FROM PUBLIC;
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lead_finder_api_runtime') THEN
-    GRANT EXECUTE ON FUNCTION lead_finder_internal.enqueue_diagnostic_collection_job(text, jsonb)
-      TO lead_finder_api_runtime;
-  END IF;
-END $$;
 
 COMMIT;

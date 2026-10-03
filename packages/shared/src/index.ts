@@ -67,6 +67,11 @@ export const diagnosticCollectionIdentitySchema = z
   .string()
   .regex(/^diagnostic\|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|[a-z0-9]+(?:-[a-z0-9]+)*\|discovery-v1$/u);
 export type DiagnosticCollectionIdentity = z.infer<typeof diagnosticCollectionIdentitySchema>;
+export const collectionExecutionIdentitySchema = z.union([
+  collectionRequestIdentitySchema,
+  diagnosticCollectionIdentitySchema,
+]);
+export type CollectionExecutionIdentity = z.infer<typeof collectionExecutionIdentitySchema>;
 
 export const collectionCityId = (city: string, state: string) =>
   `${city.trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/gu, '').replace(/[^a-z0-9]+/gu, '-')}-${state.trim().toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]+/gu, '')}`

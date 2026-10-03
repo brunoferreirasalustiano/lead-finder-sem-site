@@ -168,5 +168,4 @@ jobs:
           echo 'REAL_EMAIL_PROVIDER_CALLS=0'
           echo 'REAL_EMAIL_SENT=0'
           echo 'WHATSAPP_SENT=0'
-          echo 'PII_SAFE_TELEMETRY=PASS'
 

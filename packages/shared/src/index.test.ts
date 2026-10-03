@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectSchema,
   collectionCityId,
+  collectionExecutionIdentitySchema,
   collectionRequestIdentitySchema,
   diagnosticCollectionIdentitySchema,
   parseCollectionRequestIdentity,
@@ -26,6 +27,9 @@ describe('collectSchema', () => {
     });
     expect(diagnosticCollectionIdentitySchema.safeParse('diagnostic|09|campinas-sp|discovery-v1').success).toBe(false);
     expect(diagnosticCollectionIdentitySchema.safeParse('2026-08-12|09|campinas-sp|daily6-v1').success).toBe(false);
+    expect(collectionExecutionIdentitySchema.safeParse(identity).success).toBe(true);
+    expect(collectionExecutionIdentitySchema.safeParse('2026-08-12|09|campinas-sp|daily6-v1').success).toBe(true);
+    expect(collectionExecutionIdentitySchema.safeParse('arbitrary|identity').success).toBe(false);
   });
   it('rejects arbitrary fields such as raw queries', () =>
     expect(() => collectSchema.parse({ category: 'oficinas', query: '[out:json]' })).toThrow());

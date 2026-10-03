@@ -24,13 +24,13 @@ try {
     const first = await tx<{ id: string; status: string; replayed: boolean }[]>`
       SELECT id, status, replayed
       FROM lead_finder_internal.enqueue_diagnostic_collection_job(
-        ${requestIdentity}, ${JSON.stringify(payload)}::jsonb
+        ${requestIdentity}, ${sql.json(payload)}::jsonb
       )
     `;
     const replay = await tx<{ id: string; status: string; replayed: boolean }[]>`
       SELECT id, status, replayed
       FROM lead_finder_internal.enqueue_diagnostic_collection_job(
-        ${requestIdentity}, ${JSON.stringify(payload)}::jsonb
+        ${requestIdentity}, ${sql.json(payload)}::jsonb
       )
     `;
     assert.equal(first[0]?.status, 'PENDING');
@@ -59,7 +59,7 @@ try {
   const immutablePayload = { ...payload, collectionRequestIdentity: immutableIdentity };
   await sql`
     SELECT * FROM lead_finder_internal.enqueue_diagnostic_collection_job(
-      ${immutableIdentity}, ${JSON.stringify(immutablePayload)}::jsonb
+      ${immutableIdentity}, ${sql.json(immutablePayload)}::jsonb
     )
   `;
   try {

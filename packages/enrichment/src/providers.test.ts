@@ -112,12 +112,13 @@ describe('Tavily adapter', () => {
       code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'NETWORK_ERROR',
     });
 
+    const bodyTimeoutResponse = new Response('', { status: 200 });
+    vi.spyOn(bodyTimeoutResponse, 'json').mockRejectedValue(
+      Object.assign(new Error('private timeout details'), { name: 'AbortError' }),
+    );
     const bodyTimeout = new TavilyBusinessSearchProvider({
       apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
-      fetchFn: vi.fn().mockResolvedValue({
-        status: 200, ok: true,
-        json: vi.fn().mockRejectedValue(Object.assign(new Error('private timeout details'), { name: 'AbortError' })),
-      } as unknown as Response),
+      fetchFn: vi.fn().mockResolvedValue(bodyTimeoutResponse),
     });
     await expect(bodyTimeout.search({ lead })).rejects.toMatchObject({
       code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'REQUEST_TIMEOUT',

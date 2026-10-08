@@ -124,6 +124,8 @@ export const classifyTransportFailure = (error: unknown): SourceFailureDiagnosti
   reason: error instanceof Error && error.name === 'AbortError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
 });
 
+const isJsonSyntaxError = (error: unknown): boolean => error instanceof SyntaxError;
+
 export class ProviderCallAccounting {
   private readonly entries = new Map<ProviderCallProvider, ProviderCallAccountingEntry>(
     providerCallProviders.map((provider) => [provider, {
@@ -271,7 +273,7 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
             throw new EnrichmentError('Enrichment provider rate limit reached', 'SOURCE_RATE_LIMITED', retryAfterSeconds, 'ENRICHMENT_HTTP', { reason: 'RATE_LIMITED', httpStatus: 429 });
           }
-          if (![502, 503, 504].includes(response.status)) {
+          if (response.status < 500 || response.status > 599) {
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
             throw new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP', { reason: 'HTTP_CLIENT_ERROR', httpStatus: response.status });
           }
@@ -281,7 +283,8 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
           let payload: unknown;
           try {
             payload = await response.json();
-          } catch {
+          } catch (error) {
+            if (!isJsonSyntaxError(error)) throw error;
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
             throw new EnrichmentError('Enrichment provider response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP', { reason: 'INVALID_JSON', httpStatus: response.status });
           }

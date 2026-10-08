@@ -90,6 +90,7 @@ export interface CnpjWsBusinessRegistryProviderOptions {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const safeText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+const isJsonSyntaxError = (error: unknown): boolean => error instanceof SyntaxError;
 const normalizeText = (value: string | null | undefined): string => (value ?? '')
   .normalize('NFD').replace(/[\u0300-\u036f]/gu, '').toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
 const normalizeDigits = (value: string | null | undefined): string => (value ?? '').replace(/\D/gu, '');
@@ -319,7 +320,7 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
           recordResult({ provider: 'TAVILY', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
           throw new EnrichmentError('Tavily rate limit reached', 'TAVILY_RATE_LIMITED', retryAfterSeconds, 'TAVILY', { reason: 'RATE_LIMITED', httpStatus: 429 });
         }
-        if ([502, 503, 504].includes(response.status)) {
+        if (response.status >= 500 && response.status <= 599) {
           recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
           throw new EnrichmentError(`Tavily responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'TAVILY', { reason: 'HTTP_SERVER_ERROR', httpStatus: response.status });
         }
@@ -330,7 +331,8 @@ export class TavilyBusinessSearchProvider implements WebSearchEvidenceProvider {
         let payload: { results?: unknown };
         try {
           payload = await response.json() as { results?: unknown };
-        } catch {
+        } catch (error) {
+          if (!isJsonSyntaxError(error)) throw error;
           recordResult({ provider: 'TAVILY', outcome: 'FAILED' });
           throw new EnrichmentError('Tavily response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'TAVILY', { reason: 'INVALID_JSON', httpStatus: response.status });
         }
@@ -478,7 +480,7 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError('CNPJ.ws rejected the registry candidate', 'REGISTRY_CANDIDATE_REJECTED', undefined, 'CNPJ_WS', { reason: 'HTTP_CLIENT_ERROR', httpStatus: 400 });
         }
-        if ([502, 503, 504].includes(response.status)) {
+        if (response.status >= 500 && response.status <= 599) {
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError(`CNPJ.ws responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'CNPJ_WS', { reason: 'HTTP_SERVER_ERROR', httpStatus: response.status });
         }
@@ -489,7 +491,8 @@ export class CnpjWsBusinessRegistryProvider implements BusinessRegistryProvider 
         let payload: unknown;
         try {
           payload = await response.json();
-        } catch {
+        } catch (error) {
+          if (!isJsonSyntaxError(error)) throw error;
           recordResult({ provider: 'CNPJ_WS', outcome: 'FAILED' });
           throw new EnrichmentError('CNPJ.ws response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'CNPJ_WS', { reason: 'INVALID_JSON', httpStatus: response.status });
         }

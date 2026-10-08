@@ -98,10 +98,10 @@ describe('Tavily adapter', () => {
 
     const unavailable = new TavilyBusinessSearchProvider({
       apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
-      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 503 })),
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 500 })),
     });
     await expect(unavailable.search({ lead })).rejects.toMatchObject({
-      reason: 'HTTP_SERVER_ERROR', httpStatus: 503,
+      reason: 'HTTP_SERVER_ERROR', httpStatus: 500,
     });
 
     const networkFailure = new TavilyBusinessSearchProvider({
@@ -110,6 +110,17 @@ describe('Tavily adapter', () => {
     });
     await expect(networkFailure.search({ lead })).rejects.toMatchObject({
       code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'NETWORK_ERROR',
+    });
+
+    const bodyTimeout = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
+      fetchFn: vi.fn().mockResolvedValue({
+        status: 200, ok: true,
+        json: vi.fn().mockRejectedValue(Object.assign(new Error('private timeout details'), { name: 'AbortError' })),
+      } as unknown as Response),
+    });
+    await expect(bodyTimeout.search({ lead })).rejects.toMatchObject({
+      code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'REQUEST_TIMEOUT',
     });
   });
 

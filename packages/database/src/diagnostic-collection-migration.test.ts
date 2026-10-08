@@ -19,5 +19,7 @@ describe('diagnostic collection persistence boundary', () => {
     expect(migration).toContain('diagnostic_daily6_ledger_guard');
     expect(migration).toContain('diagnostic_campaign_outbox_guard');
     expect(migration).toContain('diagnostic_pilot_run_guard');
+    expect(migration).toMatch(/get_diagnostic_commercial_snapshot\(\)[\s\S]*?SECURITY DEFINER/u);
+    expect(migration).toContain('REVOKE ALL ON FUNCTION lead_finder_internal.get_diagnostic_commercial_snapshot() FROM PUBLIC');
   });
 });

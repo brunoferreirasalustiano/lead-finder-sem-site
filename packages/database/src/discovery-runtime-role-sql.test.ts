@@ -30,6 +30,9 @@ describe('HML discovery runtime role provisioning', () => {
     expect(executableSql).toMatch(
       /GRANT\s+EXECUTE\s+ON FUNCTION lead_finder_internal\.sync_daily6_batch_from_collection\(text\)\s+TO lead_finder_discovery_runtime/i,
     );
+    expect(executableSql).toMatch(
+      /GRANT\s+EXECUTE\s+ON FUNCTION lead_finder_internal\.get_diagnostic_commercial_snapshot\(\)\s+TO lead_finder_discovery_runtime/i,
+    );
     expect(executableSql).not.toMatch(/GRANT\s+UPDATE\s+ON\s+(TABLE\s+)?public\.leads/i);
   });
 

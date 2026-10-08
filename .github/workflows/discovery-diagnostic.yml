@@ -95,6 +95,8 @@ jobs:
 
       - name: Verify hosted readiness and diagnostic preflight
         shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -Eeuo pipefail
           readiness="$(curl --fail-with-body --silent --show-error --max-time 15 "$HML_API_URL/health/ready")"
@@ -102,7 +104,8 @@ jobs:
           preflight="$(curl --fail-with-body --silent --show-error --max-time 15 \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
             "$HML_API_URL/internal/discovery/preflight")"
-          printf '%s' "$preflight" | jq -e '.discoveryAuth == "PASS" and .collectionPermission == "PASS"' >/dev/null
+          printf '%s' "$preflight" | jq -e --arg expected_sha "$EXPECTED_SHA" \
+            '.discoveryAuth == "PASS" and .collectionPermission == "PASS" and .hostedCommitSha == $expected_sha' >/dev/null
           echo 'HML_READINESS=PASS'
           echo 'DISCOVERY_PREFLIGHT=PASS'
 
@@ -118,7 +121,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           baseline="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
-            "select (select count(*) from public.daily6_batches),(select count(*) from public.daily6_send_ledger),(select count(*) from public.campaign_outbox),(select count(*) from public.pilot_manual_email_send_attempts)")"
+            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
           echo "COMMERCIAL_BASELINE=$baseline" >> "$GITHUB_ENV"
 
       - name: Enqueue isolated diagnostic collection
@@ -161,7 +164,7 @@ jobs:
             "select request_mode,status,coalesce(error,'NONE') from public.collection_jobs where request_identity = :'request_identity'")"
           test "$row" = 'DIAGNOSTIC|COMPLETED|NONE'
           after="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
-            "select (select count(*) from public.daily6_batches),(select count(*) from public.daily6_send_ledger),(select count(*) from public.campaign_outbox),(select count(*) from public.pilot_manual_email_send_attempts)")"
+            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
           test "$after" = "$COMMERCIAL_BASELINE"
           echo 'COLLECTION_STATUS=COMPLETED'
           echo 'DAILY6_QUOTA_CONSUMED=0'

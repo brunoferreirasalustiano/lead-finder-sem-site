@@ -19,6 +19,9 @@ describe('discovery diagnostic workflow contract', () => {
     expect(workflow).toContain('REAL_EMAIL_PROVIDER_CALLS=0');
     expect(workflow).toContain('WHATSAPP_SENT=0');
     expect(workflow).toContain("test \"$row\" = 'DIAGNOSTIC|COMPLETED|NONE'");
+    expect(workflow).toContain('.hostedCommitSha == $expected_sha');
+    expect(workflow.match(/get_diagnostic_commercial_snapshot\(\)/gu)).toHaveLength(2);
+    expect(workflow).not.toMatch(/select count\(\*\) from public\.(daily6_batches|daily6_send_ledger|campaign_outbox|pilot_manual_email_send_attempts)/u);
     expect(workflow).not.toContain('PII_SAFE_TELEMETRY=PASS');
     expect(workflow).not.toMatch(/secrets\.GMAIL|secrets\.WHATSAPP/u);
     expect(workflow).not.toContain('daily6-v1');

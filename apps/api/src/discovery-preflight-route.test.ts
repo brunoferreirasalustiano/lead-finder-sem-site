@@ -33,6 +33,7 @@ describe('discovery authentication preflight route', () => {
   it('accepts only the dedicated discovery principal', async () => {
     const app = buildApp({} as Database, {
       discoveryAuthRequired: true,
+      hostedCommitSha: 'a'.repeat(40),
       authentication: temporaryAuthentication(),
     });
 
@@ -57,6 +58,7 @@ describe('discovery authentication preflight route', () => {
     expect(accepted.json()).toEqual({
       discoveryAuth: 'PASS',
       collectionPermission: 'PASS',
+      hostedCommitSha: 'a'.repeat(40),
     });
     await app.close();
   });

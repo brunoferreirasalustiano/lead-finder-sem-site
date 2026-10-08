@@ -183,6 +183,25 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION lead_finder_internal.get_diagnostic_commercial_snapshot()
+RETURNS TABLE(
+  daily6_batches_count bigint,
+  daily6_send_ledger_count bigint,
+  campaign_outbox_count bigint,
+  manual_email_send_attempts_count bigint
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+  SELECT
+    (SELECT count(*) FROM public.daily6_batches),
+    (SELECT count(*) FROM public.daily6_send_ledger),
+    (SELECT count(*) FROM public.campaign_outbox),
+    (SELECT count(*) FROM public.pilot_manual_email_send_attempts)
+$$;
+
 DROP TRIGGER IF EXISTS diagnostic_daily6_batch_guard ON public.daily6_batches;
 CREATE TRIGGER diagnostic_daily6_batch_guard BEFORE INSERT ON public.daily6_batches
 FOR EACH ROW EXECUTE FUNCTION lead_finder_internal.reject_diagnostic_commercial_side_effect();
@@ -199,5 +218,6 @@ FOR EACH ROW EXECUTE FUNCTION lead_finder_internal.reject_diagnostic_commercial_
 REVOKE ALL ON FUNCTION lead_finder_internal.enqueue_diagnostic_collection_job(text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lead_finder_internal.prevent_collection_execution_identity_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION lead_finder_internal.reject_diagnostic_commercial_side_effect() FROM PUBLIC;
+REVOKE ALL ON FUNCTION lead_finder_internal.get_diagnostic_commercial_snapshot() FROM PUBLIC;
 
 COMMIT;

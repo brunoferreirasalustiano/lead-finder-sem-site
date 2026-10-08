@@ -329,6 +329,7 @@ export function buildApp(db: Database, options: {
   daily6PilotEnabled?: boolean;
   discoveryAuthRequired?: boolean;
   discoveryAuthExpiresAt?: Date;
+  hostedCommitSha?: string;
   daily6AuthRequired?: boolean;
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
@@ -605,6 +606,7 @@ export function buildApp(db: Database, options: {
     return {
       discoveryAuth: 'PASS',
       collectionPermission: 'PASS',
+      hostedCommitSha: options.hostedCommitSha,
     };
   });
   app.get('/internal/daily6/whatsapp-opportunities', async (request, reply) => {

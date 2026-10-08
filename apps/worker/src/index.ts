@@ -76,6 +76,8 @@ const processCollection = createCollectionProcessor(db, {
       code: failure.code,
       ...(failure.provider === undefined ? {} : { provider: failure.provider }),
       ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }),
+      ...(failure.reason === undefined ? {} : { reason: failure.reason }),
+      ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
     }));
   },
   identity,

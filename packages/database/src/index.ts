@@ -7,7 +7,9 @@ import {
   normalizeAddress,
   normalizeBusinessName,
   collectionRequestIdentitySchema,
+  diagnosticCollectionIdentitySchema,
   parseCollectionRequestIdentity,
+  parseDiagnosticCollectionIdentity,
   type AuthorizationContext,
   type LeadStatus,
   type NormalizedLead,
@@ -241,6 +243,37 @@ export async function enqueueCollection(
   if (!row) throw new Error('COLLECTION_ENQUEUE_RESULT_MISSING');
   return { id: row.id, status: row.status, replayed: row.replayed };
 }
+
+export async function enqueueDiagnosticCollection(
+  db: Database,
+  payload: unknown,
+  authorization?: CollectionEgressAuthorization,
+  requestIdentity?: string,
+) {
+  if (authorization?.enabled !== true || authorization.configurationVersion !== 1) {
+    throw new Error('COLLECTION_EGRESS_DISABLED');
+  }
+  const parsedIdentity = diagnosticCollectionIdentitySchema.safeParse(requestIdentity);
+  if (!parsedIdentity.success || !parseDiagnosticCollectionIdentity(parsedIdentity.data)) {
+    throw new Error('DIAGNOSTIC_COLLECTION_IDENTITY_REQUIRED');
+  }
+  const envelope = {
+    input: payload,
+    collectionEgress: collectionAuthorization,
+    collectionRequestIdentity: parsedIdentity.data,
+    requestMode: 'DIAGNOSTIC',
+  };
+  const rows = await db.execute<{ id: string; status: string; replayed: boolean }>(sql`
+    SELECT id, status, replayed
+    FROM lead_finder_internal.enqueue_diagnostic_collection_job(
+      ${parsedIdentity.data},
+      ${JSON.stringify(envelope)}::jsonb
+    )
+  `);
+  const row = rows[0];
+  if (!row) throw new Error('COLLECTION_ENQUEUE_RESULT_MISSING');
+  return { id: row.id, status: row.status, replayed: row.replayed };
+}
 const collectionLeaseMs = 30 * 60 * 1_000;
 const collectionMaxAttempts = 3;
 const safeCollectionError = (error?: string): string | null => {
@@ -265,9 +298,9 @@ export async function claimCollection(db: Database, requestIdentity?: string) {
         eq(collectionJobs.status, 'PROCESSING'),
         sql`${collectionJobs.leaseExpiresAt} is not null and ${collectionJobs.leaseExpiresAt} < ${now.toISOString()}`,
       ))
-      .returning({ requestIdentity: collectionJobs.requestIdentity, status: collectionJobs.status });
+      .returning({ requestIdentity: collectionJobs.requestIdentity, requestMode: collectionJobs.requestMode, status: collectionJobs.status });
     for (const expiredJob of expiredTerminalJobs) {
-      if (expiredJob.status === 'FAILED' && expiredJob.requestIdentity) {
+      if (expiredJob.status === 'FAILED' && expiredJob.requestMode === 'COMMERCIAL' && expiredJob.requestIdentity) {
         await tx.execute(sql`
           SELECT *
           FROM lead_finder_internal.sync_daily6_batch_from_collection(${expiredJob.requestIdentity})
@@ -304,9 +337,9 @@ export async function finishCollection(db: Database, id: string, error?: string,
       .update(collectionJobs)
       .set({ status: error ? 'FAILED' : 'COMPLETED', error: safeCollectionError(error), leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
       .where(and(eq(collectionJobs.id, id), eq(collectionJobs.status, 'PROCESSING'), ...(leaseToken ? [eq(collectionJobs.leaseToken, leaseToken)] : [])))
-      .returning({ id: collectionJobs.id, requestIdentity: collectionJobs.requestIdentity });
+      .returning({ id: collectionJobs.id, requestIdentity: collectionJobs.requestIdentity, requestMode: collectionJobs.requestMode });
     if (leaseToken && result.length !== 1) throw new Error('COLLECTION_LEASE_LOST');
-    if (error && result[0]?.requestIdentity) {
+    if (error && result[0]?.requestMode === 'COMMERCIAL' && result[0].requestIdentity) {
       await tx.execute(sql`
         SELECT *
         FROM lead_finder_internal.sync_daily6_batch_from_collection(${result[0].requestIdentity})

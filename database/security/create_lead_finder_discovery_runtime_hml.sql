@@ -14,6 +14,16 @@ BEGIN
 END
 $$;
 
+DO $$
+BEGIN
+  IF to_regprocedure('lead_finder_internal.get_diagnostic_commercial_snapshot()') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA lead_finder_internal TO lead_finder_discovery_runtime;
+    GRANT EXECUTE ON FUNCTION lead_finder_internal.get_diagnostic_commercial_snapshot()
+      TO lead_finder_discovery_runtime;
+  END IF;
+END
+$$;
+
 ALTER ROLE lead_finder_discovery_runtime SET search_path=pg_catalog,public;
 ALTER ROLE lead_finder_discovery_runtime SET statement_timeout='30s';
 ALTER ROLE lead_finder_discovery_runtime SET idle_in_transaction_session_timeout='30s';

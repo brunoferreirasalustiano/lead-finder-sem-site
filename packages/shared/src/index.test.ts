@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { collectSchema, collectionCityId, collectionRequestIdentitySchema, parseCollectionRequestIdentity } from './index.js';
+import {
+  collectSchema,
+  collectionCityId,
+  collectionExecutionIdentitySchema,
+  collectionRequestIdentitySchema,
+  diagnosticCollectionIdentitySchema,
+  parseCollectionRequestIdentity,
+  parseDiagnosticCollectionIdentity,
+} from './index.js';
 
 describe('collectSchema', () => {
   it('accepts allowed category and defaults', () =>
@@ -7,6 +15,21 @@ describe('collectSchema', () => {
   it('rejects arbitrary category and excessive limit', () => {
     expect(() => collectSchema.parse({ category: 'banks' })).toThrow();
     expect(() => collectSchema.parse({ category: 'oficinas', limit: 51 })).toThrow();
+  });
+
+  it('accepts only namespaced diagnostic identities with a UUID and no commercial slot', () => {
+    const identity = 'diagnostic|123e4567-e89b-42d3-a456-426614174000|campinas-sp|discovery-v1';
+    expect(diagnosticCollectionIdentitySchema.safeParse(identity).success).toBe(true);
+    expect(parseDiagnosticCollectionIdentity(identity)).toEqual({
+      executionId: '123e4567-e89b-42d3-a456-426614174000',
+      cityId: 'campinas-sp',
+      policyVersion: 'discovery-v1',
+    });
+    expect(diagnosticCollectionIdentitySchema.safeParse('diagnostic|09|campinas-sp|discovery-v1').success).toBe(false);
+    expect(diagnosticCollectionIdentitySchema.safeParse('2026-08-12|09|campinas-sp|daily6-v1').success).toBe(false);
+    expect(collectionExecutionIdentitySchema.safeParse(identity).success).toBe(true);
+    expect(collectionExecutionIdentitySchema.safeParse('2026-08-12|09|campinas-sp|daily6-v1').success).toBe(true);
+    expect(collectionExecutionIdentitySchema.safeParse('arbitrary|identity').success).toBe(false);
   });
   it('rejects arbitrary fields such as raw queries', () =>
     expect(() => collectSchema.parse({ category: 'oficinas', query: '[out:json]' })).toThrow());

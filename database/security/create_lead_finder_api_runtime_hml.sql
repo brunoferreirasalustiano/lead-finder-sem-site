@@ -43,6 +43,7 @@ GRANT EXECUTE ON FUNCTION
   lead_finder_internal.finalize_daily6_batch(text, integer, integer, integer, integer, integer, integer, integer, integer, integer, text),
   lead_finder_internal.sync_daily6_batch_from_collection(text),
   lead_finder_internal.enqueue_collection_job(text, jsonb),
+  lead_finder_internal.enqueue_diagnostic_collection_job(text, jsonb),
   lead_finder_internal.list_daily6_whatsapp_opportunities(text, text, integer)
 TO lead_finder_api_runtime;
 

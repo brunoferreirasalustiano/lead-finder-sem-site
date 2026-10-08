@@ -157,6 +157,7 @@ const deliverManualEmail = manualEmailConsumer
 const searchManualEmailSent = manualEmailConsumer
   ? (input: { deliveryKey: string }) => manualEmailConsumer.searchSent(input)
   : () => Promise.resolve({ state: 'UNKNOWN' as const });
+const renderGitCommit = process.env.RENDER_GIT_COMMIT;
 const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   collectionEgressEnabled: config.COLLECTION_EGRESS_ENABLED,
   shadowModeEnabled: config.SHADOW_MODE_ENABLED,
@@ -192,6 +193,9 @@ const app = buildApp(db, { dailyLeadLimit: config.DAILY_LEAD_LIMIT,
   }),
   daily6PilotEnabled: config.DAILY6_PILOT_ENABLED,
   discoveryAuthRequired: config.HML_DISCOVERY_AUTH_ENABLED,
+  ...(renderGitCommit && /^[0-9a-f]{40}$/u.test(renderGitCommit)
+    ? { hostedCommitSha: renderGitCommit }
+    : {}),
   ...(config.HML_DISCOVERY_AUTH_EXPIRES_AT
     ? { discoveryAuthExpiresAt: config.HML_DISCOVERY_AUTH_EXPIRES_AT }
     : {}),

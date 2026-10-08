@@ -1,6 +1,6 @@
 import { createDatabase } from '@lead-finder/database';
 import { createDryRunItemProcessor, processLeadBatch } from '@lead-finder/batch-processor';
-import { collectionRequestIdentitySchema, parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
+import { collectionExecutionIdentitySchema, parseWorkerConfig, ShadowModeGuard } from '@lead-finder/shared';
 import { createCollectionProcessor } from './collection-egress.js';
 import {
   CnpjWsBusinessRegistryProvider,
@@ -20,7 +20,7 @@ import { safeCnpjWsPublicRpm } from './provider-policy.js';
 import { formatWorkerFailure } from './failure-classification.js';
 const config = parseWorkerConfig(process.env);
 const requestIdentity = process.env.REQUEST_IDENTITY?.trim();
-if (config.WORKER_MODE === 'oneshot' && (!requestIdentity || !collectionRequestIdentitySchema.safeParse(requestIdentity).success)) {
+if (config.WORKER_MODE === 'oneshot' && (!requestIdentity || !collectionExecutionIdentitySchema.safeParse(requestIdentity).success)) {
   throw new Error('REQUEST_IDENTITY is required for bounded oneshot worker');
 }
 const { db, close } = createDatabase(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX, ssl: config.DATABASE_SSL_MODE });

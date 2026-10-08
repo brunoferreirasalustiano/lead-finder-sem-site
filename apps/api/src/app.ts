@@ -5,6 +5,7 @@ import {
   getReadiness,
   checkExpectedMigration,
   enqueueCollection,
+  enqueueDiagnosticCollection,
   getLead,
   listLeads,
   addEvidence,
@@ -87,7 +88,9 @@ import {
   collectSchema,
   collectionCityId,
   collectionRequestIdentitySchema,
+  diagnosticCollectionIdentitySchema,
   parseCollectionRequestIdentity,
+  parseDiagnosticCollectionIdentity,
   contactInputSchema,
   evidenceInputSchema,
   listLeadsSchema,
@@ -326,6 +329,7 @@ export function buildApp(db: Database, options: {
   daily6PilotEnabled?: boolean;
   discoveryAuthRequired?: boolean;
   discoveryAuthExpiresAt?: Date;
+  hostedCommitSha?: string;
   daily6AuthRequired?: boolean;
   expectedOperationalSha?: string;
   daily6SlotRuntime?: Daily6SlotRuntime;
@@ -343,6 +347,7 @@ export function buildApp(db: Database, options: {
   whatsappOpportunityReviewEnabled?: boolean;
   authentication?: AuthenticationOptions;
   enqueueCollection?: typeof enqueueCollection;
+  enqueueDiagnosticCollection?: typeof enqueueDiagnosticCollection;
   internalCronSecret?: string;
   cronAuthAudience?: string;
   processLeadBatch?: () => Promise<LeadBatchReport>;
@@ -357,6 +362,7 @@ export function buildApp(db: Database, options: {
   const shadowModeEnabled = options.shadowModeEnabled ?? false;
   const realProviderConfigured = options.realProviderConfigured ?? false;
   const enqueueCollectionJob = options.enqueueCollection ?? enqueueCollection;
+  const enqueueDiagnosticCollectionJob = options.enqueueDiagnosticCollection ?? enqueueDiagnosticCollection;
   const manualEmailSendEnabled = options.manualEmailSendEnabled ?? false;
   const whatsappCloudRuntime = options.whatsappCloudRuntime;
   const sendPreparedWhatsAppCloud = options.sendPreparedWhatsAppCloud ?? sendPreparedWhatsAppCloudMessage;
@@ -600,6 +606,7 @@ export function buildApp(db: Database, options: {
     return {
       discoveryAuth: 'PASS',
       collectionPermission: 'PASS',
+      hostedCommitSha: options.hostedCommitSha,
     };
   });
   app.get('/internal/daily6/whatsapp-opportunities', async (request, reply) => {
@@ -1223,14 +1230,30 @@ export function buildApp(db: Database, options: {
     const identityHeader = request.headers['x-collection-identity'];
     const identity = typeof identityHeader === 'string' ? identityHeader : undefined;
     const parsedIdentity = identity ? parseCollectionRequestIdentity(identity) : null;
-    if (!parsedIdentity || !collectionRequestIdentitySchema.safeParse(identity).success || parsedIdentity.cityId !== collectionCityId(parsed.data.city, parsed.data.state)) {
+    const parsedDiagnosticIdentity = identity ? parseDiagnosticCollectionIdentity(identity) : null;
+    const cityId = collectionCityId(parsed.data.city, parsed.data.state);
+    const commercialIdentityValid = parsedIdentity !== null
+      && collectionRequestIdentitySchema.safeParse(identity).success
+      && parsedIdentity.cityId === cityId;
+    const diagnosticIdentityValid = parsedDiagnosticIdentity !== null
+      && diagnosticCollectionIdentitySchema.safeParse(identity).success
+      && parsedDiagnosticIdentity.cityId === cityId;
+    if (!commercialIdentityValid && !diagnosticIdentityValid) {
       return reply.status(400).send({ error: 'Invalid collection identity', code: 'COLLECTION_IDENTITY_REQUIRED' });
     }
-    const job = await enqueueCollectionJob(db, parsed.data, {
+    const enqueue = diagnosticIdentityValid ? enqueueDiagnosticCollectionJob : enqueueCollectionJob;
+    const job = await enqueue(db, parsed.data, {
       enabled: true,
       configurationVersion: 1,
     }, identity);
-    request.log.info({ event: 'collection_job_enqueued', requestId: request.id, collectionIdentity: identity, jobId: job.id, replayed: job.replayed }, 'collection_job_enqueued');
+    request.log.info({
+      event: 'collection_job_enqueued',
+      requestId: request.id,
+      requestMode: diagnosticIdentityValid ? 'DIAGNOSTIC' : 'COMMERCIAL',
+      collectionIdentity: identity,
+      jobId: job.id,
+      replayed: job.replayed,
+    }, 'collection_job_enqueued');
     return reply.status(job.replayed ? 200 : 202).send(job);
   });
   app.get('/leads/export.csv', async (request, reply) => {

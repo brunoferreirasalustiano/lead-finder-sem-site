@@ -136,6 +136,30 @@ describe('security-safe API output', () => {
     await app.close();
   });
 
+  it('routes a diagnostic identity to the non-commercial enqueue boundary', async () => {
+    const commercialEnqueue = vi.fn();
+    const diagnosticEnqueue = vi.fn().mockResolvedValue({ id: 'diagnostic-job', status: 'PENDING', replayed: false });
+    const app = buildApp({} as Database, {
+      collectionEgressEnabled: true,
+      authentication: { token: testToken, principalPermissions: permissions },
+      enqueueCollection: commercialEnqueue,
+      enqueueDiagnosticCollection: diagnosticEnqueue,
+    });
+    const identity = 'diagnostic|123e4567-e89b-42d3-a456-426614174000|campinas-sp|discovery-v1';
+    const response = await authenticatedInject(app, {
+      method: 'POST',
+      url: '/collect',
+      headers: { 'x-collection-identity': identity },
+      payload: { category: 'barbearias', city: 'Campinas', state: 'SP', limit: 5 },
+    });
+    expect(response.statusCode).toBe(202);
+    expect(diagnosticEnqueue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      category: 'barbearias', city: 'Campinas', limit: 5,
+    }), { enabled: true, configurationVersion: 1 }, identity);
+    expect(commercialEnqueue).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('requires a versioned collection identity and binds it to the requested city', async () => {
     const enqueue = vi.fn();
     const app = buildApp({} as Database, {

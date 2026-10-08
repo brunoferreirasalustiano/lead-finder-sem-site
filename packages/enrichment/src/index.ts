@@ -101,6 +101,31 @@ export type ProviderCallAccountingEntry = {
   retryAfterSeconds?: number;
 };
 
+export const sourceFailureReasons = [
+  'HTTP_CLIENT_ERROR',
+  'HTTP_SERVER_ERROR',
+  'INVALID_JSON',
+  'INVALID_SCHEMA',
+  'IDENTIFIER_MISMATCH',
+  'RATE_LIMITED',
+  'REQUEST_TIMEOUT',
+  'NETWORK_ERROR',
+  'UNKNOWN',
+] as const;
+export type SourceFailureReason = (typeof sourceFailureReasons)[number];
+
+export const sourceFailureDiagnosticSchema = z.object({
+  reason: z.enum(sourceFailureReasons),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+}).strict();
+export type SourceFailureDiagnostic = z.infer<typeof sourceFailureDiagnosticSchema>;
+
+export const classifyTransportFailure = (error: unknown): SourceFailureDiagnostic => ({
+  reason: error instanceof Error && error.name === 'AbortError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+});
+
+const isJsonSyntaxError = (error: unknown): boolean => error instanceof SyntaxError;
+
 export class ProviderCallAccounting {
   private readonly entries = new Map<ProviderCallProvider, ProviderCallAccountingEntry>(
     providerCallProviders.map((provider) => [provider, {
@@ -133,6 +158,8 @@ export class ProviderCallAccounting {
 export class EnrichmentError extends Error {
   readonly retryAfterSeconds?: number;
   readonly provider?: ProviderCallProvider;
+  readonly reason?: SourceFailureReason;
+  readonly httpStatus?: number;
 
   constructor(
     message: string,
@@ -148,12 +175,22 @@ export class EnrichmentError extends Error {
       | 'INVALID_SOURCE_RESPONSE',
     retryAfterSeconds?: number,
     provider?: ProviderCallProvider,
+    diagnostic?: SourceFailureDiagnostic,
   ) {
     super(message);
     if (retryAfterSeconds !== undefined && Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
       this.retryAfterSeconds = retryAfterSeconds;
     }
     if (provider !== undefined) this.provider = provider;
+    const parsedDiagnostic = sourceFailureDiagnosticSchema.safeParse(diagnostic);
+    if (parsedDiagnostic.success) {
+      this.reason = parsedDiagnostic.data.reason;
+      if (parsedDiagnostic.data.httpStatus !== undefined) {
+        this.httpStatus = parsedDiagnostic.data.httpStatus;
+      }
+    } else if (diagnostic !== undefined) {
+      this.reason = 'UNKNOWN';
+    }
   }
 }
 
@@ -234,26 +271,27 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
           if (response.status === 429) {
             const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'RATE_LIMITED_429', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
-            throw new EnrichmentError('Enrichment provider rate limit reached', 'SOURCE_RATE_LIMITED', retryAfterSeconds, 'ENRICHMENT_HTTP');
+            throw new EnrichmentError('Enrichment provider rate limit reached', 'SOURCE_RATE_LIMITED', retryAfterSeconds, 'ENRICHMENT_HTTP', { reason: 'RATE_LIMITED', httpStatus: 429 });
           }
-          if (![502, 503, 504].includes(response.status)) {
+          if (response.status < 500 || response.status > 599) {
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
-            throw new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP');
+            throw new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP', { reason: 'HTTP_CLIENT_ERROR', httpStatus: response.status });
           }
           recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
-          lastError = new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'ENRICHMENT_HTTP');
+          lastError = new EnrichmentError(`Enrichment provider responded with ${response.status}`, 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'ENRICHMENT_HTTP', { reason: 'HTTP_SERVER_ERROR', httpStatus: response.status });
         } else {
           let payload: unknown;
           try {
             payload = await response.json();
-          } catch {
+          } catch (error) {
+            if (!isJsonSyntaxError(error)) throw error;
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
-            throw new EnrichmentError('Enrichment provider response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP');
+            throw new EnrichmentError('Enrichment provider response is not valid JSON', 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP', { reason: 'INVALID_JSON', httpStatus: response.status });
           }
           const parsed = businessEnrichmentResultSchema.safeParse(payload);
           if (!parsed.success) {
             recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'FAILED' });
-            throw new EnrichmentError('Enrichment provider response is invalid', 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP');
+            throw new EnrichmentError('Enrichment provider response is invalid', 'INVALID_SOURCE_RESPONSE', undefined, 'ENRICHMENT_HTTP', { reason: 'INVALID_SCHEMA', httpStatus: response.status });
           }
           recordResult({ provider: 'ENRICHMENT_HTTP', outcome: 'SUCCESS' });
           return parsed.data;
@@ -269,7 +307,7 @@ export class HttpBusinessEnrichmentProvider implements BusinessContactEnrichment
     }
     throw lastError instanceof EnrichmentError
       ? lastError
-      : new EnrichmentError('Enrichment provider is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'ENRICHMENT_HTTP');
+      : new EnrichmentError('Enrichment provider is temporarily unavailable', 'SOURCE_TEMPORARILY_UNAVAILABLE', undefined, 'ENRICHMENT_HTTP', classifyTransportFailure(lastError));
   }
 }
 

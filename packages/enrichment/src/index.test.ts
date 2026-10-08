@@ -71,7 +71,7 @@ describe('enrichment contracts', () => {
       endpoint: 'https://enrichment.test', timeoutMs: 100, maxRetries: 0,
       fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 504 })),
     });
-    await expect(provider.enrich({ lead: { osmType: 'node', osmId: '1', name: 'X', category: 'saloes-de-beleza', phone: null, whatsapp: null, email: null, website: null, instagram: null, facebook: null, address: null, city: 'Campinas', state: 'SP', latitude: null, longitude: null, isClosed: false } })).rejects.toMatchObject({ code: 'SOURCE_TEMPORARILY_UNAVAILABLE' } satisfies Partial<EnrichmentError>);
+    await expect(provider.enrich({ lead: { osmType: 'node', osmId: '1', name: 'X', category: 'saloes-de-beleza', phone: null, whatsapp: null, email: null, website: null, instagram: null, facebook: null, address: null, city: 'Campinas', state: 'SP', latitude: null, longitude: null, isClosed: false } })).rejects.toMatchObject({ code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'HTTP_SERVER_ERROR', httpStatus: 504 } satisfies Partial<EnrichmentError>);
   });
 
   it('classifies malformed successful responses as invalid source data', async () => {
@@ -79,6 +79,15 @@ describe('enrichment contracts', () => {
       endpoint: 'https://enrichment.test', timeoutMs: 100, maxRetries: 0,
       fetchFn: vi.fn().mockResolvedValue(new Response('{', { status: 200, headers: { 'content-type': 'application/json' } })),
     });
-    await expect(provider.enrich({ lead: { osmType: 'node', osmId: '2', name: 'X', category: 'saloes-de-beleza', phone: null, whatsapp: null, email: null, website: null, instagram: null, facebook: null, address: null, city: 'Campinas', state: 'SP', latitude: null, longitude: null, isClosed: false } })).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(provider.enrich({ lead: { osmType: 'node', osmId: '2', name: 'X', category: 'saloes-de-beleza', phone: null, whatsapp: null, email: null, website: null, instagram: null, facebook: null, address: null, city: 'Campinas', state: 'SP', latitude: null, longitude: null, isClosed: false } })).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE', reason: 'INVALID_JSON', httpStatus: 200 });
+  });
+
+  it('drops invalid diagnostic fields and reports only the closed fallback', () => {
+    const error = new EnrichmentError(
+      'private details', 'INVALID_SOURCE_RESPONSE', undefined, 'TAVILY',
+      { reason: 'NOT_ALLOWED', httpStatus: 999 } as never,
+    );
+    expect(error).toMatchObject({ reason: 'UNKNOWN' });
+    expect(error.httpStatus).toBeUndefined();
   });
 });

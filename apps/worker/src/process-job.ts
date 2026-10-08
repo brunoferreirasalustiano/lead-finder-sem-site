@@ -13,13 +13,15 @@ import {
 } from '@lead-finder/database';
 import { calculateLeadScore } from '@lead-finder/lead-scoring';
 import type { OverpassClient } from '@lead-finder/overpass-client';
-import { EnrichmentError, type BusinessContactEnrichmentProvider } from '@lead-finder/enrichment';
+import { EnrichmentError, type BusinessContactEnrichmentProvider, type SourceFailureReason } from '@lead-finder/enrichment';
 import { collectSchema, type NormalizedLead } from '@lead-finder/shared';
 
 export type CollectionFailureTelemetry = {
   code: string;
   provider?: string;
   retryAfterSeconds?: number;
+  reason?: SourceFailureReason;
+  httpStatus?: number;
 };
 
 const identityKey = (value: { osmType: string; osmId: string }) => `${value.osmType}:${value.osmId}`;
@@ -120,6 +122,8 @@ export async function processNextJob(
           ? {}
           : { provider: enrichmentProvider.name }),
       ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+      ...(error instanceof EnrichmentError && error.reason !== undefined ? { reason: error.reason } : {}),
+      ...(error instanceof EnrichmentError && error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
     });
     if (code === 'COLLECTION_LEASE_LOST') throw error;
     await finishCollection(db, job.id, code, job.leaseToken);

@@ -69,6 +69,7 @@ describe('collection source failure propagation', () => {
         'INVALID_SOURCE_RESPONSE',
         undefined,
         'TAVILY',
+        { reason: 'INVALID_SCHEMA', httpStatus: 200 },
       )),
     };
     const onFailure = vi.fn();
@@ -92,6 +93,8 @@ describe('collection source failure propagation', () => {
     expect(onFailure).toHaveBeenCalledWith({
       code: 'INVALID_SOURCE_RESPONSE',
       provider: 'TAVILY',
+      reason: 'INVALID_SCHEMA',
+      httpStatus: 200,
     });
     expect(JSON.stringify(onFailure.mock.calls)).not.toContain('private details');
   });

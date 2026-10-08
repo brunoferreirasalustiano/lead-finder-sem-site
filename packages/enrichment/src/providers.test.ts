@@ -69,6 +69,62 @@ describe('Tavily adapter', () => {
     await expect(provider.search({ lead })).rejects.toMatchObject({ code: 'ENRICHMENT_PROVIDER_DISABLED' } satisfies Partial<EnrichmentError>);
   });
 
+  it('classifies malformed Tavily responses without retaining provider payloads', async () => {
+    const invalidJson = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1,
+      fetchFn: vi.fn().mockResolvedValue(new Response('{private-provider-payload', { status: 200 })),
+    });
+    await expect(invalidJson.search({ lead })).rejects.toMatchObject({
+      code: 'INVALID_SOURCE_RESPONSE', provider: 'TAVILY', reason: 'INVALID_JSON', httpStatus: 200,
+    });
+
+    const invalidSchema = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1,
+      fetchFn: vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: 'private-provider-payload' }), { status: 200 })),
+    });
+    await expect(invalidSchema.search({ lead })).rejects.toMatchObject({
+      code: 'INVALID_SOURCE_RESPONSE', provider: 'TAVILY', reason: 'INVALID_SCHEMA', httpStatus: 200,
+    });
+  });
+
+  it('classifies Tavily HTTP and transport failures with closed diagnostics', async () => {
+    const unauthorized = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1,
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 401 })),
+    });
+    await expect(unauthorized.search({ lead })).rejects.toMatchObject({
+      reason: 'HTTP_CLIENT_ERROR', httpStatus: 401,
+    });
+
+    const unavailable = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
+      fetchFn: vi.fn().mockResolvedValue(new Response('', { status: 500 })),
+    });
+    await expect(unavailable.search({ lead })).rejects.toMatchObject({
+      reason: 'HTTP_SERVER_ERROR', httpStatus: 500,
+    });
+
+    const networkFailure = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
+      fetchFn: vi.fn().mockRejectedValue(new TypeError('private network details')),
+    });
+    await expect(networkFailure.search({ lead })).rejects.toMatchObject({
+      code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'NETWORK_ERROR',
+    });
+
+    const bodyTimeoutResponse = new Response('', { status: 200 });
+    vi.spyOn(bodyTimeoutResponse, 'json').mockRejectedValue(
+      Object.assign(new Error('private timeout details'), { name: 'AbortError' }),
+    );
+    const bodyTimeout = new TavilyBusinessSearchProvider({
+      apiKey: 'test', timeoutMs: 50, maxQueries: 1, maxRetries: 0,
+      fetchFn: vi.fn().mockResolvedValue(bodyTimeoutResponse),
+    });
+    await expect(bodyTimeout.search({ lead })).rejects.toMatchObject({
+      code: 'SOURCE_TEMPORARILY_UNAVAILABLE', reason: 'REQUEST_TIMEOUT',
+    });
+  });
+
   it('bounds queries and classifies third-party-only results without an owned website', async () => {
     const fetchFn = vi.fn().mockImplementation(() => new Response(JSON.stringify({ results: [{ url: 'https://instagram.com/allbeauty', title: 'All Beauty Campinas', content: 'CNPJ 12.345.678/0001-95', published_date: '2026-08-01T00:00:00Z' }] }), { status: 200 }));
     const provider = new TavilyBusinessSearchProvider({ apiKey: 'test', timeoutMs: 50, maxQueries: 99, maxResultsPerQuery: 99, fetchFn, sleepFn: () => Promise.resolve(), now: () => new Date('2026-08-10T00:00:00Z') });
@@ -256,6 +312,8 @@ describe('CNPJ.ws adapter and composite', () => {
     await expect(malformed.lookup('12345678000195')).rejects.toMatchObject({
       code: 'INVALID_SOURCE_RESPONSE',
       provider: 'CNPJ_WS',
+      reason: 'INVALID_JSON',
+      httpStatus: 200,
     });
 
     const incompatible = new CnpjWsBusinessRegistryProvider({
@@ -271,6 +329,8 @@ describe('CNPJ.ws adapter and composite', () => {
     await expect(unauthorized.lookup('12345678000195')).rejects.toMatchObject({
       code: 'INVALID_SOURCE_RESPONSE',
       provider: 'CNPJ_WS',
+      reason: 'HTTP_CLIENT_ERROR',
+      httpStatus: 401,
     });
 
     const mismatch = new CnpjWsBusinessRegistryProvider({
@@ -278,7 +338,9 @@ describe('CNPJ.ws adapter and composite', () => {
       fetchFn: vi.fn().mockResolvedValue(new Response(JSON.stringify({ razao_social: 'ALL BEAUTY LTDA', estabelecimento: { cnpj: '04252011000110', situacao_cadastral: 'ATIVA' } }), { status: 200 })),
       sleepFn: () => Promise.resolve(),
     });
-    await expect(mismatch.lookup('12345678000195')).rejects.toMatchObject({ code: 'INVALID_SOURCE_RESPONSE' });
+    await expect(mismatch.lookup('12345678000195')).rejects.toMatchObject({
+      code: 'INVALID_SOURCE_RESPONSE', reason: 'IDENTIFIER_MISMATCH', httpStatus: 200,
+    });
   });
 
   it('composes confirmed registry, recent activity and no-site evidence', async () => {

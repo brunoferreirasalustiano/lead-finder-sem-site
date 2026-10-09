@@ -34,7 +34,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: discovery-diagnostic-${{ inputs.expected_sha }}
+  # Serialize with Daily-6 so the global commercial snapshot cannot observe
+  # writes from an unrelated commercial run while proving zero side effects.
+  group: daily6-dispatcher
   cancel-in-progress: false
 
 jobs:
@@ -99,7 +101,16 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -Eeuo pipefail
-          readiness="$(curl --fail-with-body --silent --show-error --max-time 15 "$HML_API_URL/health/ready")"
+          for readiness_attempt in 1 2 3; do
+            curl --fail --silent --show-error --max-time 10 \
+              "$HML_API_URL/health/live" >/dev/null || true
+            if readiness="$(curl --fail-with-body --silent --show-error --max-time 15 "$HML_API_URL/health/ready")"; then
+              readiness_ok=true
+              break
+            fi
+            if [ "$readiness_attempt" -lt 3 ]; then sleep 5; fi
+          done
+          test "${readiness_ok:-false}" = true
           printf '%s' "$readiness" | jq -e '.status == "ready"' >/dev/null
           preflight="$(curl --fail-with-body --silent --show-error --max-time 15 \
             -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
@@ -115,6 +126,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+
+      - name: Generate isolated diagnostic identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          execution_id="$(node --input-type=module -e "import { randomUUID } from 'node:crypto'; process.stdout.write(randomUUID())")"
+          request_identity="diagnostic|$execution_id|campinas-sp|discovery-v1"
+          [[ "$request_identity" =~ ^diagnostic\|[0-9a-f-]{36}\|campinas-sp\|discovery-v1$ ]]
+          echo "REQUEST_IDENTITY=$request_identity" >> "$GITHUB_ENV"
+          echo 'DIAGNOSTIC_IDENTITY=GENERATED'
 
       - name: Validate bounded worker configuration before enqueue
         shell: bash
@@ -169,28 +190,49 @@ jobs:
           LIMIT: ${{ inputs.max_candidates }}
         run: |
           set -Eeuo pipefail
-          execution_id="$(node --input-type=module -e "import { randomUUID } from 'node:crypto'; process.stdout.write(randomUUID())")"
-          request_identity="diagnostic|$execution_id|campinas-sp|discovery-v1"
-          [[ "$request_identity" =~ ^diagnostic\|[0-9a-f-]{36}\|campinas-sp\|discovery-v1$ ]]
           response="$(jq -cn --arg category "$CATEGORY" --argjson limit "$LIMIT" \
             '{city:"Campinas",state:"SP",country:"Brasil",category:$category,limit:$limit}' | \
             curl --fail-with-body --silent --show-error --max-time 30 \
               -X POST "$HML_API_URL/collect" \
               -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
-              -H "X-Collection-Identity: $request_identity" \
+              -H "X-Collection-Identity: $REQUEST_IDENTITY" \
               -H 'Content-Type: application/json' --data-binary @-)"
           printf '%s' "$response" | jq -e '.id and .status == "PENDING" and .replayed == false' >/dev/null
-          echo "REQUEST_IDENTITY=$request_identity" >> "$GITHUB_ENV"
-          echo "DIAGNOSTIC_IDENTITY=$request_identity"
+          echo 'DIAGNOSTIC_JOB=ENQUEUED'
 
       - name: Run bounded diagnostic worker
         shell: bash
         run: |
           set -Eeuo pipefail
-          node apps/worker/dist/index.js 2>&1 | tee worker.log
-          accounting_line="$(grep -F '"event":"provider_call_accounting"' worker.log | tail -n 1)"
+          worker_log="$(mktemp)"
+          trap 'rm -f "$worker_log"' EXIT
+          set +e
+          node apps/worker/dist/index.js >"$worker_log" 2>&1
+          worker_exit_code=$?
+          set -e
+          if [ "$worker_exit_code" -ne 0 ]; then
+            worker_failure_class='UNKNOWN'
+            if grep -Fq '"event":"worker_startup_blocked"' "$worker_log"; then
+              worker_failure_class='INVALID_CONFIGURATION'
+            elif grep -Fq '"failureClass":"DATABASE_PERMISSION_DENIED"' "$worker_log"; then
+              worker_failure_class='DATABASE_PERMISSION_DENIED'
+            elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
+              worker_failure_class='COLLECTION_SOURCE_FAILURE'
+            elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
+              worker_failure_class='COLLECTION_NOT_CLAIMED'
+            elif grep -Fq '"failureClass":"COLLECTION_LEASE_LOST"' "$worker_log"; then
+              worker_failure_class='COLLECTION_LEASE_LOST'
+            elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
+              worker_failure_class='WORKER_FATAL'
+            fi
+            echo 'DISCOVERY_WORKER=FAILED' >&2
+            echo "DISCOVERY_WORKER_FAILURE_CLASS=$worker_failure_class" >&2
+            exit 1
+          fi
+          accounting_line="$(grep -F '"event":"provider_call_accounting"' "$worker_log" | tail -n 1)"
           test -n "$accounting_line"
           printf '%s' "$accounting_line" | jq -e '.event == "provider_call_accounting" and (.providers | type == "array")' >/dev/null
+          echo 'DISCOVERY_WORKER=PASS'
           echo 'PROVIDER_ACCOUNTING=PASS'
 
       - name: Verify terminal diagnostic state and zero commercial effects

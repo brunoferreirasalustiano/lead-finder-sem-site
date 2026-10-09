@@ -235,7 +235,19 @@ jobs:
           echo 'DISCOVERY_WORKER=PASS'
           echo 'PROVIDER_ACCOUNTING=PASS'
 
-      - name: Verify terminal diagnostic state and zero commercial effects
+      - name: Verify zero commercial effects on every exit path
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${COMMERCIAL_BASELINE:-}"
+          after="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
+            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
+          test "$after" = "$COMMERCIAL_BASELINE"
+          echo 'COMMERCIAL_SIDE_EFFECTS=0'
+
+      - name: Verify terminal diagnostic state
+        if: ${{ success() }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -243,9 +255,6 @@ jobs:
             -v request_identity="$REQUEST_IDENTITY" -c \
             "select request_mode,status,coalesce(error,'NONE') from public.collection_jobs where request_identity = :'request_identity'")"
           test "$row" = 'DIAGNOSTIC|COMPLETED|NONE'
-          after="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
-            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
-          test "$after" = "$COMMERCIAL_BASELINE"
           echo 'COLLECTION_STATUS=COMPLETED'
           echo 'DAILY6_QUOTA_CONSUMED=0'
           echo 'REAL_EMAIL_PROVIDER_CALLS=0'

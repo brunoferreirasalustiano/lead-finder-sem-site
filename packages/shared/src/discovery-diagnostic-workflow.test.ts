@@ -19,6 +19,9 @@ describe('discovery diagnostic workflow contract', () => {
     expect(workflow).toContain('DAILY6_QUOTA_CONSUMED=0');
     expect(workflow).toContain('REAL_EMAIL_PROVIDER_CALLS=0');
     expect(workflow).toContain('WHATSAPP_SENT=0');
+    expect(workflow).toContain('Verify zero commercial effects on every exit path\n        if: ${{ always() }}');
+    expect(workflow).toContain('test -n "${COMMERCIAL_BASELINE:-}"');
+    expect(workflow).toContain('COMMERCIAL_SIDE_EFFECTS=0');
     expect(workflow).toContain("test \"$row\" = 'DIAGNOSTIC|COMPLETED|NONE'");
     expect(workflow).toContain('.hostedCommitSha == $expected_sha');
     expect(workflow).toContain("parseWorkerConfig(process.env)");

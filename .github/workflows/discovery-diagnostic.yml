@@ -1,0 +1,282 @@
+name: Discovery diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact deployed HML SHA
+        required: true
+        type: string
+      category:
+        description: Controlled discovery category
+        required: true
+        default: barbearias
+        type: choice
+        options:
+          - barbearias
+          - clinicas
+          - consultorios
+          - saloes-de-beleza
+      max_candidates:
+        description: Maximum Overpass candidates
+        required: true
+        default: '10'
+        type: choice
+        options: ['5', '10', '20']
+      max_enrichment:
+        description: Maximum enrichment candidates
+        required: true
+        default: '3'
+        type: choice
+        options: ['1', '3', '5']
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize with Daily-6 so the global commercial snapshot cannot observe
+  # writes from an unrelated commercial run while proving zero side effects.
+  group: daily6-dispatcher
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    environment: hml-discovery
+    timeout-minutes: 30
+    env:
+      HML_API_URL: ${{ vars.HML_API_URL }}
+      HML_COLLECTION_TOKEN: ${{ secrets.HML_COLLECTION_TOKEN }}
+      DATABASE_URL: ${{ secrets.HML_DATABASE_URL }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      DEPLOYMENT_ENVIRONMENT: homologation
+      DEPLOYMENT_PROFILE: supabase-render
+      DATABASE_SSL_MODE: require
+      COLLECTION_EGRESS_ENABLED: 'true'
+      ENRICHMENT_EGRESS_ENABLED: 'true'
+      ENRICHMENT_PROVIDER: composite
+      OVERPASS_API_URL: https://overpass-api.de/api/interpreter
+      WORKER_MODE: oneshot
+      MAX_JOBS_PER_RUN: '1'
+      MAX_CANDIDATES_PER_JOB: ${{ inputs.max_candidates }}
+      MAX_ENRICHMENT_PER_JOB: ${{ inputs.max_enrichment }}
+      TAVILY_MIN_INTERVAL_MS: '1000'
+      TAVILY_RATE_LIMIT_RECOVERY_MAX_WAIT_MS: '10000'
+      CNPJ_PROVIDER_MAX_RPM: '3'
+      PILOT_KILL_SWITCH_ENABLED: 'false'
+      DRY_RUN: 'true'
+      REAL_SEND_ENABLED: 'false'
+      REAL_PROVIDERS_ENABLED: 'false'
+      SHADOW_MODE_ENABLED: 'true'
+
+    steps:
+      - name: Checkout exact deployed SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+
+      - name: Verify exact SHA and non-commercial boundary
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -n "$HML_API_URL"
+          test -n "$HML_COLLECTION_TOKEN"
+          test -n "$DATABASE_URL"
+          test -n "$TAVILY_API_KEY"
+          test "$REAL_SEND_ENABLED" = false
+          test "$REAL_PROVIDERS_ENABLED" = false
+          test -z "${GMAIL_ACCESS_TOKEN:-}"
+          test -z "${GMAIL_REFRESH_TOKEN:-}"
+          test -z "${WHATSAPP_ACCESS_TOKEN:-}"
+          echo 'REQUEST_MODE=DIAGNOSTIC'
+          echo 'COMMERCIAL_SLOT=NONE'
+
+      - name: Verify hosted readiness and diagnostic preflight
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -Eeuo pipefail
+          for readiness_attempt in 1 2 3; do
+            curl --fail --silent --show-error --max-time 10 \
+              "$HML_API_URL/health/live" >/dev/null || true
+            if readiness="$(curl --fail-with-body --silent --show-error --max-time 15 "$HML_API_URL/health/ready")"; then
+              readiness_ok=true
+              break
+            fi
+            if [ "$readiness_attempt" -lt 3 ]; then sleep 5; fi
+          done
+          test "${readiness_ok:-false}" = true
+          printf '%s' "$readiness" | jq -e '.status == "ready"' >/dev/null
+          preflight="$(curl --fail-with-body --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+            "$HML_API_URL/internal/discovery/preflight")"
+          printf '%s' "$preflight" | jq -e --arg expected_sha "$EXPECTED_SHA" \
+            '.discoveryAuth == "PASS" and .collectionPermission == "PASS" and .hostedCommitSha == $expected_sha' >/dev/null
+          echo 'HML_READINESS=PASS'
+          echo 'DISCOVERY_PREFLIGHT=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Generate isolated diagnostic identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          execution_id="$(node --input-type=module -e "import { randomUUID } from 'node:crypto'; process.stdout.write(randomUUID())")"
+          request_identity="diagnostic|$execution_id|campinas-sp|discovery-v1"
+          [[ "$request_identity" =~ ^diagnostic\|[0-9a-f-]{36}\|campinas-sp\|discovery-v1$ ]]
+          echo "REQUEST_IDENTITY=$request_identity" >> "$GITHUB_ENV"
+          echo 'DIAGNOSTIC_IDENTITY=GENERATED'
+
+      - name: Validate bounded worker configuration before enqueue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          config_log="$(mktemp)"
+          trap 'rm -f "$config_log"' EXIT
+          set +e
+          node --input-type=module -e "import { parseWorkerConfig } from './packages/shared/dist/config.js'; parseWorkerConfig(process.env);" >"$config_log" 2>&1
+          config_exit_code=$?
+          set -e
+          if [ "$config_exit_code" -ne 0 ]; then
+            echo 'DISCOVERY_WORKER_CONFIG=FAIL' >&2
+            echo 'DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_WORKER_CONFIG=PASS'
+
+      - name: Validate bounded worker database identity before enqueue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! database_user="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc 'select current_user' 2>/dev/null)"; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=DATABASE_CONNECTION' >&2
+            exit 1
+          fi
+          if [ "$database_user" != 'lead_finder_discovery_runtime' ]; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=UNEXPECTED_RUNTIME_ROLE' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_IDENTITY=PASS'
+          if ! capabilities="$(PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=15000' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f database/security/check_discovery_worker_capabilities.sql 2>/dev/null)" || [ "$capabilities" != 't' ]; then
+            echo 'DISCOVERY_DATABASE_CAPABILITIES=FAIL' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_CAPABILITIES=PASS'
+
+      - name: Capture commercial side-effect baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          baseline="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
+            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
+          echo "COMMERCIAL_BASELINE=$baseline" >> "$GITHUB_ENV"
+
+      - name: Enqueue isolated diagnostic collection
+        shell: bash
+        env:
+          CATEGORY: ${{ inputs.category }}
+          LIMIT: ${{ inputs.max_candidates }}
+        run: |
+          set -Eeuo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          set +e
+          jq -cn --arg category "$CATEGORY" --argjson limit "$LIMIT" \
+            '{city:"Campinas",state:"SP",country:"Brasil",category:$category,limit:$limit}' | \
+            curl --fail-with-body --silent --show-error --max-time 30 --output "$response_file" \
+              -X POST "$HML_API_URL/collect" \
+              -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
+              -H "X-Collection-Identity: $REQUEST_IDENTITY" \
+              -H 'Content-Type: application/json' --data-binary @-
+          enqueue_exit_code=$?
+          set -e
+          if [ "$enqueue_exit_code" -ne 0 ]; then
+            reconciled_status="$(printf '%s\n' "select status from public.collection_jobs where request_identity = :'request_identity';" | \
+              PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At \
+                -v request_identity="$REQUEST_IDENTITY")"
+            if [ "$reconciled_status" != 'PENDING' ]; then
+              echo 'DIAGNOSTIC_ENQUEUE=FAILED' >&2
+              echo 'DIAGNOSTIC_ENQUEUE_FAILURE_CLASS=UNCOMMITTED_OR_UNKNOWN' >&2
+              exit 1
+            fi
+            echo 'DIAGNOSTIC_ENQUEUE_RECONCILED=PASS'
+          else
+            jq -e '.id and .status == "PENDING" and .replayed == false' "$response_file" >/dev/null
+          fi
+          echo 'DIAGNOSTIC_JOB=ENQUEUED'
+
+      - name: Run bounded diagnostic worker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          worker_log="$(mktemp)"
+          trap 'rm -f "$worker_log"' EXIT
+          set +e
+          timeout --kill-after=30s 15m node apps/worker/dist/index.js >"$worker_log" 2>&1
+          worker_exit_code=$?
+          set -e
+          if [ "$worker_exit_code" -ne 0 ]; then
+            worker_failure_class='UNKNOWN'
+            if [ "$worker_exit_code" -eq 124 ] || [ "$worker_exit_code" -eq 137 ]; then
+              worker_failure_class='WORKER_TIMEOUT'
+            elif grep -Fq '"event":"worker_startup_blocked"' "$worker_log"; then
+              worker_failure_class='INVALID_CONFIGURATION'
+            elif grep -Fq '"failureClass":"DATABASE_PERMISSION_DENIED"' "$worker_log"; then
+              worker_failure_class='DATABASE_PERMISSION_DENIED'
+            elif grep -Fq '"event":"collection_source_failure"' "$worker_log"; then
+              worker_failure_class='COLLECTION_SOURCE_FAILURE'
+            elif grep -Fq '"failureClass":"NO_COLLECTION_JOB_CLAIMED"' "$worker_log"; then
+              worker_failure_class='COLLECTION_NOT_CLAIMED'
+            elif grep -Fq '"failureClass":"COLLECTION_LEASE_LOST"' "$worker_log"; then
+              worker_failure_class='COLLECTION_LEASE_LOST'
+            elif grep -Fq '"event":"worker_fatal"' "$worker_log"; then
+              worker_failure_class='WORKER_FATAL'
+            fi
+            echo 'DISCOVERY_WORKER=FAILED' >&2
+            echo "DISCOVERY_WORKER_FAILURE_CLASS=$worker_failure_class" >&2
+            exit 1
+          fi
+          accounting_line="$(grep -F '"event":"provider_call_accounting"' "$worker_log" | tail -n 1)"
+          test -n "$accounting_line"
+          printf '%s' "$accounting_line" | jq -e '.event == "provider_call_accounting" and (.providers | type == "array")' >/dev/null
+          echo 'DISCOVERY_WORKER=PASS'
+          echo 'PROVIDER_ACCOUNTING=PASS'
+
+      - name: Verify zero commercial effects on every exit path
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${COMMERCIAL_BASELINE:-}"
+          after="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' -c \
+            "select * from lead_finder_internal.get_diagnostic_commercial_snapshot()")"
+          test "$after" = "$COMMERCIAL_BASELINE"
+          echo 'COMMERCIAL_SIDE_EFFECTS=0'
+
+      - name: Verify terminal diagnostic state
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          row="$(printf '%s\n' "select request_mode,status,coalesce(error,'NONE') from public.collection_jobs where request_identity = :'request_identity';" | \
+            PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -AtF '|' \
+              -v request_identity="$REQUEST_IDENTITY")"
+          test "$row" = 'DIAGNOSTIC|COMPLETED|NONE'
+          echo 'COLLECTION_STATUS=COMPLETED'
+          echo 'DAILY6_QUOTA_CONSUMED=0'
+          echo 'REAL_EMAIL_PROVIDER_CALLS=0'
+          echo 'REAL_EMAIL_SENT=0'
+          echo 'WHATSAPP_SENT=0'
+

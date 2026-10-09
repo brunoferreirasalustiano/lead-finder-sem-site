@@ -190,14 +190,31 @@ jobs:
           LIMIT: ${{ inputs.max_candidates }}
         run: |
           set -Eeuo pipefail
-          response="$(jq -cn --arg category "$CATEGORY" --argjson limit "$LIMIT" \
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          set +e
+          jq -cn --arg category "$CATEGORY" --argjson limit "$LIMIT" \
             '{city:"Campinas",state:"SP",country:"Brasil",category:$category,limit:$limit}' | \
-            curl --fail-with-body --silent --show-error --max-time 30 \
+            curl --fail-with-body --silent --show-error --max-time 30 --output "$response_file" \
               -X POST "$HML_API_URL/collect" \
               -H "Authorization: Bearer $HML_COLLECTION_TOKEN" \
               -H "X-Collection-Identity: $REQUEST_IDENTITY" \
-              -H 'Content-Type: application/json' --data-binary @-)"
-          printf '%s' "$response" | jq -e '.id and .status == "PENDING" and .replayed == false' >/dev/null
+              -H 'Content-Type: application/json' --data-binary @-
+          enqueue_exit_code=$?
+          set -e
+          if [ "$enqueue_exit_code" -ne 0 ]; then
+            reconciled_status="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At \
+              -v request_identity="$REQUEST_IDENTITY" -c \
+              "select status from public.collection_jobs where request_identity = :'request_identity'")"
+            if [ "$reconciled_status" != 'PENDING' ]; then
+              echo 'DIAGNOSTIC_ENQUEUE=FAILED' >&2
+              echo 'DIAGNOSTIC_ENQUEUE_FAILURE_CLASS=UNCOMMITTED_OR_UNKNOWN' >&2
+              exit 1
+            fi
+            echo 'DIAGNOSTIC_ENQUEUE_RECONCILED=PASS'
+          else
+            jq -e '.id and .status == "PENDING" and .replayed == false' "$response_file" >/dev/null
+          fi
           echo 'DIAGNOSTIC_JOB=ENQUEUED'
 
       - name: Run bounded diagnostic worker

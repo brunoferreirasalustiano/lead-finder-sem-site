@@ -34,6 +34,9 @@ describe('discovery diagnostic workflow contract', () => {
     expect(workflow).toContain('node apps/worker/dist/index.js >"$worker_log" 2>&1');
     expect(workflow).not.toContain('tee worker.log');
     expect(workflow).not.toContain('cat "$worker_log"');
+    expect(workflow).toContain('DIAGNOSTIC_ENQUEUE_RECONCILED=PASS');
+    expect(workflow).toContain('DIAGNOSTIC_ENQUEUE_FAILURE_CLASS=UNCOMMITTED_OR_UNKNOWN');
+    expect(workflow.match(/-X POST "\$HML_API_URL\/collect"/gu)).toHaveLength(1);
     expect(workflow.match(/get_diagnostic_commercial_snapshot\(\)/gu)).toHaveLength(2);
     expect(workflow).not.toMatch(/select count\(\*\) from public\.(daily6_batches|daily6_send_ledger|campaign_outbox|pilot_manual_email_send_attempts)/u);
     expect(workflow).not.toContain('PII_SAFE_TELEMETRY=PASS');

@@ -20,10 +20,23 @@ describe('discovery diagnostic workflow contract', () => {
     expect(workflow).toContain('WHATSAPP_SENT=0');
     expect(workflow).toContain("test \"$row\" = 'DIAGNOSTIC|COMPLETED|NONE'");
     expect(workflow).toContain('.hostedCommitSha == $expected_sha');
+    expect(workflow).toContain("parseWorkerConfig(process.env)");
+    expect(workflow).toContain("database_user\" != 'lead_finder_discovery_runtime'");
+    expect(workflow).toContain('database/security/check_discovery_worker_capabilities.sql');
+    expect(workflow).toContain('DISCOVERY_DATABASE_CAPABILITIES=PASS');
     expect(workflow.match(/get_diagnostic_commercial_snapshot\(\)/gu)).toHaveLength(2);
     expect(workflow).not.toMatch(/select count\(\*\) from public\.(daily6_batches|daily6_send_ledger|campaign_outbox|pilot_manual_email_send_attempts)/u);
     expect(workflow).not.toContain('PII_SAFE_TELEMETRY=PASS');
     expect(workflow).not.toMatch(/secrets\.GMAIL|secrets\.WHATSAPP/u);
     expect(workflow).not.toContain('daily6-v1');
+
+    const configValidation = workflow.indexOf('Validate bounded worker configuration before enqueue');
+    const databaseValidation = workflow.indexOf('Validate bounded worker database identity before enqueue');
+    const baseline = workflow.indexOf('Capture commercial side-effect baseline');
+    const enqueue = workflow.indexOf('Enqueue isolated diagnostic collection');
+    expect(configValidation).toBeGreaterThan(-1);
+    expect(databaseValidation).toBeGreaterThan(configValidation);
+    expect(baseline).toBeGreaterThan(databaseValidation);
+    expect(enqueue).toBeGreaterThan(baseline);
   });
 });

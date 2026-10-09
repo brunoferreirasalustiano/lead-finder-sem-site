@@ -116,6 +116,44 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      - name: Validate bounded worker configuration before enqueue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          config_log="$(mktemp)"
+          trap 'rm -f "$config_log"' EXIT
+          set +e
+          node --input-type=module -e "import { parseWorkerConfig } from './packages/shared/dist/config.js'; parseWorkerConfig(process.env);" >"$config_log" 2>&1
+          config_exit_code=$?
+          set -e
+          if [ "$config_exit_code" -ne 0 ]; then
+            echo 'DISCOVERY_WORKER_CONFIG=FAIL' >&2
+            echo 'DISCOVERY_WORKER_CONFIG_FAILURE_CLASS=INVALID_CONFIGURATION' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_WORKER_CONFIG=PASS'
+
+      - name: Validate bounded worker database identity before enqueue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! database_user="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atqc 'select current_user' 2>/dev/null)"; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=DATABASE_CONNECTION' >&2
+            exit 1
+          fi
+          if [ "$database_user" != 'lead_finder_discovery_runtime' ]; then
+            echo 'DISCOVERY_DATABASE_IDENTITY=FAIL' >&2
+            echo 'DISCOVERY_DATABASE_IDENTITY_FAILURE_CLASS=UNEXPECTED_RUNTIME_ROLE' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_IDENTITY=PASS'
+          if ! capabilities="$(PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=15000' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f database/security/check_discovery_worker_capabilities.sql 2>/dev/null)" || [ "$capabilities" != 't' ]; then
+            echo 'DISCOVERY_DATABASE_CAPABILITIES=FAIL' >&2
+            exit 1
+          fi
+          echo 'DISCOVERY_DATABASE_CAPABILITIES=PASS'
+
       - name: Capture commercial side-effect baseline
         shell: bash
         run: |

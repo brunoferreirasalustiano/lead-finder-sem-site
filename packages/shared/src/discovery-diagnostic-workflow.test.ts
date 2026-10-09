@@ -37,6 +37,10 @@ describe('discovery diagnostic workflow contract', () => {
     expect(workflow).toContain('DIAGNOSTIC_ENQUEUE_RECONCILED=PASS');
     expect(workflow).toContain('DIAGNOSTIC_ENQUEUE_FAILURE_CLASS=UNCOMMITTED_OR_UNKNOWN');
     expect(workflow.match(/-X POST "\$HML_API_URL\/collect"/gu)).toHaveLength(1);
+    expect(workflow).toContain("printf '%s\\n' \"select status from public.collection_jobs where request_identity = :'request_identity';\"");
+    expect(workflow).toContain("printf '%s\\n' \"select request_mode,status,coalesce(error,'NONE') from public.collection_jobs where request_identity = :'request_identity';\"");
+    expect(workflow).toContain('timeout 15m node apps/worker/dist/index.js');
+    expect(workflow).toContain("worker_failure_class='WORKER_TIMEOUT'");
     expect(workflow.match(/get_diagnostic_commercial_snapshot\(\)/gu)).toHaveLength(2);
     expect(workflow).not.toMatch(/select count\(\*\) from public\.(daily6_batches|daily6_send_ledger|campaign_outbox|pilot_manual_email_send_attempts)/u);
     expect(workflow).not.toContain('PII_SAFE_TELEMETRY=PASS');
